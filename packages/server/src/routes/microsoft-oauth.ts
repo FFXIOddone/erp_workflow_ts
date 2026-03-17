@@ -1,0 +1,68 @@
+/**
+ * Microsoft OAuth2 Routes
+ * 
+ * Handles the browser-based OAuth flow for connecting Microsoft 365 email.
+ * Admin-only endpoints.
+ */
+
+import { Router, type Response } from 'express';
+import { authenticate, type AuthRequest } from '../middleware/auth.js';
+import { UserRole } from '@erp/shared';
+import {
+  isMicrosoftOAuthConfigured,
+  getAuthorizationUrl,
+  handleAuthCallback,
+  getConnectionStatus,
+  disconnectMicrosoft,
+} from '../services/microsoft-oauth.js';
+
+export const microsoftOAuthRouter = Router();
+
+// All routes require authentication
+microsoftOAuthRouter.use(authenticate);
+
+// Helper: require admin role
+function requireAdmin(req: AuthRequest, res: Response, next: () => void) {
+  if (req.user?.role !== UserRole.ADMIN) {
+    res.status(403).json({ success: false, error: 'Admin access required' });
+    return;
+  }
+  next();
+}
+
+/**
+ * GET /microsoft-oauth/status
+ * Check if Microsoft email is connected, configured, etc.
+ */
+microsoftOAuthRouter.get('/status', requireAdmin, async (_req: AuthRequest, res: Response) => {
+  const status = await getConnectionStatus();
+  res.json({ success: true, data: status });
+});
+
+/**
+ * GET /microsoft-oauth/auth-url
+ * Generate the Microsoft login URL. Frontend opens this in a popup.
+ */
+microsoftOAuthRouter.get('/auth-url', requireAdmin, async (_req: AuthRequest, res: Response) => {
+  if (!isMicrosoftOAuthConfigured()) {
+    res.status(400).json({
+      success: false,
+      error: 'Microsoft OAuth not configured. Set MS_CLIENT_ID, MS_CLIENT_SECRET, and MS_TENANT_ID in the server .env file.',
+    });
+    return;
+  }
+
+  const url = await getAuthorizationUrl();
+  res.json({ success: true, data: { url } });
+});
+
+/**
+ * POST /microsoft-oauth/disconnect
+ * Remove stored tokens and disconnect Microsoft email
+ */
+microsoftOAuthRouter.post('/disconnect', requireAdmin, async (_req: AuthRequest, res: Response) => {
+  await disconnectMicrosoft();
+  res.json({ success: true, message: 'Microsoft email disconnected' });
+});
+
+export default microsoftOAuthRouter;

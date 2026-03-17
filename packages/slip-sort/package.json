@@ -1,0 +1,17 @@
+{
+  "name": "@erp/slip-sort",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Packing Slip Manager - PDF parsing, sorting, and management module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "install:backend": "cd backend && pip install -r requirements.txt",
+    "install:frontend": "cd frontend && npm install",
+    "start": "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000",
+    "test:backend": "cd backend && python -m pytest",
+    "test:frontend": "cd frontend && npm run test:run"
+  }
+}

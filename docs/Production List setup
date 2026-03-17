@@ -1,0 +1,272 @@
+# Sheet1 ("Production List") — Complete Specification
+
+> **Audience:** Any AI agent, developer, or maintainer working on these VBA macros.
+> **Workbook:** `Production List_MM_dd_yy.xlsm` — a daily production tracking sheet for **Wilde Signs**, a sign manufacturing company.
+> **Sheet name:** `Sheet1` (the only data sheet; `Sheet2` exists but is unused).
+
+---
+
+## 1. High-Level Purpose
+
+Sheet1 is the single source of truth for every active work order at Wilde Signs. Each work day a new copy of the workbook is SaveAs'd with the next workday's date. Macros pull data from employee tally sheets, scan Outlook for approvals, look up proof files, check print-station completion, and move rows between sections as jobs progress through the production pipeline.
+
+---
+
+## 2. Row Layout
+
+### Rows 1–3: Header Band
+
+| Row | Content |
+|-----|---------|
+| **1** | `A1` = workbook date (formatted `dddd, mmmm dd, yyyy`). `B1` may hold a label or value used as a paste source (tally transfer copies `srcWs.Cells(1,2)` into col E). `C1` = list subtitle (e.g., `"(Shipping List)"` on shipping copies). |
+| **2** | Column headers / formula seeds. `L2` and `M2` hold formulas that auto-fill downward (see columns L & M below). |
+| **3** | Column headers row. Copied to printing sub-lists as their header row. |
+
+### Row 4 onward: Data Begins
+
+All data rows start at **row 4**. Every macro that reads, writes, or iterates the sheet starts at row 4.
+
+---
+
+## 3. Vertical Sections (Row Blocks)
+
+The sheet is divided into **named section blocks** identified by marker text in **column A**. Rows are inserted *below* these markers and sorted within each block. The macros use `Find()` on column A to locate these markers at runtime — their row numbers are not fixed.
+
+The sections appear in this top-to-bottom order:
+
+| # | Column A Marker Text | Purpose | Sort Key |
+|---|---------------------|---------|----------|
+| 1 | `CUSTOMER` | Jobs shipping today / tomorrow. (TodayRowsMoveAndSort moves rows here from Coming Up when their Must Ship date arrives.) | Col A ascending |
+| 2 | `MONTHLY` | Monthly/recurring orders divider. | — |
+| 3 | `COMING UP…` *(with Unicode ellipsis U+2026)* | Approved jobs awaiting production. Rows land here from the tally pull when the proof is approved (`col E = "Approved"` or `"No"` in source). MoveAndSortRows also moves approved-Design rows here. | Col A ascending |
+| 4 | `FLIP SIGNS & FABRICATION` | Marks the bottom boundary of the Coming Up block (used for sort range). | — |
+| 5 | `Harmony Brands INV Orders/FoF PO's` | Harmony/HH Global inventory orders. HarmonyPull inserts `(INV)` category rows here. | Col A ascending |
+| 6 | `DESIGN; PRODUCTION/ACTUAL ORDERS` | Active design/production work orders. New tally rows with `col E = "Yes"` land here. MoveAndSortRows moves rows *out* of this block into Coming Up once they receive an approval date in col H. | Col A ascending |
+| 7 | `DESIGN; DESIGN ONLY ORDERS` | Design-only jobs (no production). Tally rows with `col D = "(DESIGN ONLY)"` land here. | — |
+| 8 | `OUTSOURCED` | Outsourced jobs. Tally rows with `col D = "(OUTSOURCED)"` land here. | — |
+| 9 | `INSTALL READY/DELIVERY/SHIPPING/INVOICING` | Completed/shipping/install jobs. InstallMove cuts rows from above and pastes them here when the shipping list marks them complete. | — |
+| 10 | `ON-HOLD` | On-hold jobs. Also acts as a boundary: the shipping list copy (`CreateListShipping`) copies rows 4 through the row *above* this marker. | — |
+
+### How Row Movement Works
+
+```
+Tally sheets ──► DESIGN; PRODUCTION/ACTUAL ORDERS  (or COMING UP / OUTSOURCED / etc.)
+                         │
+                   (approval date appears in col H)
+                         ▼
+                     COMING UP…
+                         │
+                   (Must Ship date ≤ next workday)
+                         ▼
+                      CUSTOMER
+                         │
+                   (shipping list marks complete)
+                         ▼
+              INSTALL READY/DELIVERY/SHIPPING/INVOICING
+                         │
+                   (strikethrough + archived)
+                         ▼
+                    Archive.xlsx
+```
+
+---
+
+## 4. Column Map
+
+### Primary Data Columns (A–N)
+
+| Column | Header (Row 3) | Data Type | Description | Written By |
+|--------|---------------|-----------|-------------|------------|
+| **A** | Customer | Text | Customer / company name (e.g., `"HH Global"`, `"Port City"`). Also holds **section marker text** (see §3). Yellow (`RGB(255,255,0)`) interior = priority/Must Ship indicator. | Tally pull (from source col 11 = col K) |
+| **B** | WO# | Numeric text | Work order number. **4 digits = Port City**, **5 digits = Wilde Signs**. This is the primary key used to match across all external files (shipping, printing lists, proof index, emails). | Tally pull (from source col 12 = col L) |
+| **C** | Description | Formula / Text | Job description. On tally-imported rows, this is a **formula**: `=IF(ISBLANK(F{row}),"", CONCATENATE("{desc}", "(" & TEXT(F{row}, "mm/dd/yy") & ")"))` — i.e., the description text with the Must Ship date appended in parens. The raw description text comes from source col 13 (col M). | Tally pull formula; also direct text on manually-entered rows |
+| **D** | *(hidden)* | Text | Category/type from tally source (e.g., `"(OUTSOURCED)"`, `"(DESIGN ONLY)"`, `"(INSTALL)"`, `"(INV)"`, `"(COM)"`). **Column D is hidden** on the main sheet and on shipping copies. Used only during tally categorization. | Tally source col 4 (col D) |
+| **E** | Salesperson / Source | Text | Salesperson name or source identifier. During tally import, this is populated from `srcWs.Cells(1, 2)` (cell B1 of the tally sheet — typically the salesperson's name). | Tally pull |
+| **F** | Must Ship | Date | The date the job must ship. Drives the `CONCATENATE` formula in col C. Used by `TodayRowsMoveAndSort` to decide when to move rows to the CUSTOMER block. Format often `mm/dd/yy`. | Tally pull (from source col 6) |
+| **G** | Proof Date | Date / `"N/A"` | Date of the latest proof file for this WO#, looked up from the proof index (`file_index.xlsx`). Set to `"N/A"` if no proof is found. Font color set to yellow if proof is missing and Must Ship date has passed. For Coming Up rows, set to `"N/A"` on import. Format: `d-mmm`. | `modProofIndex` (RunIndexingAndSearch*), `PullProofsForHHGlobal`, tally pull (N/A default for Coming Up) |
+| **H** | Approval Date | Date / blank | Date the proof was approved, pulled from Outlook emails in the `approvals@wilde-signs.com` Approvals folder. Written by `FindKeywordsInEmails`. Also triggers `Worksheet_Change` → `ApprovalChange` to auto-fill cols L & M. Range `H4:H200` is monitored. | `modEmailApprovals` (ScanEmails), manual entry |
+| **I** | Print/Cut Date | Date / `"N/A"` | Date of the latest print+cut file for this WO#, looked up from `PrintCut_Index.xlsx`. Set to `"N/A"` if no match. For Coming Up rows, set to `"N/A"` on import. | `modProofIndex` (RunIndexingAndSearchPrintCutPDFs) |
+| **J** | Print Status | Date / Flag string | **Completion tracking from printing sub-lists.** If all assigned stations (RR, FB, Z) have marked the WO complete → stamped with today's date (format `d-mmm`). If some stations are incomplete → contains flag text like `"RR"`, `"FB"`, `"Z"`, `"RR FB"`, etc. identifying which stations still need to finish. Also read by `CreateLists_MM_FB_Zund`: if col J already contains a date, the row is skipped (already printed). | `modPrintLists` (UpdateCompletedMarks) |
+| **K** | Notes | Text | Free-text notes column. `modProofIndex` appends `"m/d; Approval with missing Proof."` here when a WO has an approval date but no proof file. Multiple notes are concatenated. | `modProofIndex`, manual |
+| **L** | Days (calculated) | Formula | `=IF(AND(H{row}="",F{row}=""),"",IFERROR(LET(d,NETWORKDAYS(H{row},F{row}),IF(d>365,"",d)),IFERROR(F{row}-E{row},"")))` — Network days between approval date (H) and must-ship date (F). Blank if either is missing. Suppressed if >365. | `ApprovalChange` auto-fill |
+| **M** | Deadline Warning | Formula | `=IFERROR(@IF(ISBLANK(H{row}),"",IFS(L{row}<7,WORKDAY(H{row},7),L{row}>7,"")),"")`  — If fewer than 7 business days between approval and ship date, shows the 7-workday deadline from approval. Warning flag for tight timelines. | `ApprovalChange` auto-fill |
+| **N** | *(implicit)* | — | Column N (col 14) is referenced as the right boundary of sort ranges. Not actively populated but included when sorting blocks. | Sort operations |
+
+### Printing Sub-List Column Mapping
+
+When `CreateLists_MM_FB_Zund` builds the Roll-to-Roll, Flatbed, and Zund workbooks, it copies a **subset** of columns:
+
+| Sub-list Col | Source Col | Content |
+|-------------|-----------|---------|
+| A | A | Customer |
+| B | B | WO# |
+| C | C | Description (formula) |
+| D | *(spacer, width=2)* | Cleared |
+| E | E | Salesperson |
+| F | F | Must Ship |
+| G | J | Print Status (becomes the completion mark column on the sub-list) |
+
+The sub-lists use **col G as the completion mark**: when a printer marks a job done on the sub-list, `UpdateCompletedMarks` reads that col G back and updates col J on the main sheet.
+
+---
+
+## 5. Cell Styles Used
+
+| Style Name | Applied To | Meaning |
+|-----------|-----------|---------|
+| `"Attention"` | `A:C` of a row | Rush / Must Ship / Redo / Sample job (source tally col 7) |
+| `"Normal"` | `A:C` of a row | Standard priority job |
+| `"InnerWorkings"` | `A:C` of a row | HH Global / InnerWorkings row (applied during MoveAndSortRows) |
+| `"Must Ship"` | `A:C` of a row | Yellow-highlighted row that has reached its Must Ship date (TodayRowsMoveAndSort) |
+| `"Good"` | Col E on shipping copies | Green fill (completed column) |
+| `"Input"` | Col F on shipping copies | Blue border (install ready column) |
+| `"Note"` | G1:G2 on shipping copies | Yellow fill (unlisted orders header) |
+
+Cell interior color `RGB(255,255,0)` (yellow) on column A is used as a priority flag independent of styles — `TodayRowsMoveAndSort` checks `cell.Interior.Color = RGB(255,255,0)` to allow an extra day of lead time.
+
+---
+
+## 6. Named Ranges and Monitored Ranges
+
+| Range | Purpose |
+|-------|---------|
+| `H4:H200` | Monitored by `Sheet1.Worksheet_Change`. Any edit triggers `ApprovalChange`, which rebuilds the L and M column formulas for all rows. |
+| `A1:B1` | Unmerged on shipping copies to prevent row-insert issues in InstallMove. May be merged on the main sheet. |
+
+---
+
+## 7. External Data Sources That Feed Sheet1
+
+| Source | Frequency | Columns Affected | Module |
+|--------|-----------|-----------------|--------|
+| **Brenda's Tally** (`Brenda Tally_MMMM_d_yyyy.xlsx`) | Daily (PullTallyJAKE) | A, B, C, E, F, G–I (N/A defaults) | modPipeline.TransferTallyRows |
+| **Christina's Tally** (`Christina Tally_MMMM_d_yyyy.xlsx`) | Daily (Cpull) | Same as Brenda | modPipeline.TransferTallyRows |
+| **Gary's / Harmony Tally** (`Gary's Tally_MMMM_d_yyyy.xlsx`) | Manual (HarmonyPull button) | A, B, C, E, F, G–I (N/A defaults) | modPipeline.TransferHarmonyRows |
+| **Shipping Tally** (`Shipping Tally_MMMM_dd_yy.xlsm`) | Daily (InstallMove, UpdateFont) | Row moves to INSTALL section; strikethrough + archive | modTasks.InstallMove, modTasks.UpdateFont |
+| **Proof Index** (`Proof DB\file_index.xlsx`) | On-demand button | G (proof dates) | modProofIndex, modTasks.PullProofsForHHGlobal |
+| **PrintCut Index** (`Proof DB\PrintCut_Index.xlsx`) | On-demand button | I (print/cut dates) | modProofIndex |
+| **Outlook Approvals** (`approvals@wilde-signs.com` / Approvals folder) | Daily (FindKeywordsInEmails) | H (approval dates) | modEmailApprovals |
+| **Printing Sub-Lists** (Roll to Roll, Flatbed, Zund `.xlsx`) | Daily (UpdateCompletedMarks) | J (completion marks) | modPrintLists |
+
+---
+
+## 8. Source Tally Sheet Column Mapping
+
+When tally data is imported, the source sheet columns map to the production list as follows:
+
+| Source Column | # | Maps To | Production List Column |
+|--------------|---|---------|----------------------|
+| D | 4 | Category tag | Used for routing (`(OUTSOURCED)`, `(DESIGN ONLY)`, `(INSTALL)`, `(INV)`, `(COM)`) — not written to dest |
+| E | 5 | Proof status | Used for routing (`"Yes"`, `"No"`, `"Approved"`) — not written to dest |
+| F | 6 | Must Ship date | → **F** (Must Ship) |
+| G | 7 | Priority flag | Used for styling (`"Must Ship"`, `"Rush"`, `"Redo"`, `"Sample"`) — not written to dest |
+| K | 11 | Customer name | → **A** (Customer) |
+| L | 12 | WO# | → **B** (WO#) |
+| M | 13 | Description text | → **C** (as formula with Must Ship date appended) |
+| B1 | — | Salesperson name | → **E** (Salesperson) |
+
+---
+
+## 9. Tally Routing Decision Tree
+
+```
+Source row examined (cols D, E):
+│
+├─ col D = "(OUTSOURCED)"     → insert below "OUTSOURCED" marker
+├─ col D = "(DESIGN ONLY)"   → insert below "DESIGN; DESIGN ONLY ORDERS"
+├─ col D = "(INSTALL)"        → insert below "INSTALL READY/DELIVERY/SHIPPING/INVOICING"
+├─ col E = "No"               → insert below "COMING UP…"         (comingUpAdded++)
+├─ col E = "Yes"              → insert below "DESIGN; PRODUCTION/ACTUAL ORDERS" (designAdded++)
+├─ col E = "Approved"         → insert below "COMING UP…"         (comingUpAdded++)
+├─ col A = ""                 → stop processing (end of data)
+└─ else                       → skip row
+```
+
+For **Harmony/Gary tally** rows:
+```
+├─ col D = "(INV)"  → insert below "Harmony Brands INV Orders/FoF PO's"
+├─ col D = "(COM)"  → insert below "COMING UP…"
+├─ col A = ""       → stop processing
+└─ else             → skip row
+```
+
+---
+
+## 10. Automated Pipeline Execution Order
+
+When `PullTallyJAKE` (the main daily button) runs, it executes these operations in strict sequence:
+
+1. **TransferTallyRows** (Brenda) — imports from Brenda's tally into the appropriate sections
+2. **Cpull** → **TransferTallyRows** (Christina) — imports from Christina's tally
+3. **PullProofsForHHGlobal** — looks up proof dates for `"HH Global"` rows, writes col G
+4. **FindKeywordsInEmails** — scans Outlook for approval emails, writes col H
+5. **InstallMove** — reads shipping list col F (completed), moves matching rows to INSTALL section
+6. **UpdateFont** — reads shipping list col E (completed), applies strikethrough + archives to Archive.xlsx
+7. **MoveAndSortRows** — moves Design rows with approval dates (col H populated) down to COMING UP
+8. **UpdateCompletedMarks** — reads printing sub-lists, stamps col J with date or remaining-station flags
+
+---
+
+## 11. Key Behavioral Rules
+
+1. **Data starts at row 4.** Rows 1–3 are always headers. Every `For` loop, `Find`, and range reference starts at row 4.
+2. **Column B (WO#) is the universal key.** All cross-file lookups match on this column.
+3. **Section markers in column A are searched with `Find()`** at runtime — they can be at any row. Rows are inserted *below* the marker, and the block is sorted ascending by column A after each insertion.
+4. **"N/A" is the sentinel value** for "looked up but not found" in columns G, H, and I. Blank means "not yet checked."
+5. **Strikethrough font** on a row means the job has shipped. `UpdateFont` applies this, and the row is also copied to `Archive.xlsx`.
+6. **Column J serves dual purpose:** a date means "printing complete," a text flag (e.g., `"RR FB"`) means "these stations still pending."
+7. **Columns L and M are pure formulas** — rebuilt every time column H changes (via `Worksheet_Change` → `ApprovalChange`). They should never be manually edited.
+8. **The workbook is SaveAs'd daily** with the next workday's date. At month boundaries, `EndOfMonthCheck` creates the new month's folder and saves there.
+9. **The `COMING UP…` marker uses a Unicode ellipsis** (U+2026, `ChrW(8230)`), not three dots. Any `Find()` for this marker must use the Unicode character.
+10. **Yellow cell color on column A** (`RGB(255,255,0)`) is a priority indicator checked by `TodayRowsMoveAndSort` to allow one extra day before moving to CUSTOMER.
+
+---
+
+## 12. Print / Page Setup
+
+The main sheet's print area is not explicitly set by macros (it's left to the user). However:
+
+- **Shipping copies:** Print area = `A:F`, landscape, fit to 1 page wide.
+- **Printing sub-lists:** Print area = `A1:G{lastRow}`, landscape, fit to 1×1 page.
+
+---
+
+## 13. File Naming & Path Conventions
+
+All paths are built through `modConfig.bas` functions. The base is:
+```
+C:\Users\{username}\OneDrive - Wilde Signs\Production List\
+```
+
+| Item | Path Pattern |
+|------|-------------|
+| Production List | `{base}\{MMMM yyyy}\Production List_MM_dd_yy.xlsm` |
+| Brenda Tally | `{base}\Brenda's Daily List\{MMMM yyyy}\Brenda Tally_MMMM_d_yyyy.xlsx` |
+| Christina Tally | `{base}\Christina's Daily List\{MMMM yyyy}\Christina Tally_MMMM_d_yyyy.xlsx` |
+| Gary Tally | `{base}\Gary's Daily List\{MMMM yyyy}\Gary's Tally_MMMM_d_yyyy.xlsx` |
+| Shipping Tally | `{base}\Pam's Daily List\{MMMM yyyy}\Shipping Tally_MMMM_dd_yy.xlsm` |
+| Shipping Template | `{base}\Pam's Daily List\Shipping Template.xlsm` |
+| Roll-to-Roll List | `{base}\Printing Lists\Roll to Roll List.xlsx` |
+| Flatbed List | `{base}\Printing Lists\Flatbed List.xlsx` |
+| Zund List | `{base}\Printing Lists\Zund List.xlsx` |
+| Proof Index | `{base}\Proof DB\file_index.xlsx` |
+| PrintCut Index | `{base}\Proof DB\PrintCut_Index.xlsx` |
+| Archive | `{base}\Archive\Archive.xlsx` |
+| Debug logs | `{base}\{MMMM yyyy}\DEBUG REPORTS\{SubName}\*.txt` |
+
+---
+
+## 14. UserForm1
+
+A simple modal dialog shown by `CreateListShipping`. Sets the global `DayCount` variable to `0` (today) or `1` (tomorrow) to determine which day's shipping tally to create. No interaction with Sheet1 data directly.
+
+---
+
+## 15. Edge Cases & Gotchas
+
+- **Month boundaries:** When `gNextWorkDay` falls in a different month than today, `EndOfMonthCheck` creates the new month folder and saves there. The Production List filename uses the *next workday's* date, but the folder uses *today's* month until the boundary triggers.
+- **Merged cells:** `A1:B1` may be merged. Shipping copies explicitly unmerge this to prevent `Insert` errors.
+- **The ellipsis in "COMING UP…"** is `ChrW(8230)`, not `"..."`. Searching with three dots will fail.
+- **Column D is hidden** but still contains category routing data from tally imports.
+- **`H4:H200` is the monitored range** for `Worksheet_Change`. If the sheet grows beyond row 200, the auto-fill for L/M still works (it uses `Find` for last row), but the change trigger won't fire for rows past 200.
+- **Printing sub-lists map col J → col G.** When reading completion marks back, the code reads sub-list col G and writes to main sheet col J.

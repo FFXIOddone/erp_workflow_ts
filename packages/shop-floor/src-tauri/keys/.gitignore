@@ -1,0 +1,4 @@
+# Private signing key - NEVER commit
+update.key
+# Public key is safe to commit
+!update.key.pub

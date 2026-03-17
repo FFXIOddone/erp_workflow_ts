@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/wilde-core",
+    "packages/station-*/src-tauri",
+    "packages/order-entry/src-tauri",
+    "packages/shop-floor/src-tauri",
+]
+
+[workspace.package]
+version = "1.0.5"
+authors = ["Wilde Signs"]
+edition = "2021"
+license = "Proprietary"
+
+[workspace.dependencies]
+tauri = { version = "2.0", features = ["devtools"] }
+tauri-build = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+notify = "6.0"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serialport = "4.3"
+reqwest = { version = "0.11", features = ["json"] }
+log = "0.4"
+env_logger = "0.11"
+thiserror = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+directories = "5.0"

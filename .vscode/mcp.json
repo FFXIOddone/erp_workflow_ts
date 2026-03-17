@@ -1,0 +1,92 @@
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "21st-api-key",
+      "description": "21st.dev Magic API Key (get one at https://21st.dev/magic/console)",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "gemini-api-key",
+      "description": "Gemini API Key (get one at https://aistudio.google.com/app/apikey)",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "github-pat",
+      "description": "GitHub Personal Access Token (https://github.com/settings/tokens)",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "postgres-url",
+      "description": "PostgreSQL connection URL (e.g. postgresql://user:pass@localhost:5432/erp_workflow)",
+      "password": true
+    },
+    {
+      "type": "promptString",
+      "id": "brave-api-key",
+      "description": "Brave Search API Key (https://brave.com/search/api/)",
+      "password": true
+    }
+  ],
+  "servers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    },
+    "@21st-dev/magic": {
+      "command": "npx",
+      "args": ["-y", "@21st-dev/magic@latest"],
+      "env": {
+        "API_KEY": "${input:21st-api-key}"
+      }
+    },
+    "nano-banana": {
+      "command": "npx",
+      "args": ["-y", "nano-banana-mcp"],
+      "env": {
+        "GEMINI_API_KEY": "${input:gemini-api-key}"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${input:github-pat}"
+      }
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "${input:postgres-url}"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "${workspaceFolder}"
+      ]
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    },
+    "brave-search": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "${input:brave-api-key}"
+      }
+    }
+  }
+}

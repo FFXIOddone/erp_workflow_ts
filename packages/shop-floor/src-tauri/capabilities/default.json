@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default permissions for Shop Floor app",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://192.168.254.75:*/*", "http://localhost:*/*"]
+  },
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "shell:allow-open",
+    "dialog:default",
+    "process:default",
+    "process:allow-restart",
+    "process:allow-exit",
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download",
+    "updater:allow-install",
+    "updater:allow-download-and-install"
+  ]
+}

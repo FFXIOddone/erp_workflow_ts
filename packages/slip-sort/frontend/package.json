@@ -1,0 +1,51 @@
+{
+  "name": "packing-slip-manager-frontend",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui",
+    "test:e2e": "playwright test",
+    "lint": "eslint src --ext .js,.svelte",
+    "lint:fix": "eslint src --ext .js,.svelte --fix",
+    "format": "prettier --write \"src/**/*.{js,svelte,css,json}\"",
+    "format:check": "prettier --check \"src/**/*.{js,svelte,css,json}\"",
+    "check": "svelte-check --tsconfig ./jsconfig.json"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.41.1",
+    "@sveltejs/vite-plugin-svelte": "^3.0.1",
+    "@testing-library/jest-dom": "^6.4.2",
+    "@testing-library/svelte": "^4.1.0",
+    "@vitest/coverage-v8": "^1.2.2",
+    "@vitest/ui": "^1.2.2",
+    "autoprefixer": "^10.4.17",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-svelte": "^2.35.1",
+    "eslint-plugin-vitest-globals": "^1.5.0",
+    "jsdom": "^24.0.0",
+    "mode-watcher": "^0.4.1",
+    "postcss": "^8.4.33",
+    "prettier": "^3.2.5",
+    "prettier-plugin-svelte": "^3.1.2",
+    "svelte": "^4.2.9",
+    "svelte-check": "^3.6.3",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12",
+    "vitest": "^1.2.2"
+  },
+  "dependencies": {
+    "@melt-ui/pp": "^0.3.2",
+    "@melt-ui/svelte": "^0.86.6",
+    "lucide-svelte": "^0.303.0",
+    "svelte-sonner": "^0.3.27"
+  }
+}

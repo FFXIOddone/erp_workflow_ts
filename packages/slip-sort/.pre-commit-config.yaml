@@ -1,0 +1,57 @@
+# Pre-commit hooks for code quality
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # Python formatting
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        language_version: python3.10
+        files: ^backend/
+
+  # Python import sorting
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ["--profile", "black"]
+        files: ^backend/
+
+  # Python linting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.14
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+        files: ^backend/
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Frontend linting (local)
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint
+        entry: npm run lint --prefix frontend
+        language: system
+        files: ^frontend/src/.*\.(js|svelte)$
+        pass_filenames: false
+
+      - id: prettier
+        name: Prettier
+        entry: npm run format:check --prefix frontend
+        language: system
+        files: ^frontend/src/.*\.(js|svelte|css|json)$
+        pass_filenames: false

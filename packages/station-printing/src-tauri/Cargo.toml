@@ -1,0 +1,20 @@
+[package]
+name = "station-printing"
+version = "1.0.0"
+edition = "2021"
+description = "Wilde Signs Printing Station"
+authors = ["Wilde Signs"]
+license = "Proprietary"
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+tauri = { workspace = true }
+tauri-plugin-shell = "2"
+wilde-core = { path = "../../wilde-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

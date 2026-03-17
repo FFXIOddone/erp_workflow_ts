@@ -1,0 +1,40 @@
+<svg viewBox="0 0 48 48" width="192" height="192" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Mask for B cutout -->
+    <mask id="hexMask">
+      <path 
+        d="M24 4L36 10V24L24 31L12 24V10L24 4Z" 
+        fill="white"
+      />
+      <!-- Stylized B cutout - hand-drawn style -->
+      <path 
+        d="M19.5 11C19.5 11 19.7 25 19.5 25M19.5 11C20.8 10.7 26.5 10.3 27.8 13C29 15.5 27 18.5 24 18.5M19.5 18.5C21.5 18.5 28 18 29 21C30 24 27 25.5 24 25.5C21.5 25.5 19.5 25.5 19.5 25.5" 
+        stroke="black" 
+        stroke-width="3" 
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        fill="none"
+      />
+    </mask>
+  </defs>
+  
+  <!-- Central hexagon with B cutout -->
+  <path 
+    d="M24 4L36 10V24L24 31L12 24V10L24 4Z" 
+    fill="white" 
+    opacity="0.9"
+    mask="url(#hexMask)"
+  />
+  <!-- Bottom connected nodes - workflow stations -->
+  <circle cx="9" cy="38" r="5.5" fill="white" opacity="0.8" />
+  <circle cx="24" cy="42" r="5.5" fill="white" opacity="0.9" />
+  <circle cx="39" cy="38" r="5.5" fill="white" opacity="0.8" />
+  <!-- Connection lines -->
+  <path 
+    d="M12 24L9 32.5M24 31V36.5M36 24L39 32.5" 
+    stroke="white" 
+    stroke-width="2.8" 
+    stroke-linecap="round"
+    opacity="0.6"
+  />
+</svg>

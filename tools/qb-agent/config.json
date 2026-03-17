@@ -1,0 +1,16 @@
+{
+  "erpServerUrl": "http://192.168.254.100:8001",
+  "apiToken": "",
+  "qbDriver": "QB SQL Anywhere",
+  "daysBack": 365,
+  "odbcTimeout": 30,
+  "types": ["invoice", "salesOrder", "estimate"],
+  "batchSize": 50,
+  "notes": [
+    "erpServerUrl: IP/hostname of the ERP server (port 8001)",
+    "apiToken: JWT token from ERP login — get from browser DevTools > Application > Local Storage",
+    "qbDriver: ODBC driver name (usually 'QB SQL Anywhere')",
+    "daysBack: How far back to pull orders (365 = 1 year)",
+    "types: Which QB document types to pull"
+  ]
+}

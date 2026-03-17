@@ -1,0 +1,845 @@
+/**
+ * Order Entry Station View — Brenda's spreadsheet-style order entry interface.
+ *
+ * Design Goals:
+ * - Feels like an Excel spreadsheet, but simpler and faster
+ * - Large text, clear labels, minimal clicks
+ * - Tab-through fields for fast data entry
+ * - Inline editing for key fields
+ * - Quick "New Order" row always visible at top
+ * - Auto-applies routing defaults from the server
+ */
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  Plus,
+  RefreshCw,
+  Search,
+  ChevronDown,
+  ChevronUp,
+  Check,
+  X,
+  Calendar,
+  FileText,
+  Edit3,
+  Trash2,
+  Save,
+  AlertCircle,
+  ClipboardList,
+  ExternalLink,
+} from 'lucide-react';
+import clsx from 'clsx';
+import toast from 'react-hot-toast';
+import {
+  PrintingMethod,
+  STATION_DISPLAY_NAMES,
+  STATUS_DISPLAY_NAMES,
+  STATUS_COLORS,
+  PRIORITY_LABELS,
+  COMPANY_BRAND_DISPLAY_NAMES,
+  CompanyBrand,
+} from '@erp/shared';
+import { api } from '../lib/api';
+
+// ─── Types ──────────────────────────────────────────
+
+interface OrderRow {
+  id: string;
+  orderNumber: string;
+  customerName: string;
+  description: string;
+  status: string;
+  priority: number;
+  dueDate: string | null;
+  routing: string[];
+  notes: string | null;
+  companyBrand: string;
+  createdAt: string;
+  customerId: string | null;
+  stationProgress: { station: string; status: string; completedAt: string | null }[];
+}
+
+interface NewOrderDraft {
+  orderNumber: string;
+  customerName: string;
+  description: string;
+  priority: number;
+  dueDate: string;
+  notes: string;
+  companyBrand: string;
+  routing: string[];
+  category: string;
+  needsProof: boolean;
+}
+
+// Categories from Brenda's spreadsheet — column D
+const CATEGORIES = [
+  { value: '', label: 'Standard' },
+  { value: '(OUTSOURCED)', label: 'Outsourced' },
+  { value: '(DESIGN ONLY)', label: 'Design Only' },
+  { value: '(INSTALL)', label: 'Install' },
+  { value: '(INV)', label: 'Inventory' },
+  { value: '(COM)', label: 'Commercial' },
+] as const;
+
+const PRINTING_STATIONS = [
+  PrintingMethod.FLATBED,
+  PrintingMethod.ROLL_TO_ROLL,
+  PrintingMethod.SCREEN_PRINT,
+] as const;
+
+// Quick routing presets — what Brenda usually selects
+const ROUTING_PRESETS = [
+  { label: 'Flatbed', stations: [PrintingMethod.FLATBED] },
+  { label: 'Roll-to-Roll', stations: [PrintingMethod.ROLL_TO_ROLL] },
+  { label: 'Screen Print', stations: [PrintingMethod.SCREEN_PRINT] },
+  { label: 'Production Only', stations: [PrintingMethod.PRODUCTION, PrintingMethod.SHIPPING_RECEIVING] },
+  { label: 'Ship Only', stations: [PrintingMethod.SHIPPING_RECEIVING] },
+] as const;
+
+function generateTempOrderNumber(): string {
+  const random = Math.floor(Math.random() * 900000) + 100000;
+  return `TEMPWO-${random}`;
+}
+
+function emptyDraft(): NewOrderDraft {
+  return {
+    orderNumber: generateTempOrderNumber(),
+    customerName: '',
+    description: '',
+    priority: 3,
+    dueDate: '',
+    notes: '',
+    companyBrand: 'WILDE_SIGNS',
+    routing: [],
+    category: '',
+    needsProof: false,
+  };
+}
+
+// ─── Main Component ─────────────────────────────────
+
+export function OrderEntryStationView() {
+  const queryClient = useQueryClient();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showNewRow, setShowNewRow] = useState(false);
+  const [draft, setDraft] = useState<NewOrderDraft>(emptyDraft());
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Partial<OrderRow>>({});
+  const [sortField, setSortField] = useState<'dueDate' | 'orderNumber' | 'customerName' | 'createdAt'>('createdAt');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [showRoutingPicker, setShowRoutingPicker] = useState(false);
+  const [customerSuggestions, setCustomerSuggestions] = useState<{ id: string; name: string; companyName: string | null }[]>([]);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const customerInputRef = useRef<HTMLInputElement>(null);
+  const newRowRef = useRef<HTMLInputElement>(null);
+
+  // Fetch orders with ORDER_ENTRY in routing, plus recent orders
+  const { data: orders = [], isLoading, refetch } = useQuery<OrderRow[]>({
+    queryKey: ['order-entry-orders'],
+    queryFn: async () => {
+      const res = await api.get('/orders', {
+        params: {
+          pageSize: 200,
+          sortBy: 'createdAt',
+          sortOrder: 'desc',
+          status: 'PENDING,IN_PROGRESS,ON_HOLD',
+        },
+      });
+      return res.data.data.items || res.data.data || [];
+    },
+    refetchInterval: 15000,
+  });
+
+  // Customer search for autocomplete
+  const searchCustomers = useCallback(async (query: string) => {
+    if (query.length < 2) {
+      setCustomerSuggestions([]);
+      return;
+    }
+    try {
+      const res = await api.get('/customers', {
+        params: { search: query, pageSize: 8, isActive: true },
+      });
+      setCustomerSuggestions(res.data.data.items || []);
+    } catch {
+      setCustomerSuggestions([]);
+    }
+  }, []);
+
+  // Create order mutation
+  const createMutation = useMutation({
+    mutationFn: async (data: object) => api.post('/orders', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['order-entry-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast.success('Order created!', { icon: '✅' });
+      setDraft(emptyDraft());
+      setShowNewRow(false);
+    },
+    onError: () => toast.error('Failed to create order'),
+  });
+
+  // Update order mutation
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: object }) => api.patch(`/orders/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['order-entry-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast.success('Order updated!');
+      setEditingId(null);
+      setEditDraft({});
+    },
+    onError: () => toast.error('Failed to update order'),
+  });
+
+  // Filter & sort orders
+  const filteredOrders = useMemo(() => {
+    let result = orders;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        o =>
+          o.orderNumber.toLowerCase().includes(q) ||
+          o.customerName.toLowerCase().includes(q) ||
+          (o.description || '').toLowerCase().includes(q) ||
+          (o.notes || '').toLowerCase().includes(q),
+      );
+    }
+    result = [...result].sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'dueDate') {
+        const da = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+        const db = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+        cmp = da - db;
+      } else if (sortField === 'orderNumber') {
+        cmp = a.orderNumber.localeCompare(b.orderNumber);
+      } else if (sortField === 'customerName') {
+        cmp = a.customerName.localeCompare(b.customerName);
+      } else {
+        cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return result;
+  }, [orders, searchQuery, sortField, sortDir]);
+
+  // Build description with category tag appended
+  const buildDescription = (desc: string, category: string) => {
+    if (!category) return desc;
+    return `${desc} ${category}`.trim();
+  };
+
+  const handleCreateOrder = () => {
+    if (!draft.customerName.trim()) {
+      toast.error('Customer name is required');
+      return;
+    }
+    if (!draft.description.trim()) {
+      toast.error('Description is required');
+      return;
+    }
+
+    const fullDescription = buildDescription(draft.description, draft.category);
+
+    // Let the server apply routing defaults
+    createMutation.mutate({
+      orderNumber: draft.orderNumber,
+      customerName: draft.customerName,
+      description: fullDescription,
+      priority: draft.priority,
+      dueDate: draft.dueDate || null,
+      notes: draft.notes || null,
+      companyBrand: draft.companyBrand,
+      routing: draft.routing,
+      lineItems: [],
+    });
+  };
+
+  const handleUpdateOrder = (id: string) => {
+    updateMutation.mutate({
+      id,
+      data: editDraft,
+    });
+  };
+
+  const startEditing = (order: OrderRow) => {
+    setEditingId(order.id);
+    setEditDraft({
+      customerName: order.customerName,
+      description: order.description,
+      priority: order.priority,
+      dueDate: order.dueDate,
+      notes: order.notes,
+      routing: order.routing,
+    });
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditDraft({});
+  };
+
+  const toggleSort = (field: typeof sortField) => {
+    if (sortField === field) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+  };
+
+  const SortIcon = ({ field }: { field: typeof sortField }) => {
+    if (sortField !== field) return null;
+    return sortDir === 'asc' ? (
+      <ChevronUp className="w-3.5 h-3.5 inline ml-0.5" />
+    ) : (
+      <ChevronDown className="w-3.5 h-3.5 inline ml-0.5" />
+    );
+  };
+
+  // Focus new row when opened
+  useEffect(() => {
+    if (showNewRow && newRowRef.current) {
+      newRowRef.current.focus();
+    }
+  }, [showNewRow]);
+
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  const getStationBadges = (routing: string[]) => {
+    return routing.map(s => STATION_DISPLAY_NAMES[s] || s);
+  };
+
+  const getProgressSummary = (order: OrderRow) => {
+    const total = order.stationProgress.length;
+    const done = order.stationProgress.filter(sp => sp.status === 'COMPLETED').length;
+    if (total === 0) return null;
+    return { done, total };
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-gray-50">
+      {/* ── Toolbar ── */}
+      <div className="bg-white border-b px-4 py-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search orders..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+            />
+          </div>
+
+          {/* New Order Button */}
+          <button
+            onClick={() => {
+              setShowNewRow(true);
+              setDraft(emptyDraft());
+            }}
+            className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg shadow-sm transition-colors text-base"
+          >
+            <Plus className="w-5 h-5" />
+            New Order
+          </button>
+
+          {/* Refresh */}
+          <button
+            onClick={() => refetch()}
+            className="p-2.5 text-gray-500 hover:bg-gray-100 rounded-lg"
+            title="Refresh"
+          >
+            <RefreshCw className={clsx('w-5 h-5', isLoading && 'animate-spin')} />
+          </button>
+
+          {/* Count */}
+          <span className="text-sm text-gray-500 font-medium">
+            {filteredOrders.length} orders
+          </span>
+        </div>
+      </div>
+
+      {/* ── Table ── */}
+      <div className="flex-1 overflow-auto">
+        <table className="w-full border-collapse min-w-[900px]">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-gray-100 border-b-2 border-gray-300">
+              <th
+                className="text-left px-3 py-3 text-sm font-bold text-gray-700 cursor-pointer hover:bg-gray-200 select-none whitespace-nowrap"
+                onClick={() => toggleSort('orderNumber')}
+                style={{ width: '110px' }}
+              >
+                WO# <SortIcon field="orderNumber" />
+              </th>
+              <th
+                className="text-left px-3 py-3 text-sm font-bold text-gray-700 cursor-pointer hover:bg-gray-200 select-none whitespace-nowrap"
+                onClick={() => toggleSort('customerName')}
+                style={{ width: '180px' }}
+              >
+                Customer <SortIcon field="customerName" />
+              </th>
+              <th className="text-left px-3 py-3 text-sm font-bold text-gray-700" style={{ minWidth: '200px' }}>
+                Description
+              </th>
+              <th className="text-left px-3 py-3 text-sm font-bold text-gray-700" style={{ width: '130px' }}>
+                Routing
+              </th>
+              <th
+                className="text-left px-3 py-3 text-sm font-bold text-gray-700 cursor-pointer hover:bg-gray-200 select-none whitespace-nowrap"
+                onClick={() => toggleSort('dueDate')}
+                style={{ width: '100px' }}
+              >
+                Due <SortIcon field="dueDate" />
+              </th>
+              <th className="text-left px-3 py-3 text-sm font-bold text-gray-700" style={{ width: '80px' }}>
+                Status
+              </th>
+              <th className="text-left px-3 py-3 text-sm font-bold text-gray-700" style={{ width: '150px' }}>
+                Progress
+              </th>
+              <th className="text-left px-3 py-3 text-sm font-bold text-gray-700" style={{ width: '180px' }}>
+                Notes
+              </th>
+              <th className="text-center px-3 py-3 text-sm font-bold text-gray-700" style={{ width: '70px' }}>
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* ── New Order Row ── */}
+            {showNewRow && (
+              <tr className="bg-amber-50 border-b-2 border-amber-300">
+                <td className="px-3 py-2">
+                  <input
+                    type="text"
+                    value={draft.orderNumber}
+                    onChange={e => setDraft(d => ({ ...d, orderNumber: e.target.value }))}
+                    className="w-full px-2 py-2 border border-amber-300 rounded text-base font-mono bg-white focus:ring-2 focus:ring-amber-400"
+                    placeholder="WO#"
+                  />
+                </td>
+                <td className="px-3 py-2 relative">
+                  <input
+                    ref={newRowRef}
+                    type="text"
+                    value={draft.customerName}
+                    onChange={e => {
+                      setDraft(d => ({ ...d, customerName: e.target.value }));
+                      searchCustomers(e.target.value);
+                      setShowCustomerDropdown(true);
+                    }}
+                    onFocus={() => setShowCustomerDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                    className="w-full px-2 py-2 border border-amber-300 rounded text-base bg-white focus:ring-2 focus:ring-amber-400"
+                    placeholder="Customer name"
+                  />
+                  {showCustomerDropdown && customerSuggestions.length > 0 && (
+                    <div className="absolute z-20 left-3 right-3 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-auto">
+                      {customerSuggestions.map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onMouseDown={() => {
+                            setDraft(d => ({ ...d, customerName: c.companyName || c.name }));
+                            setShowCustomerDropdown(false);
+                          }}
+                          className="w-full px-3 py-2 text-left hover:bg-amber-50 text-base"
+                        >
+                          <span className="font-medium">{c.companyName || c.name}</span>
+                          {c.companyName && <span className="text-gray-400 ml-2 text-sm">({c.name})</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={draft.description}
+                      onChange={e => setDraft(d => ({ ...d, description: e.target.value }))}
+                      className="flex-1 px-2 py-2 border border-amber-300 rounded text-base bg-white focus:ring-2 focus:ring-amber-400"
+                      placeholder="Description"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleCreateOrder();
+                        }
+                      }}
+                    />
+                    <select
+                      value={draft.category}
+                      onChange={e => setDraft(d => ({ ...d, category: e.target.value }))}
+                      className="px-2 py-2 border border-amber-300 rounded text-sm bg-white"
+                      title="Category"
+                    >
+                      {CATEGORIES.map(c => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowRoutingPicker(!showRoutingPicker)}
+                      className="w-full px-2 py-2 border border-amber-300 rounded text-sm bg-white text-left flex items-center justify-between hover:bg-amber-50"
+                    >
+                      <span className={draft.routing.length ? 'text-gray-900' : 'text-gray-400'}>
+                        {draft.routing.length
+                          ? draft.routing.map(s => STATION_DISPLAY_NAMES[s]?.split(' ')[0] || s).join(', ')
+                          : 'Select...'}
+                      </span>
+                      <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                    </button>
+                    {showRoutingPicker && (
+                      <div className="absolute z-20 left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-56">
+                        <p className="text-xs font-bold text-gray-500 uppercase mb-2">Quick Presets</p>
+                        <div className="space-y-1 mb-3">
+                          {ROUTING_PRESETS.map(preset => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onMouseDown={() => {
+                                setDraft(d => ({ ...d, routing: [...preset.stations] }));
+                                setShowRoutingPicker(false);
+                              }}
+                              className="w-full text-left px-2 py-1.5 rounded hover:bg-amber-50 text-sm"
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                        <hr className="mb-2" />
+                        <p className="text-xs font-bold text-gray-500 uppercase mb-2">All Stations</p>
+                        <div className="space-y-1">
+                          {Object.values(PrintingMethod).map(s => (
+                            <label key={s} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer text-sm">
+                              <input
+                                type="checkbox"
+                                checked={draft.routing.includes(s)}
+                                onChange={e => {
+                                  if (e.target.checked) {
+                                    setDraft(d => ({ ...d, routing: [...d.routing, s] }));
+                                  } else {
+                                    setDraft(d => ({ ...d, routing: d.routing.filter(r => r !== s) }));
+                                  }
+                                }}
+                                className="rounded border-gray-300 text-amber-500 focus:ring-amber-400"
+                              />
+                              {STATION_DISPLAY_NAMES[s]}
+                            </label>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          onMouseDown={() => setShowRoutingPicker(false)}
+                          className="w-full mt-2 py-1.5 text-sm text-gray-500 hover:text-gray-700 border-t pt-2"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-2">
+                  <input
+                    type="date"
+                    value={draft.dueDate}
+                    onChange={e => setDraft(d => ({ ...d, dueDate: e.target.value }))}
+                    className="w-full px-2 py-2 border border-amber-300 rounded text-sm bg-white focus:ring-2 focus:ring-amber-400"
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <span className="text-xs font-medium text-amber-600 bg-amber-100 px-2 py-1 rounded">NEW</span>
+                </td>
+                <td className="px-3 py-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={draft.needsProof}
+                      onChange={e => setDraft(d => ({ ...d, needsProof: e.target.checked }))}
+                      className="rounded border-gray-300 text-amber-500 focus:ring-amber-400 w-4 h-4"
+                    />
+                    <span className="text-sm text-gray-700">Needs Proof</span>
+                  </label>
+                </td>
+                <td className="px-3 py-2">
+                  <input
+                    type="text"
+                    value={draft.notes}
+                    onChange={e => setDraft(d => ({ ...d, notes: e.target.value }))}
+                    className="w-full px-2 py-2 border border-amber-300 rounded text-sm bg-white focus:ring-2 focus:ring-amber-400"
+                    placeholder="Notes"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleCreateOrder();
+                      }
+                    }}
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-1 justify-center">
+                    <button
+                      type="button"
+                      onClick={handleCreateOrder}
+                      disabled={createMutation.isPending}
+                      className="p-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50"
+                      title="Save Order"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewRow(false)}
+                      className="p-2 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+                      title="Cancel"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            )}
+
+            {/* ── Existing Orders ── */}
+            {isLoading ? (
+              <tr>
+                <td colSpan={9} className="text-center py-12">
+                  <RefreshCw className="w-8 h-8 text-gray-300 animate-spin mx-auto mb-2" />
+                  <p className="text-gray-400 text-lg">Loading orders...</p>
+                </td>
+              </tr>
+            ) : filteredOrders.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="text-center py-12">
+                  <ClipboardList className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+                  <p className="text-gray-400 text-lg">No orders found</p>
+                  <p className="text-gray-300 text-sm mt-1">Click "New Order" to create one</p>
+                </td>
+              </tr>
+            ) : (
+              filteredOrders.map((order, idx) => {
+                const isEditing = editingId === order.id;
+                const progress = getProgressSummary(order);
+                const statusColor = STATUS_COLORS[order.status] || '#6b7280';
+                const isOverdue = order.dueDate && new Date(order.dueDate) < new Date() && order.status !== 'COMPLETED' && order.status !== 'SHIPPED';
+
+                return (
+                  <tr
+                    key={order.id}
+                    className={clsx(
+                      'border-b border-gray-200 transition-colors',
+                      idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50',
+                      isEditing && 'bg-blue-50 border-blue-200',
+                      isOverdue && !isEditing && 'bg-red-50/30',
+                    )}
+                  >
+                    {/* WO# */}
+                    <td className="px-3 py-2.5">
+                      <span className="font-mono text-base font-semibold text-gray-900">
+                        {order.orderNumber}
+                      </span>
+                    </td>
+
+                    {/* Customer */}
+                    <td className="px-3 py-2.5">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editDraft.customerName || ''}
+                          onChange={e => setEditDraft(d => ({ ...d, customerName: e.target.value }))}
+                          className="w-full px-2 py-1.5 border border-blue-300 rounded text-base bg-white"
+                        />
+                      ) : (
+                        <span className="text-base text-gray-900 font-medium">{order.customerName}</span>
+                      )}
+                    </td>
+
+                    {/* Description */}
+                    <td className="px-3 py-2.5">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editDraft.description || ''}
+                          onChange={e => setEditDraft(d => ({ ...d, description: e.target.value }))}
+                          className="w-full px-2 py-1.5 border border-blue-300 rounded text-base bg-white"
+                        />
+                      ) : (
+                        <span className="text-base text-gray-800 line-clamp-2">{order.description}</span>
+                      )}
+                    </td>
+
+                    {/* Routing */}
+                    <td className="px-3 py-2.5">
+                      <div className="flex flex-wrap gap-1">
+                        {order.routing.slice(0, 3).map(s => {
+                          const sp = order.stationProgress.find(p => p.station === s);
+                          const isDone = sp?.status === 'COMPLETED';
+                          return (
+                            <span
+                              key={s}
+                              className={clsx(
+                                'inline-block px-1.5 py-0.5 rounded text-xs font-medium',
+                                isDone
+                                  ? 'bg-green-100 text-green-700 line-through'
+                                  : 'bg-gray-100 text-gray-600',
+                              )}
+                              title={STATION_DISPLAY_NAMES[s]}
+                            >
+                              {(STATION_DISPLAY_NAMES[s] || s).split(' ')[0]}
+                            </span>
+                          );
+                        })}
+                        {order.routing.length > 3 && (
+                          <span className="text-xs text-gray-400">+{order.routing.length - 3}</span>
+                        )}
+                      </div>
+                    </td>
+
+                    {/* Due Date */}
+                    <td className="px-3 py-2.5">
+                      {isEditing ? (
+                        <input
+                          type="date"
+                          value={editDraft.dueDate ? (editDraft.dueDate as string).split('T')[0] : ''}
+                          onChange={e => setEditDraft(d => ({ ...d, dueDate: e.target.value || null }))}
+                          className="w-full px-2 py-1.5 border border-blue-300 rounded text-sm bg-white"
+                        />
+                      ) : (
+                        <span className={clsx(
+                          'text-sm font-medium',
+                          isOverdue ? 'text-red-600 font-bold' : 'text-gray-700',
+                        )}>
+                          {order.dueDate ? formatDate(order.dueDate) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Status */}
+                    <td className="px-3 py-2.5">
+                      <span
+                        className="inline-block px-2 py-0.5 rounded-full text-xs font-bold"
+                        style={{
+                          backgroundColor: statusColor + '20',
+                          color: statusColor,
+                        }}
+                      >
+                        {STATUS_DISPLAY_NAMES[order.status] || order.status}
+                      </span>
+                    </td>
+
+                    {/* Progress */}
+                    <td className="px-3 py-2.5">
+                      {progress ? (
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-green-500 rounded-full transition-all"
+                              style={{ width: `${(progress.done / progress.total) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                            {progress.done}/{progress.total}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
+                      )}
+                    </td>
+
+                    {/* Notes */}
+                    <td className="px-3 py-2.5">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editDraft.notes || ''}
+                          onChange={e => setEditDraft(d => ({ ...d, notes: e.target.value }))}
+                          className="w-full px-2 py-1.5 border border-blue-300 rounded text-sm bg-white"
+                        />
+                      ) : (
+                        <span className="text-sm text-gray-500 line-clamp-1">{order.notes || ''}</span>
+                      )}
+                    </td>
+
+                    {/* Actions */}
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1 justify-center">
+                        {isEditing ? (
+                          <>
+                            <button
+                              onClick={() => handleUpdateOrder(order.id)}
+                              disabled={updateMutation.isPending}
+                              className="p-1.5 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50"
+                              title="Save"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={cancelEditing}
+                              className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+                              title="Cancel"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => startEditing(order)}
+                              className="p-1.5 text-gray-400 hover:text-blue-600 rounded hover:bg-blue-50"
+                              title="Edit"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <a
+                              href={`/orders/${order.id}`}
+                              className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+                              title="Open Details"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Bottom Bar ── */}
+      <div className="p-3 bg-gray-100 border-t flex items-center justify-between text-sm text-gray-500">
+        <span>
+          Order Entry &middot; {filteredOrders.length} active orders &middot; Auto-refreshes every 15s
+        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-400">
+            Tip: Press Enter in any field to save a new order
+          </span>
+          <span className="flex items-center gap-1 text-amber-600 font-medium">
+            <ClipboardList className="w-3.5 h-3.5" />
+            Order Entry
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default OrderEntryStationView;

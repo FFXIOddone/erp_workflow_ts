@@ -1,0 +1,202 @@
+import { Router, type Response } from 'express';
+import bcrypt from 'bcrypt';
+import { LoginSchema, UserRole } from '@erp/shared';
+import { prisma } from '../db/client.js';
+import { generateToken, authenticate, type AuthRequest } from '../middleware/auth.js';
+import { UnauthorizedError } from '../middleware/error-handler.js';
+import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import {
+  loginRateLimiter,
+  preLoginCheck,
+  recordFailedLogin,
+  recordSuccessfulLogin,
+  unlockAccount,
+  unblockIp,
+  getLockoutStatus,
+} from '../middleware/rate-limiter.js';
+
+export const authRouter = Router();
+
+// POST /auth/login - Protected by rate limiting and lockout checks
+authRouter.post('/login', loginRateLimiter, preLoginCheck, async (req: AuthRequest, res: Response) => {
+  const { username, password } = LoginSchema.parse(req.body);
+
+  const user = await prisma.user.findUnique({
+    where: { username },
+  });
+
+  if (!user || !user.isActive) {
+    // Record failed attempt for brute force protection
+    await recordFailedLogin(req, username, user ? 'Account inactive' : 'User not found');
+    
+    logActivity({
+      action: ActivityAction.LOGIN_FAILED,
+      entityType: EntityType.USER,
+      entityName: username,
+      description: `Failed login attempt for username: ${username}`,
+      req,
+    });
+    throw UnauthorizedError('Invalid credentials');
+  }
+
+  const validPassword = await bcrypt.compare(password, user.passwordHash);
+  if (!validPassword) {
+    // Record failed attempt for brute force protection
+    await recordFailedLogin(req, username, 'Invalid password');
+    
+    logActivity({
+      action: ActivityAction.LOGIN_FAILED,
+      entityType: EntityType.USER,
+      entityId: user.id,
+      entityName: username,
+      description: `Failed login attempt (wrong password) for: ${username}`,
+      req,
+    });
+    throw UnauthorizedError('Invalid credentials');
+  }
+
+  // Record successful login (resets lockout counters)
+  await recordSuccessfulLogin(req, user.id, username);
+
+  const token = generateToken(user);
+
+  // Log successful login
+  logActivity({
+    action: ActivityAction.LOGIN,
+    entityType: EntityType.USER,
+    entityId: user.id,
+    entityName: user.username,
+    description: `User ${user.displayName} logged in`,
+    userId: user.id,
+    req,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        email: user.email,
+        role: user.role,
+        allowedStations: user.allowedStations,
+      },
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+  });
+});
+
+// GET /auth/me
+authRouter.get('/me', authenticate, async (req: AuthRequest, res: Response) => {
+  res.json({
+    success: true,
+    data: req.user,
+  });
+});
+
+// POST /auth/refresh
+authRouter.post('/refresh', authenticate, async (req: AuthRequest, res: Response) => {
+  if (!req.user) {
+    throw UnauthorizedError();
+  }
+
+  const token = generateToken({
+    id: req.user.id,
+    username: req.user.username,
+    role: req.user.role,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      token,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+  });
+});
+
+// ============ Admin Lockout Management Endpoints ============
+import { requireRole } from '../middleware/auth.js';
+
+// GET /auth/lockout-status - View current lockouts (admin only)
+authRouter.get('/lockout-status', authenticate, requireRole(UserRole.ADMIN), async (_req: AuthRequest, res: Response) => {
+  const status = getLockoutStatus();
+  res.json({
+    success: true,
+    data: status,
+  });
+});
+
+// POST /auth/unlock-account - Unlock a specific account (admin only)
+authRouter.post('/unlock-account', authenticate, requireRole(UserRole.ADMIN), async (req: AuthRequest, res: Response) => {
+  const { username } = req.body as { username?: string };
+  
+  if (!username) {
+    res.status(400).json({
+      success: false,
+      error: 'Username is required',
+    });
+    return;
+  }
+
+  const unlocked = unlockAccount(username);
+  
+  if (unlocked) {
+    logActivity({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.USER,
+      entityName: username,
+      description: `Account "${username}" was manually unlocked by ${req.user?.displayName}`,
+      userId: req.userId,
+      req,
+    });
+  }
+
+  res.json({
+    success: true,
+    data: {
+      unlocked,
+      message: unlocked 
+        ? `Account "${username}" has been unlocked` 
+        : `Account "${username}" was not locked`,
+    },
+  });
+});
+
+// POST /auth/unblock-ip - Unblock a specific IP (admin only)
+authRouter.post('/unblock-ip', authenticate, requireRole(UserRole.ADMIN), async (req: AuthRequest, res: Response) => {
+  const { ip } = req.body as { ip?: string };
+  
+  if (!ip) {
+    res.status(400).json({
+      success: false,
+      error: 'IP address is required',
+    });
+    return;
+  }
+
+  const unblocked = unblockIp(ip);
+  
+  if (unblocked) {
+    logActivity({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.SYSTEM,
+      entityName: ip,
+      description: `IP "${ip}" was manually unblocked by ${req.user?.displayName}`,
+      userId: req.userId,
+      req,
+    });
+  }
+
+  res.json({
+    success: true,
+    data: {
+      unblocked,
+      message: unblocked 
+        ? `IP "${ip}" has been unblocked` 
+        : `IP "${ip}" was not blocked`,
+    },
+  });
+});

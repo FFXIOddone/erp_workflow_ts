@@ -1,0 +1,78 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/tooling/cli/schema.json",
+  "productName": "Wilde Signs Shop Floor",
+  "identifier": "com.wildesigns.shopfloor",
+  "version": "1.0.5",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5186",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Wilde Signs — Shop Floor",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis", "dmg", "app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [],
+    "copyright": "© 2026 Wilde Signs LLC",
+    "category": "Business",
+    "shortDescription": "Wilde Signs Shop Floor — unified station app",
+    "longDescription": "Production floor application for Wilde Signs ERP. Provides station-specific views for Design, Printing, Production, Shipping, and Order Entry. Connects to the ERP server for real-time work order management.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "wix": {
+        "upgradeCode": "7f3a9c2e-8b4d-4e6f-a1d3-5c9e2f8b7a4d",
+        "language": "en-US"
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp",
+        "installMode": "both",
+        "displayLanguageSelector": false
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENDMzRBRjAyMkJCODVEMDAKUldRQVhiZ3JBcTgwekRqb09XbzJCK0tYQ0s0a1g1OFpnSzdKOGt5NWlKUG4xRXd3L3RBQStqelAK",
+      "endpoints": [
+        "http://192.168.254.75:8001/api/v1/updates/{{target}}/{{current_version}}"
+      ],
+      "dangerousInsecureTransportProtocol": true
+    }
+  }
+}

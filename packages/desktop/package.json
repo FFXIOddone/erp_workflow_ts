@@ -1,0 +1,51 @@
+{
+  "name": "@erp/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "concurrently \"pnpm build:main --watch\" \"wait-on dist/main.js && electron .\"",
+    "build": "pnpm build:main",
+    "build:main": "tsc -p tsconfig.main.json",
+    "package": "electron-builder",
+    "clean": "rimraf dist out"
+  },
+  "dependencies": {
+    "@tauri-apps/plugin-shell": "2.3.5",
+    "bcrypt": "6.0.0",
+    "electron-is-dev": "^3.0.1",
+    "odbc": "2.3.6",
+    "vite": "^5.4.21",
+    "vitest": "^2.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "concurrently": "^8.2.2",
+    "electron": "^40.6.1",
+    "electron-builder": "^26.8.1",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.wildesigns.erp",
+    "productName": "ERP Workflow",
+    "directories": {
+      "output": "out"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

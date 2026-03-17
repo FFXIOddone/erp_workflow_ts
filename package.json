@@ -1,0 +1,47 @@
+{
+  "name": "erp-workflow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ERP Workflow Application for Wilde Signs",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -p \"[{name}]\" -c \"red,blue\" -n \"API,Web\" \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:all": "concurrently -k -p \"[{name}]\" -c \"red,blue,magenta,cyan,yellow\" -n \"API,Web,Portal,ShopFloor,SlipSort\" \"npm run dev:server\" \"npm run dev:web\" \"npm run dev:portal\" \"npm run dev:shop-floor\" \"npm run dev:slip-sort\"",
+    "dev:server": "npm run dev -w @erp/server",
+    "dev:web": "npm run dev -w @erp/web",
+    "dev:portal": "npm run dev -w @erp/portal",
+    "dev:shop-floor": "npm run dev -w @erp/shop-floor",
+    "dev:slip-sort": "npm run dev -w @erp/slip-sort",
+    "dev:slip-sort:backend": "npm run dev:backend -w @erp/slip-sort",
+    "dev:slip-sort:frontend": "npm run dev:frontend -w @erp/slip-sort",
+    "build": "npm run build --workspaces --if-present",
+    "build:server": "npm run build -w @erp/server",
+    "build:web": "npm run build -w @erp/web",
+    "build:portal": "npm run build -w @erp/portal",
+    "build:shop-floor": "npm run build -w @erp/shop-floor",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "db:push": "npm run db:push -w @erp/server",
+    "db:migrate": "npm run db:migrate -w @erp/server",
+    "db:studio": "npm run db:studio -w @erp/server",
+    "db:seed": "npm run db:seed -w @erp/server",
+    "clean": "rimraf node_modules packages/*/node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "npm@10.5.0"
+}
