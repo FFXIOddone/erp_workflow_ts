@@ -37,11 +37,19 @@ interface FileInfo {
   isDesign: boolean;
 }
 
+/** Compute the effective base path — 4-digit WO numbers use Safari/Port City Signs path */
+function getEffectiveBasePath(basePath: string, safariPath: string | null | undefined, woNumber: string): string {
+  if (woNumber.length === 4) {
+    return safariPath || path.join(basePath, 'Safari');
+  }
+  return basePath;
+}
+
 /**
  * Resolve the network folder for a work order.
  * Priority: WO-level manual override > customer override > dynamic discovery
  */
-async function resolveOrderFolder(orderId: string, basePath: string): Promise<{
+async function resolveOrderFolder(orderId: string, basePath: string, safariBasePath?: string | null): Promise<{
   found: boolean;
   folderPath: string | null;
   folderName: string | null;
@@ -58,6 +66,8 @@ async function resolveOrderFolder(orderId: string, basePath: string): Promise<{
   if (!order) return { found: false, folderPath: null, folderName: null, customerFolder: null, searchedLocations: [], hasManualOverride: false, order: null };
 
   const woNumber = extractWoNumber(order.orderNumber);
+  // 4-digit WO numbers are Safari/Port City Signs — use Safari base path for auto-discovery
+  const effectiveBasePath = getEffectiveBasePath(basePath, safariBasePath, woNumber);
 
   // Strategy 0: WO-level manual override (highest priority)
   if (order.networkFolderPath) {
@@ -77,7 +87,7 @@ async function resolveOrderFolder(orderId: string, basePath: string): Promise<{
   }
 
   // Fall through to customer override > dynamic discovery
-  const result = findWoFolder(basePath, woNumber, order.customerName, order.customer?.networkDriveFolderPath);
+  const result = findWoFolder(effectiveBasePath, woNumber, order.customerName, order.customer?.networkDriveFolderPath);
   return { ...result, hasManualOverride: false, order };
 }
 
@@ -103,7 +113,7 @@ fileBrowserRouter.get('/orders/:orderId/files', async (req: AuthRequest, res: Re
   }
 
   // Get the order with customer folder override and WO-level override
-  const searchResult = await resolveOrderFolder(orderId, settings.networkDriveBasePath);
+  const searchResult = await resolveOrderFolder(orderId, settings.networkDriveBasePath, settings.networkDriveSafariPath);
   
   if (!searchResult.order) {
     throw NotFoundError('Order not found');
@@ -244,7 +254,7 @@ fileBrowserRouter.get('/orders/:orderId/files/content', async (req: AuthRequest,
   }
 
   // Get the order folder (WO override > customer override > dynamic)
-  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath);
+  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath, settings.networkDriveSafariPath);
   
   if (!resolved.order) {
     throw NotFoundError('Order not found');
@@ -321,7 +331,7 @@ fileBrowserRouter.get('/orders/:orderId/files/open-path', async (req: AuthReques
   }
 
   // Get the order with customer folder override
-  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath);
+  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath, settings.networkDriveSafariPath);
 
   if (!resolved.order) {
     throw NotFoundError('Order not found');
@@ -373,7 +383,7 @@ fileBrowserRouter.get('/orders/:orderId/folder-path', async (req: AuthRequest, r
   }
 
   // Get the order folder using centralized resolver
-  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath);
+  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath, settings.networkDriveSafariPath);
 
   if (!resolved.order) {
     throw NotFoundError('Order not found');
@@ -434,7 +444,7 @@ fileBrowserRouter.post('/orders/:orderId/upload', upload.single('file'), async (
   }
 
   // Get the order with description and customer folder override
-  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath);
+  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath, settings.networkDriveSafariPath);
 
   if (!resolved.order) {
     throw NotFoundError('Order not found');
@@ -447,7 +457,9 @@ fileBrowserRouter.post('/orders/:orderId/upload', upload.single('file'), async (
   if (resolved.found && resolved.folderPath) {
     folderPath = resolved.folderPath;
   } else {
-    const result = getOrCreateOrderFolder(settings.networkDriveBasePath, resolved.order, true);
+    const woNum = extractWoNumber(resolved.order.orderNumber);
+    const effectiveBase = getEffectiveBasePath(settings.networkDriveBasePath!, settings.networkDriveSafariPath, woNum);
+    const result = getOrCreateOrderFolder(effectiveBase, resolved.order, true);
     folderPath = result.folderPath;
     folderCreated = result.created;
   }
@@ -504,7 +516,7 @@ fileBrowserRouter.post('/orders/:orderId/create-folder', async (req: AuthRequest
   }
 
   // Get the order with customer folder override
-  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath);
+  const resolved = await resolveOrderFolder(orderId, settings.networkDriveBasePath, settings.networkDriveSafariPath);
 
   if (!resolved.order) {
     throw NotFoundError('Order not found');
@@ -525,7 +537,9 @@ fileBrowserRouter.post('/orders/:orderId/create-folder', async (req: AuthRequest
   }
 
   // Create new standardized folder structure
-  const result = getOrCreateOrderFolder(settings.networkDriveBasePath, resolved.order, true);
+  const woNum = extractWoNumber(resolved.order.orderNumber);
+  const effectiveBase = getEffectiveBasePath(settings.networkDriveBasePath!, settings.networkDriveSafariPath, woNum);
+  const result = getOrCreateOrderFolder(effectiveBase, resolved.order, true);
 
   res.json({
     success: true,

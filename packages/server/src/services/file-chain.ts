@@ -75,6 +75,7 @@ export async function getOrderFileChain(workOrderId: string) {
       workOrder: { select: { id: true, orderNumber: true, customerName: true } },
       ripJob: { select: { id: true, status: true, hotfolderName: true, ripJobGuid: true } },
       linkedBy: { select: { id: true, username: true, displayName: true } },
+      confirmedBy: { select: { id: true, username: true, displayName: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -327,6 +328,9 @@ export async function manuallyLinkCutFile(input: {
       linkConfidence: 'MANUAL',
       linkedAt: new Date(),
       linkedById: input.userId,
+      confirmed: true,
+      confirmedAt: new Date(),
+      confirmedById: input.userId,
       status: 'CUT_PENDING',
     },
   });
@@ -349,6 +353,79 @@ export async function updatePrintCutLinkStatus(
   });
 }
 
+/**
+ * Confirm an auto-linked cut file (user accepts the suggestion)
+ */
+export async function confirmPrintCutLink(linkId: string, userId: string) {
+  const link = await prisma.printCutLink.findUnique({ where: { id: linkId } });
+  if (!link) throw new Error('PrintCutLink not found');
+
+  return prisma.printCutLink.update({
+    where: { id: linkId },
+    data: {
+      confirmed: true,
+      confirmedAt: new Date(),
+      confirmedById: userId,
+    },
+  });
+}
+
+/**
+ * Dismiss an auto-linked cut file (user rejects the suggestion)
+ * Creates a DismissedJobLink to prevent re-linking, then clears cut data.
+ */
+export async function dismissPrintCutLink(linkId: string, userId: string) {
+  const link = await prisma.printCutLink.findUnique({ where: { id: linkId } });
+  if (!link) throw new Error('PrintCutLink not found');
+
+  // Create dismissed record to prevent auto-linker from re-linking
+  if (link.cutFileName && link.cutFileSource) {
+    const jobType = link.cutFileSource === 'FIERY' ? 'FIERY_JOB' : 'CUT_JOB';
+    const jobIdentifier = link.cutFileName;
+
+    await prisma.dismissedJobLink.upsert({
+      where: {
+        workOrderId_jobType_jobIdentifier: {
+          workOrderId: link.workOrderId,
+          jobType: jobType as any,
+          jobIdentifier,
+        },
+      },
+      update: { dismissedById: userId },
+      create: {
+        workOrderId: link.workOrderId,
+        jobType: jobType as any,
+        jobIdentifier,
+        dismissedById: userId,
+      },
+    });
+  }
+
+  // Determine reset status
+  const resetStatus = link.printCompletedAt || 
+    ['PRINTED', 'CUT_PENDING'].includes(link.status)
+    ? 'PRINTED'
+    : 'DESIGN';
+
+  return prisma.printCutLink.update({
+    where: { id: linkId },
+    data: {
+      cutFileName: null,
+      cutFilePath: null,
+      cutFileSize: null,
+      cutFileSource: null,
+      cutFileFormat: null,
+      linkedAt: null,
+      linkedById: null,
+      linkConfidence: 'NONE',
+      confirmed: false,
+      confirmedAt: null,
+      confirmedById: null,
+      status: resetStatus as any,
+    },
+  });
+}
+
 // ─── Auto-Linking Engine ───────────────────────────────
 
 /**
@@ -362,56 +439,89 @@ export async function runAutoLinkingCycle(): Promise<{
   errors: string[];
 }> {
   const result = { linksCreated: 0, linksUpdated: 0, errors: [] as string[] };
+  const SRC = 'AUTO_LINKER';
 
   try {
     // Phase 1: Sync RIP job status → PrintCutLink status
     await syncRipJobsToPrintCutLinks(result);
+    await logChainEvent({ level: 'DEBUG', source: SRC, event: 'PHASE1_COMPLETE', message: `RIP sync done — ${result.linksUpdated} updated` });
   } catch (err: any) {
     result.errors.push(`RIP sync error: ${err.message}`);
+    await logChainEvent({ level: 'ERROR', source: SRC, event: 'PHASE1_ERROR', message: err.message, success: false });
   }
 
   try {
     // Phase 2: Discover new print-cut files from Thrive queues
+    const beforeCreated = result.linksCreated;
     await discoverThrivePrintCutFiles(result);
+    const newLinks = result.linksCreated - beforeCreated;
+    if (newLinks > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE2_COMPLETE', message: `Thrive discovery: ${newLinks} new links created` });
   } catch (err: any) {
-    // Silently skip if Thrive shares are offline
     if (!err.message?.includes('ENOENT') && !err.message?.includes('ECONNREFUSED')) {
       result.errors.push(`Thrive discovery error: ${err.message}`);
+      await logChainEvent({ level: 'ERROR', source: SRC, event: 'PHASE2_ERROR', message: err.message, success: false });
     }
   }
 
   try {
     // Phase 2.5: CutID-based linking (highest confidence matching)
+    const beforeUpdated = result.linksUpdated;
     await matchByCutId(result);
+    const matched = result.linksUpdated - beforeUpdated;
+    if (matched > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE2_5_COMPLETE', message: `CutID matching: ${matched} links matched` });
   } catch (err: any) {
     result.errors.push(`CutID match error: ${err.message}`);
+    await logChainEvent({ level: 'ERROR', source: SRC, event: 'PHASE2_5_ERROR', message: err.message, success: false });
   }
 
   try {
     // Phase 3: Match Thrive cut files to existing links
+    const beforeUpdated = result.linksUpdated;
     await matchThriveCutFiles(result);
+    const matched = result.linksUpdated - beforeUpdated;
+    if (matched > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE3_COMPLETE', message: `Thrive cut matching: ${matched} links updated` });
   } catch (err: any) {
     if (!err.message?.includes('ENOENT') && !err.message?.includes('ECONNREFUSED')) {
       result.errors.push(`Thrive cut match error: ${err.message}`);
+      await logChainEvent({ level: 'ERROR', source: SRC, event: 'PHASE3_ERROR', message: err.message, success: false });
     }
   }
 
   try {
     // Phase 4: Match Fiery .zcc cut files to existing links
+    const beforeUpdated = result.linksUpdated;
     await matchFieryCutFiles(result);
+    const matched = result.linksUpdated - beforeUpdated;
+    if (matched > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE4_COMPLETE', message: `Fiery cut matching: ${matched} links updated` });
   } catch (err: any) {
     if (!err.message?.includes('ENOENT') && !err.message?.includes('ECONNREFUSED')) {
       result.errors.push(`Fiery cut match error: ${err.message}`);
+      await logChainEvent({ level: 'ERROR', source: SRC, event: 'PHASE4_ERROR', message: err.message, success: false });
     }
   }
 
   try {
     // Phase 5: Match Zund completed cuts to existing links
+    const beforeUpdated = result.linksUpdated;
     await matchZundCompletedCuts(result);
+    const matched = result.linksUpdated - beforeUpdated;
+    if (matched > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE5_COMPLETE', message: `Zund completed matching: ${matched} links updated` });
   } catch (err: any) {
     if (!err.message?.includes('ENOENT') && !err.message?.includes('ECONNREFUSED')) {
       result.errors.push(`Zund match error: ${err.message}`);
+      await logChainEvent({ level: 'ERROR', source: SRC, event: 'PHASE5_ERROR', message: err.message, success: false });
     }
+  }
+
+  const total = result.linksCreated + result.linksUpdated;
+  if (total > 0 || result.errors.length > 0) {
+    await logChainEvent({
+      level: result.errors.length > 0 ? 'WARN' : 'INFO',
+      source: SRC,
+      event: 'CYCLE_COMPLETE',
+      message: `Auto-link cycle: ${result.linksCreated} created, ${result.linksUpdated} updated, ${result.errors.length} errors`,
+      details: { linksCreated: result.linksCreated, linksUpdated: result.linksUpdated, errors: result.errors },
+    });
   }
 
   return result;
@@ -571,6 +681,7 @@ async function matchByCutId(result: { linksUpdated: number }) {
       cutId: { not: null },
       cutFileName: null,
       status: { in: ['PRINTED', 'CUT_PENDING'] },
+      confirmed: false,
     },
   });
   if (linksWithCutId.length === 0) return;
@@ -655,6 +766,7 @@ async function matchThriveCutFiles(result: { linksUpdated: number }) {
     where: {
       cutFileName: null,
       status: { in: ['PRINTED', 'CUT_PENDING'] },
+      confirmed: false,
     },
     include: {
       workOrder: { select: { orderNumber: true } },
@@ -727,6 +839,7 @@ async function matchFieryCutFiles(result: { linksUpdated: number }) {
     where: {
       cutFileName: null,
       status: { in: ['PRINTED', 'CUT_PENDING'] },
+      confirmed: false,
     },
     include: {
       workOrder: { select: { orderNumber: true } },
@@ -972,4 +1085,96 @@ export async function traceFile(fileName: string) {
         : 'NOT_PRINTED'
       : 'NOT_FOUND',
   };
+}
+
+// ─── Structured Logging ────────────────────────────────
+
+/**
+ * Write a structured log entry to the FileChainLog table.
+ * Used by the Zund watcher, auto-linker, and manual operations
+ * so the full print→cut→WO linking flow is traceable.
+ */
+export async function logChainEvent(entry: {
+  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
+  source: string;
+  event: string;
+  message: string;
+  details?: Record<string, unknown>;
+  cutId?: string;
+  zccFileName?: string;
+  printFileName?: string;
+  workOrderId?: string;
+  workOrderNumber?: string;
+  printCutLinkId?: string;
+  success?: boolean;
+}): Promise<void> {
+  try {
+    await prisma.fileChainLog.create({
+      data: {
+        level: entry.level,
+        source: entry.source,
+        event: entry.event,
+        message: entry.message,
+        details: entry.details ?? undefined,
+        cutId: entry.cutId,
+        zccFileName: entry.zccFileName,
+        printFileName: entry.printFileName,
+        workOrderId: entry.workOrderId,
+        workOrderNumber: entry.workOrderNumber,
+        printCutLinkId: entry.printCutLinkId,
+        success: entry.success ?? true,
+      },
+    });
+  } catch (err) {
+    // Logging should never crash the caller
+    console.error('Failed to write FileChainLog:', err);
+  }
+}
+
+/**
+ * Query file chain logs with filters
+ */
+export async function queryFileChainLogs(filters: {
+  source?: string;
+  event?: string;
+  level?: string;
+  cutId?: string;
+  workOrderId?: string;
+  zccFileName?: string;
+  success?: boolean;
+  fromDate?: string | Date;
+  toDate?: string | Date;
+  limit?: number;
+  page?: number;
+}) {
+  const where: any = {};
+
+  if (filters.source) where.source = filters.source;
+  if (filters.event) where.event = filters.event;
+  if (filters.level) where.level = filters.level;
+  if (filters.cutId) where.cutId = { contains: filters.cutId, mode: 'insensitive' };
+  if (filters.workOrderId) where.workOrderId = filters.workOrderId;
+  if (filters.zccFileName) where.zccFileName = { contains: filters.zccFileName, mode: 'insensitive' };
+  if (filters.success !== undefined) where.success = filters.success;
+  if (filters.fromDate || filters.toDate) {
+    where.timestamp = {};
+    if (filters.fromDate) where.timestamp.gte = new Date(filters.fromDate);
+    if (filters.toDate) where.timestamp.lte = new Date(filters.toDate);
+  }
+
+  const limit = filters.limit || 100;
+  const page = filters.page || 1;
+  const skip = (page - 1) * limit;
+
+  const [items, total] = await Promise.all([
+    prisma.fileChainLog.findMany({
+      where,
+      orderBy: { timestamp: 'desc' },
+      skip,
+      take: limit,
+    }),
+    prisma.fileChainLog.count({ where }),
+  ]);
+
+  return { items, total, page, limit, totalPages: Math.ceil(total / limit) };
 }

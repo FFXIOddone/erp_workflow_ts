@@ -979,6 +979,21 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
     },
   });
 
+  // Create placeholder file chain entry for the new order
+  try {
+    await prisma.printCutLink.create({
+      data: {
+        workOrderId: order.id,
+        printFileName: order.orderNumber,
+        printFilePath: '',
+        status: 'DESIGN',
+        linkConfidence: 'NONE',
+      },
+    });
+  } catch (e) {
+    console.error('Failed to create placeholder chain:', e);
+  }
+
   broadcast({ type: 'ORDER_CREATED', payload: order, timestamp: new Date() });
 
   // Log activity

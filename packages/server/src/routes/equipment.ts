@@ -463,9 +463,9 @@ router.get('/:id/live-detail', async (req: AuthRequest, res: Response) => {
         }
 
         if (zundId && availableZunds.includes(zundId)) {
-          const accessible = isZundStatsAccessible(zundId);
+          const accessible = await isZundStatsAccessible(zundId);
           if (accessible) {
-            result.zund = getZundDashboard(zundId);
+            result.zund = await getZundDashboard(zundId);
             result.zund.zundId = zundId;
             result.zund.accessible = true;
           } else {
@@ -1337,22 +1337,32 @@ router.get('/zund/:zundId/live', async (req: AuthRequest, res) => {
     const limit = parseInt(req.query.limit as string) || 50;
     const zccLimit = parseInt(req.query.zccLimit as string) || 50;
 
-    const data = await getZundLiveData(zundId, {
-      recentJobLimit: limit,
-      zccLimit,
-    });
+    // Hard 20s timeout — if data takes longer, return 504
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Zund live data timeout (20s)')), 20_000)
+    );
+
+    const data = await Promise.race([
+      getZundLiveData(zundId, { recentJobLimit: limit, zccLimit }),
+      timeout,
+    ]);
 
     res.json({ success: true, data });
   } catch (err: any) {
-    console.error('[Zund Live]', err);
-    res.status(500).json({ success: false, error: err.message });
+    if (err.message?.includes('timeout')) {
+      console.warn('[Zund Live] Request timed out for', req.params.zundId);
+      res.status(504).json({ success: false, error: 'Zund live data timed out. Retrying will use cached data.' });
+    } else {
+      console.error('[Zund Live]', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
   }
 });
 
 // ============ Thrive RIP Integration ============
 
 import { thriveService, parseJobInfo } from '../services/thrive.js';
-import { zundMatchService, normalizeJobName } from '../services/zund-match.js';
+import { zundMatchService, normalizeJobName, extractCutId } from '../services/zund-match.js';
 import { getAllFieryJobs, type FieryJob } from '../services/fiery.js';
 
 // GET /equipment/thrive/config - Get Thrive equipment configuration
@@ -1425,6 +1435,18 @@ router.get('/thrive/machine/:ip', async (req: AuthRequest, res) => {
     // Link to work orders
     const linkedJobs = await thriveService.linkJobsToWorkOrders(allJobs);
     
+    // Flatten { job, workOrder } into the shape the frontend expects
+    const flatPrintJobs = linkedJobs.map(({ job, workOrder }: any) => ({
+      ...job,
+      workOrder: workOrder ? {
+        id: workOrder.id,
+        orderNumber: workOrder.orderNumber,
+        title: workOrder.description || workOrder.orderNumber,
+        status: workOrder.status,
+        customerName: workOrder.customerName,
+      } : undefined,
+    }));
+    
     // Get cut jobs if this machine has a cutter path
     let cutJobs: any[] = [];
     if (machine.cutterPath) {
@@ -1437,12 +1459,12 @@ router.get('/thrive/machine/:ip', async (req: AuthRequest, res) => {
       success: true,
       data: {
         machine: { id: machine.id, name: machine.name, ip: machine.ip },
-        printJobs: linkedJobs,
+        printJobs: flatPrintJobs,
         cutJobs,
         summary: {
           totalPrintJobs: allJobs.length,
           totalCutJobs: cutJobs.length,
-          linkedToWorkOrders: linkedJobs.filter((j: any) => j.workOrder).length,
+          linkedToWorkOrders: flatPrintJobs.filter((j: any) => j.workOrder).length,
           printers: machine.printers.map(p => p.name),
         },
       },
@@ -1544,7 +1566,7 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
       thriveService.getAllJobs(),
       prisma.workOrder.findFirst({
         where: { orderNumber },
-        select: { id: true, description: true },
+        select: { id: true },
       }),
     ]);
     const { printJobs, cutJobs } = thriveResult;
@@ -1556,39 +1578,14 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
     }) : [];
     const dismissedSet = new Set(dismissedLinks.map(d => `${d.jobType}:${d.jobIdentifier}`));
     
-    // Build description tokens for fuzzy matching (words 5+ chars, lowercased)
-    const descriptionTokens: string[] = [];
-    if (order?.description) {
-      const tokens = order.description
-        .replace(/[^a-zA-Z0-9\s]/g, ' ')
-        .split(/\s+/)
-        .filter(t => t.length >= 5)
-        .map(t => t.toLowerCase());
-      // Only use for matching if we have meaningful tokens
-      if (tokens.length >= 1) descriptionTokens.push(...tokens);
-    }
-    
-    // Filter by work order number
-    const matchingPrintJobs = printJobs.filter(job => 
-      job.workOrderNumber === orderNumber ||
-      job.fileName.includes(orderNumber) ||
-      job.jobName.includes(orderNumber)
-    );
-    
-    // Description-based matching for print jobs not already matched
-    if (descriptionTokens.length > 0) {
-      const matchedGuids = new Set(matchingPrintJobs.map((j: any) => j.jobGuid));
-      for (const job of printJobs) {
-        if (matchedGuids.has(job.jobGuid)) continue;
-        const jobNameLower = job.jobName.toLowerCase();
-        const matchCount = descriptionTokens.filter(token => jobNameLower.includes(token)).length;
-        // Require at least 2 matching tokens (or 1 if token is very specific / 8+ chars)
-        if (matchCount >= 2 || (matchCount === 1 && descriptionTokens.some(t => t.length >= 8 && jobNameLower.includes(t)))) {
-          matchingPrintJobs.push({ ...job, descriptionMatch: true } as any);
-          matchedGuids.add(job.jobGuid);
-        }
-      }
-    }
+    // Filter by work order number — use parseJobInfo (same as file chain system)
+    const bareNumber = orderNumber.replace(/^WO/i, '');
+    const matchingPrintJobs = printJobs.filter(job => {
+      if (job.workOrderNumber === bareNumber) return true;
+      const fromFile = parseJobInfo(job.fileName);
+      const fromName = parseJobInfo(job.jobName);
+      return fromFile.workOrderNumber === bareNumber || fromName.workOrderNumber === bareNumber;
+    });
     
     // Collect GUIDs from matching print jobs for cut file cross-reference
     const printJobGuids = new Set<string>();
@@ -1598,8 +1595,10 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
     
     // Pending cuts in Thrive queue — match by WO number OR by GUID link to print jobs
     const matchingCutJobs = cutJobs.filter(job => {
-      // Direct WO match
-      if (job.workOrderNumber === orderNumber || job.jobName.includes(orderNumber)) return true;
+      // Direct WO match via parseJobInfo
+      if (job.workOrderNumber === bareNumber) return true;
+      const cutInfo = parseJobInfo(job.jobName);
+      if (cutInfo.workOrderNumber === bareNumber) return true;
       // GUID match: cut file GUID matches a print job for this WO
       if (job.guid && printJobGuids.has(job.guid.toLowerCase())) return true;
       return false;
@@ -1613,7 +1612,6 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
     
     // ─── Parallel I/O: Zund queue, Zund completed, and Fiery are independent ───
     // Pre-compute shared data needed by all three branches
-    const bareNumber = orderNumber.replace(/^WO/i, '');
     const normalizedPrintNames = new Set<string>();
     for (const pj of matchingPrintJobs) {
       const norm = normalizeJobName(pj.jobName);
@@ -1625,6 +1623,12 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
       original: pj.jobName,
       normalized: zundMatchService.normalizeJobName(pj.jobName),
     }));
+    // Build CutID index from this order's print jobs for cross-referencing with Zund cuts
+    const printCutIdMap = new Map<string, string>();
+    for (const pj of matchingPrintJobs) {
+      const cutId = extractCutId(pj.jobName) || extractCutId(pj.fileName);
+      if (cutId) printCutIdMap.set(cutId.toLowerCase(), pj.jobName);
+    }
 
     const [zundQueueResult, zundCompletedResult, fieryResult] = await Promise.all([
       // ─── Zund Queue Files ───
@@ -1672,18 +1676,24 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
           const matched: Array<{ jobId: number; jobName: string; productionStart: Date; productionEnd: Date; copyDone: number; matchedVia?: string }> = [];
           for (const zj of allZundJobs) {
             if (seenZundJobs.has(zj.jobId)) continue;
-            const normalizedZund = zundMatchService.normalizeJobName(zj.jobName);
-            if (zj.jobName.includes(orderNumber)) {
-              seenZundJobs.add(zj.jobId);
-              matched.push({ ...zj, matchedVia: `WO number in job name` });
-              continue;
-            }
-            for (const pj of printJobNames) {
-              if (seenZundJobs.has(zj.jobId)) break;
-              if (normalizedZund === pj.normalized || normalizedZund.includes(pj.normalized) || pj.normalized.includes(normalizedZund)) {
+            // Strategy 1: CutID cross-reference (highest confidence)
+            const zundCutId = extractCutId(zj.jobName);
+            if (zundCutId) {
+              const printJobName = printCutIdMap.get(zundCutId.toLowerCase());
+              if (printJobName) {
                 seenZundJobs.add(zj.jobId);
-                matched.push({ ...zj, matchedVia: `Matched print job: ${pj.original.substring(0, 50)}` });
-                break;
+                matched.push({ ...zj, matchedVia: `CutID match: ${printJobName.substring(0, 50)}` });
+                continue;
+              }
+              // Strategy 2: CutID lookup in Thrive print history logs
+              const thriveLogEntry = await thriveService.findJobByCutId(zundCutId);
+              if (thriveLogEntry) {
+                const woInfo = parseJobInfo(thriveLogEntry.fileName || thriveLogEntry.customizedName);
+                if (woInfo.workOrderNumber === bareNumber) {
+                  seenZundJobs.add(zj.jobId);
+                  matched.push({ ...zj, matchedVia: `CutID match via Thrive print log` });
+                  continue;
+                }
               }
             }
           }
@@ -1706,11 +1716,6 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
               for (const printNorm of normalizedPrintNames) {
                 if (normalizedFiery === printNorm || normalizedFiery.includes(printNorm) || printNorm.includes(normalizedFiery)) return true;
               }
-              if (descriptionTokens.length > 0) {
-                const fjNameLower = fj.jobName.toLowerCase();
-                const matchCount = descriptionTokens.filter(token => fjNameLower.includes(token)).length;
-                if (matchCount >= 2 || (matchCount === 1 && descriptionTokens.some(t => t.length >= 8 && fjNameLower.includes(t)))) return true;
-              }
               return false;
             })
             .map(fj => {
@@ -1720,15 +1725,7 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
               } else if (fj.jobName.includes(orderNumber) || fj.jobName.includes(bareNumber)) {
                 matchedVia = 'Order number in job name';
               } else {
-                const normalizedFiery = normalizeJobName(fj.jobName);
-                let isCrossRef = false;
-                for (const printNorm of normalizedPrintNames) {
-                  if (normalizedFiery === printNorm || normalizedFiery.includes(printNorm) || printNorm.includes(normalizedFiery)) {
-                    isCrossRef = true;
-                    break;
-                  }
-                }
-                matchedVia = isCrossRef ? 'Cross-reference with Thrive print job' : 'Matched via order description';
+                matchedVia = 'Cross-reference with Thrive print job';
               }
               return { ...fj, matchedVia };
             });
@@ -2265,12 +2262,13 @@ router.get('/thrive/unlinked-jobs', async (req: AuthRequest, res) => {
 // GET /equipment/workorder/:orderNumber/activity - Get equipment activity timeline for an order
 router.get('/workorder/:orderNumber/activity', async (req, res) => {
   const { orderNumber } = req.params;
-  
+  const bareNumber = orderNumber.replace(/^WO/i, '');
+
   try {
     const { printJobs, cutJobs } = await thriveService.getAllJobs();
-    
+
     // Filter jobs for this work order
-    const matchingPrintJobs = printJobs.filter(job => 
+    const matchingPrintJobs = printJobs.filter(job =>
       job.workOrderNumber === orderNumber ||
       job.fileName.includes(orderNumber) ||
       job.jobName.includes(orderNumber)
@@ -2344,34 +2342,34 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
     let zundCompletedCount = 0;
     try {
       const allZundJobs = await zundMatchService.getZundCompletedJobs(90);
-      
-      // Get normalized names of matching print jobs for matching
-      const printJobNames = matchingPrintJobs.map(pj => ({
-        original: pj.jobName,
-        normalized: zundMatchService.normalizeJobName(pj.jobName),
-      }));
-      
+
+      // Build CutID index from this order's print jobs
+      const timelinePrintCutIdMap = new Map<string, string>();
+      for (const pj of matchingPrintJobs) {
+        const cutId = extractCutId(pj.jobName) || extractCutId(pj.fileName);
+        if (cutId) timelinePrintCutIdMap.set(cutId.toLowerCase(), pj.jobName);
+      }
+
       for (const zj of allZundJobs) {
-        const normalizedZund = zundMatchService.normalizeJobName(zj.jobName);
         let matched = false;
-        
-        // Check direct WO match in Zund job name
-        if (zj.jobName.includes(orderNumber)) {
-          matched = true;
-        }
-        
-        // Check filename match against print jobs
-        if (!matched) {
-          for (const pj of printJobNames) {
-            if (normalizedZund === pj.normalized ||
-                normalizedZund.includes(pj.normalized) ||
-                pj.normalized.includes(normalizedZund)) {
-              matched = true;
-              break;
+
+        // Match via CutID cross-reference with this order's print jobs
+        const zundCutId = extractCutId(zj.jobName);
+        if (zundCutId) {
+          if (timelinePrintCutIdMap.has(zundCutId.toLowerCase())) {
+            matched = true;
+          } else {
+            // Fallback: CutID lookup in Thrive print history logs
+            const thriveLogEntry = await thriveService.findJobByCutId(zundCutId);
+            if (thriveLogEntry) {
+              const woInfo = parseJobInfo(thriveLogEntry.fileName || thriveLogEntry.customizedName);
+              if (woInfo.workOrderNumber === bareNumber) {
+                matched = true;
+              }
             }
           }
         }
-        
+
         if (matched) {
           zundCompletedCount++;
           activity.push({

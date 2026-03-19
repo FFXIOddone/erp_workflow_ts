@@ -68,6 +68,7 @@ interface SystemSettings {
   enableProductionListSync: boolean;
   // Network Drive
   networkDriveBasePath: string | null;
+  networkDriveSafariPath: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1031,6 +1032,21 @@ export function SettingsPage() {
                   value={(formData as Record<string, string>).networkDriveBasePath || ''}
                   onChange={(e) => handleChange('networkDriveBasePath' as keyof SystemSettings, e.target.value || null)}
                   placeholder="S:\ or \\SERVER\Share"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+              </div>
+
+              {/* Safari / Port City Signs Path */}
+              <div className="mt-4">
+                <h3 className="text-sm font-semibold text-gray-900 mb-1">Safari / Port City Signs Path</h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  Base path for Safari (Port City Signs) orders — used for 4-digit work order numbers. Defaults to <code className="bg-gray-100 px-1 rounded">BasePath\Safari</code> if left blank.
+                </p>
+                <input
+                  type="text"
+                  value={(formData as Record<string, string>).networkDriveSafariPath || ''}
+                  onChange={(e) => handleChange('networkDriveSafariPath' as keyof SystemSettings, e.target.value || null)}
+                  placeholder="S:\Safari (leave blank to auto-detect)"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 />
               </div>

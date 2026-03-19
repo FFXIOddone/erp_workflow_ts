@@ -17,9 +17,13 @@ import {
   createPrintCutLink,
   manuallyLinkCutFile,
   updatePrintCutLinkStatus,
+  confirmPrintCutLink,
+  dismissPrintCutLink,
   traceFile,
   runAutoLinkingCycle,
+  queryFileChainLogs,
 } from '../services/file-chain.js';
+import { getZundWatcherStatus } from '../services/zund-watcher.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
 import { broadcast } from '../ws/server.js';
 
@@ -151,6 +155,48 @@ router.put('/links/:id/cut-file', async (req: AuthRequest, res) => {
   res.json({ success: true, data: link });
 });
 
+// ─── Confirm / Dismiss ────────────────────────────────
+
+/**
+ * PUT /file-chain/links/:id/confirm
+ * Confirm an auto-linked cut file suggestion
+ */
+router.put('/links/:id/confirm', async (req: AuthRequest, res) => {
+  const link = await confirmPrintCutLink(req.params.id, req.userId!);
+
+  await logActivity({
+    action: ActivityAction.UPDATE,
+    entityType: EntityType.WORK_ORDER,
+    entityId: link.workOrderId,
+    description: `Confirmed file chain link: ${link.cutFileName}`,
+    userId: req.userId!,
+    req,
+  });
+
+  broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } });
+  res.json({ success: true, data: link });
+});
+
+/**
+ * PUT /file-chain/links/:id/dismiss
+ * Dismiss an auto-linked cut file suggestion
+ */
+router.put('/links/:id/dismiss', async (req: AuthRequest, res) => {
+  const link = await dismissPrintCutLink(req.params.id, req.userId!);
+
+  await logActivity({
+    action: ActivityAction.UPDATE,
+    entityType: EntityType.WORK_ORDER,
+    entityId: link.workOrderId,
+    description: `Dismissed file chain link suggestion`,
+    userId: req.userId!,
+    req,
+  });
+
+  broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } });
+  res.json({ success: true, data: link });
+});
+
 // ─── Status Update ────────────────────────────────────
 
 /**
@@ -203,6 +249,39 @@ router.post('/sync', async (req: AuthRequest, res) => {
   });
 
   res.json({ success: true, data: result });
+});
+
+// ─── Logs ────────────────────────────────────────────
+
+/**
+ * GET /file-chain/logs
+ * Query structured pipeline logs for debugging
+ */
+router.get('/logs', async (req: AuthRequest, res) => {
+  const { source, event, level, cutId, workOrderId, fromDate, toDate, limit, page } = req.query;
+  const logs = await queryFileChainLogs({
+    source: source as string | undefined,
+    event: event as string | undefined,
+    level: level as string | undefined,
+    cutId: cutId as string | undefined,
+    workOrderId: workOrderId as string | undefined,
+    fromDate: fromDate ? new Date(fromDate as string) : undefined,
+    toDate: toDate ? new Date(toDate as string) : undefined,
+    limit: limit ? parseInt(limit as string, 10) : undefined,
+    page: page ? parseInt(page as string, 10) : undefined,
+  });
+  res.json({ success: true, data: logs });
+});
+
+// ─── Watcher Status ───────────────────────────────────
+
+/**
+ * GET /file-chain/watcher-status
+ * Current state of the Zund queue watcher
+ */
+router.get('/watcher-status', async (_req: AuthRequest, res) => {
+  const status = getZundWatcherStatus();
+  res.json({ success: true, data: status });
 });
 
 export default router;

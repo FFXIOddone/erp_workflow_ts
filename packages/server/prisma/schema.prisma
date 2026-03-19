@@ -264,6 +264,7 @@ model User {
   
   // Shop Floor / File Chain relations
   printCutLinksLinked        PrintCutLink[]       @relation("PrintCutLinkLinkedBy")
+  printCutLinksConfirmed     PrintCutLink[]       @relation("PrintCutLinkConfirmedBy")
   manualJobLinksCreated      ManualJobLink[]      @relation("ManualJobLinkLinkedBy")
   dismissedJobLinks          DismissedJobLink[]   @relation("DismissedJobLinkDismissedBy")
   installSessionsPerformed  InstallSession[]     @relation("InstallSessionInstaller")
@@ -1354,7 +1355,8 @@ model SystemSettings {
   pamTallyPath                String?  // Override path to Pam's Daily List (Shipping Tally) folder
 
   // Network Drive Settings for linking work orders to file storage
-  networkDriveBasePath     String? // e.g., "\\\\SERVER\\Share\\Orders" or "Z:\\Orders"
+  networkDriveBasePath     String? // e.g., "\\\\SERVER\\Share\\Orders" or "S:\\"
+  networkDriveSafariPath   String? // Base path for Safari/Port City Signs 4-digit WOs, e.g. "S:\\Safari"
   networkDriveFolderPattern String  @default("{orderNumber}") // Pattern for folder names. Supports: {orderNumber}, {customerName}, {year}, {month}
 
   createdAt DateTime @default(now())
@@ -3722,6 +3724,12 @@ model PrintCutLink {
   linkedAt         DateTime?           // When cut file was linked
   linkedById       String?             // null = auto-linked by daemon
   linkedBy         User?               @relation("PrintCutLinkLinkedBy", fields: [linkedById], references: [id])
+  
+  // Confirmation tracking
+  confirmed        Boolean             @default(false)
+  confirmedAt      DateTime?
+  confirmedById    String?
+  confirmedBy      User?               @relation("PrintCutLinkConfirmedBy", fields: [confirmedById], references: [id])
   
   // Print tracking
   printStartedAt   DateTime?
@@ -13258,4 +13266,31 @@ model QBCachedLineItem {
   unit        String?
 
   @@index([orderId])
+}
+
+// ============ File Chain Logging ============
+
+// Structured log for the print-to-cut linking pipeline.
+// Tracks every step of Zund watcher → CutID match → WO link flow.
+model FileChainLog {
+  id               String   @id @default(uuid())
+  timestamp        DateTime @default(now())
+  level            String   // INFO, WARN, ERROR, DEBUG
+  source           String   // ZUND_WATCHER, AUTO_LINKER, MANUAL
+  event            String   // NEW_ZCC_DETECTED, CUTID_EXTRACTED, PRINT_LOG_MATCH, WO_FOUND, LINK_CREATED, etc.
+  message          String
+  details          Json?    // Structured data for debugging
+  cutId            String?
+  zccFileName      String?
+  printFileName    String?
+  workOrderId      String?
+  workOrderNumber  String?
+  printCutLinkId   String?
+  success          Boolean  @default(true)
+
+  @@index([timestamp])
+  @@index([source])
+  @@index([event])
+  @@index([cutId])
+  @@index([workOrderId])
 }

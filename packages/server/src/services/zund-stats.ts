@@ -13,6 +13,7 @@
 
 import Database from 'better-sqlite3';
 import fs from 'fs';
+import { promises as fsP } from 'fs';
 import path from 'path';
 import os from 'os';
 
@@ -109,11 +110,23 @@ function ensureCacheDir(): void {
   }
 }
 
+/** Race a promise against a timeout. Rejects with TimeoutError on expiry. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timeout: ${label} (${ms}ms)`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 /**
  * Copy the Zund stats DB from the SMB share to a local temp file.
  * This avoids lock contention with ZCC writing to the DB.
+ * Now async with a 3-second timeout to avoid blocking when SMB is unreachable.
  */
-function refreshLocalCopy(zundId: string): string {
+async function refreshLocalCopy(zundId: string): Promise<string> {
   const remotePath = ZUND_STATS_PATHS[zundId];
   if (!remotePath) {
     throw new Error(`Unknown Zund ID: ${zundId}. Available: ${Object.keys(ZUND_STATS_PATHS).join(', ')}`);
@@ -128,7 +141,7 @@ function refreshLocalCopy(zundId: string): string {
   // Only copy if cache is stale
   if (now - lastTime > REFRESH_INTERVAL_MS || !fs.existsSync(localPath)) {
     try {
-      fs.copyFileSync(remotePath, localPath);
+      await withTimeout(fsP.copyFile(remotePath, localPath), 3000, `copyFile ${zundId}`);
       lastRefresh[zundId] = now;
     } catch (err: any) {
       // If we have a cached copy, use it even if stale
@@ -143,8 +156,8 @@ function refreshLocalCopy(zundId: string): string {
   return localPath;
 }
 
-function openDb(zundId: string): Database.Database {
-  const localPath = refreshLocalCopy(zundId);
+async function openDb(zundId: string): Promise<Database.Database> {
+  const localPath = await refreshLocalCopy(zundId);
   return new Database(localPath, { readonly: true });
 }
 
@@ -170,8 +183,8 @@ function getMaterialName(guid: string): string {
 /**
  * Get the cutter info for a Zund machine.
  */
-export function getZundCutterInfo(zundId: string = 'zund2'): ZundCutterInfo {
-  const db = openDb(zundId);
+export async function getZundCutterInfo(zundId: string = 'zund2'): Promise<ZundCutterInfo> {
+  const db = await openDb(zundId);
   try {
     const row = db.prepare('SELECT Cutter, Name, MachineTypeID FROM CutterNames LIMIT 1').get() as any;
     return {
@@ -187,8 +200,8 @@ export function getZundCutterInfo(zundId: string = 'zund2'): ZundCutterInfo {
 /**
  * Get the current (most recent) job. If it ended recently, it's still "current".
  */
-export function getCurrentJob(zundId: string = 'zund2'): ZundJob | null {
-  const db = openDb(zundId);
+export async function getCurrentJob(zundId: string = 'zund2'): Promise<ZundJob | null> {
+  const db = await openDb(zundId);
   try {
     const row = db.prepare(`
       SELECT * FROM ProductionTimeJob 
@@ -225,8 +238,8 @@ export function getCurrentJob(zundId: string = 'zund2'): ZundJob | null {
 /**
  * Get recent cutting jobs.
  */
-export function getRecentJobs(zundId: string = 'zund2', limit: number = 20): ZundJob[] {
-  const db = openDb(zundId);
+export async function getRecentJobs(zundId: string = 'zund2', limit: number = 20): Promise<ZundJob[]> {
+  const db = await openDb(zundId);
   try {
     const rows = db.prepare(`
       SELECT * FROM ProductionTimeJob 
@@ -259,8 +272,8 @@ export function getRecentJobs(zundId: string = 'zund2', limit: number = 20): Zun
 /**
  * Get today's production statistics.
  */
-export function getTodayStats(zundId: string = 'zund2') {
-  const db = openDb(zundId);
+export async function getTodayStats(zundId: string = 'zund2') {
+  const db = await openDb(zundId);
   try {
     // Start of today (local time) as epoch
     const today = new Date();
@@ -319,8 +332,8 @@ export function getTodayStats(zundId: string = 'zund2') {
 /**
  * Get tool/knife wear status.
  */
-export function getToolWear(zundId: string = 'zund2'): ZundToolUsage[] {
-  const db = openDb(zundId);
+export async function getToolWear(zundId: string = 'zund2'): Promise<ZundToolUsage[]> {
+  const db = await openDb(zundId);
   try {
     const rows = db.prepare(`
       SELECT * FROM KnifeBitUsage 
@@ -356,14 +369,14 @@ export function getToolWear(zundId: string = 'zund2'): ZundToolUsage[] {
 /**
  * Get complete Zund dashboard data.
  */
-export function getZundDashboard(zundId: string = 'zund2'): ZundDashboard {
-  const cutter = getZundCutterInfo(zundId);
-  const currentJob = getCurrentJob(zundId);
-  const recentJobs = getRecentJobs(zundId, 15);
-  const todayStats = getTodayStats(zundId);
-  const toolWear = getToolWear(zundId);
+export async function getZundDashboard(zundId: string = 'zund2'): Promise<ZundDashboard> {
+  const cutter = await getZundCutterInfo(zundId);
+  const currentJob = await getCurrentJob(zundId);
+  const recentJobs = await getRecentJobs(zundId, 15);
+  const todayStats = await getTodayStats(zundId);
+  const toolWear = await getToolWear(zundId);
 
-  const db = openDb(zundId);
+  const db = await openDb(zundId);
   let dbVersion = '';
   try {
     const rows = db.prepare("SELECT Name, Value FROM DBInfo WHERE Name IN ('MajorVersion','MinorVersion','BugFixVersion') ORDER BY Name").all() as any[];
@@ -392,15 +405,23 @@ export function getAvailableZunds(): string[] {
 }
 
 /**
- * Check if a Zund stats DB is accessible.
+ * Check if a Zund stats DB is accessible (async with 2s timeout + 30s cache).
  */
-export function isZundStatsAccessible(zundId: string): boolean {
+const accessCache: Record<string, { result: boolean; expiresAt: number }> = {};
+
+export async function isZundStatsAccessible(zundId: string): Promise<boolean> {
   const remotePath = ZUND_STATS_PATHS[zundId];
   if (!remotePath) return false;
+
+  const cached = accessCache[zundId];
+  if (cached && Date.now() < cached.expiresAt) return cached.result;
+
   try {
-    fs.accessSync(remotePath, fs.constants.R_OK);
+    await withTimeout(fsP.access(remotePath, fs.constants.R_OK), 2000, `access ${zundId}`);
+    accessCache[zundId] = { result: true, expiresAt: Date.now() + 30_000 };
     return true;
   } catch {
+    accessCache[zundId] = { result: false, expiresAt: Date.now() + 30_000 };
     return false;
   }
 }

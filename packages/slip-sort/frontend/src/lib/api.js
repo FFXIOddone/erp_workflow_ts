@@ -4,7 +4,7 @@
  * and response validation.
  */
 
-const API_BASE = /** @type {any} */ (import.meta).env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = /** @type {any} */ (import.meta).env.VITE_API_URL || '';
 
 /**
  * Custom error class for API errors.

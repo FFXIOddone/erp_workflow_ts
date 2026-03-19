@@ -19,6 +19,9 @@ import { XMLParser } from 'fast-xml-parser';
 import path from 'path';
 import { prisma } from '../db/client.js';
 
+// Track last known file sizes to detect truncated/partial reads
+const lastKnownSizes = new Map<string, number>();
+
 // File server base paths
 const FILE_PATHS = {
   safari: '\\\\wildesigns-fs1\\Company Files\\Safari',       // Port City Signs (4-digit WO#)
@@ -237,11 +240,23 @@ export function extractWorkOrderNumber(text: string): string | null {
  */
 export async function parseQueueFile(queuePath: string): Promise<ThriveJob[]> {
   try {
-    let content = await fs.readFile(queuePath, 'utf-8');
+    const readAndClean = async (): Promise<string> => {
+      let raw = await fs.readFile(queuePath, 'utf-8');
+      raw = raw.replace(/^\uFEFF/, ''); // Remove BOM if present
+      raw = raw.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, ''); // Remove control characters
+      return raw;
+    };
+
+    let content = await readAndClean();
     
-    // Clean any BOM or invalid XML characters
-    content = content.replace(/^\uFEFF/, ''); // Remove BOM if present
-    content = content.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, ''); // Remove control characters
+    // File-size sanity check: if the file shrank dramatically vs last read,
+    // it may be mid-write — wait briefly and re-read
+    const lastSize = lastKnownSizes.get(queuePath) ?? 0;
+    if (content.length < 100 && lastSize > 500) {
+      await new Promise(r => setTimeout(r, 250));
+      content = await readAndClean();
+    }
+    lastKnownSizes.set(queuePath, content.length);
     
     // Guard against empty or whitespace-only files
     if (!content || !content.trim()) {
@@ -265,10 +280,19 @@ export async function parseQueueFile(queuePath: string): Promise<ThriveJob[]> {
     try {
       result = parser.parse(content);
     } catch (parseError) {
-      // Thrive queue files can be temporarily invalid while being written — log quietly
-      const msg = parseError instanceof Error ? parseError.message : String(parseError);
-      console.warn(`Skipping unreadable queue XML ${queuePath}: ${msg}`);
-      return [];
+      // Thrive queue files can be temporarily invalid while being written —
+      // retry once after a short delay before giving up
+      await new Promise(r => setTimeout(r, 250));
+      content = await readAndClean();
+      lastKnownSizes.set(queuePath, content.length);
+      if (!content.trim() || !content.trim().startsWith('<')) return [];
+      try {
+        result = parser.parse(content);
+      } catch (retryError) {
+        const msg = retryError instanceof Error ? retryError.message : String(retryError);
+        console.warn(`Skipping unreadable queue XML ${queuePath} (after retry): ${msg}`);
+        return [];
+      }
     }
     const jobs: ThriveJob[] = [];
     
@@ -688,9 +712,163 @@ export async function syncJobStatus(
   }
 }
 
+// ─── JobLog.xml — Actual Print History ─────────────────
+
+/**
+ * Paths to the ONYX Thrive 22 print-history logs on each machine.
+ * These are the REAL job logs (not the QueueXML.Info temp files).
+ * Located at C:\ONYXThrive22\records\JobLog.xml, accessed via admin share.
+ */
+const JOB_LOG_PATHS = [
+  {
+    id: 'thrive-flatbed',
+    name: 'Thrive Flatbed (WILDE-FLATBEDPC)',
+    xmlPath: '\\\\192.168.254.53\\c$\\ONYXThrive22\\records\\JobLog.xml',
+  },
+  {
+    id: 'thrive-rip2',
+    name: 'Thrive RIP2 (WS-RIP2)',
+    xmlPath: '\\\\192.168.254.77\\c$\\ONYXThrive22\\records\\JobLog.xml',
+  },
+];
+
+export interface ThriveJobLogEntry {
+  fileName: string;
+  customizedName: string;
+  status: string;
+  printedTime: string;
+  sizeWidth: number;
+  sizeHeight: number;
+  copies: number;
+  totalArea: number;
+  printer: string;
+  media: string;
+  printMode: string;
+  resolution: string;
+  ripTime: string;
+  printTime: string;
+  inkUsed: string;
+  totalInk: string;
+  cutId: string | null;
+  machineId: string;
+}
+
+// ─── Cache for parsed JobLog entries ───────────────────
+interface JobLogCache {
+  mtime: number;
+  size: number;
+  entries: ThriveJobLogEntry[];
+  cutIdIndex: Map<string, ThriveJobLogEntry>;
+}
+
+const jobLogCaches = new Map<string, JobLogCache>();
+
+/**
+ * Parse a single ONYX JobLog.xml file into structured entries.
+ */
+async function parseJobLogXml(xmlPath: string, machineId: string): Promise<ThriveJobLogEntry[]> {
+  const content = await fs.readFile(xmlPath, 'utf-8');
+
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    allowBooleanAttributes: true,
+    parseAttributeValue: false,
+  });
+
+  const result = parser.parse(content);
+  const jobList = result?.Printed_Job_List?.Job;
+  if (!jobList) return [];
+
+  const jobs = Array.isArray(jobList) ? jobList : [jobList];
+  const entries: ThriveJobLogEntry[] = [];
+
+  for (const job of jobs) {
+    entries.push({
+      fileName: job['@_name'] || '',
+      customizedName: job['@_customized_name'] || '',
+      status: job.Status || '',
+      printedTime: job.Printed_Time || '',
+      sizeWidth: parseFloat(job.Size_Width) || 0,
+      sizeHeight: parseFloat(job.Size_Height) || 0,
+      copies: parseInt(job.Copies) || 0,
+      totalArea: parseFloat(job.Total_Area) || 0,
+      printer: job.Printer || '',
+      media: job.Media || '',
+      printMode: job.PrintMode || '',
+      resolution: job.Resolution || '',
+      ripTime: job.Rip_Time || '',
+      printTime: job.Print_Time || '',
+      inkUsed: typeof job.Ink_Used === 'object' ? (job.Ink_Used['#text'] || '') : (job.Ink_Used || ''),
+      totalInk: job.Total_Ink || '',
+      cutId: job.CutID || null,
+      machineId,
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * Get all print history entries from both Thrive machines.
+ * Uses mtime-based caching so we only re-parse when the file changes.
+ */
+export async function getAllThriveJobLogEntries(): Promise<ThriveJobLogEntry[]> {
+  const allEntries: ThriveJobLogEntry[] = [];
+
+  await Promise.all(JOB_LOG_PATHS.map(async (log) => {
+    try {
+      const stat = await fs.stat(log.xmlPath);
+      const cached = jobLogCaches.get(log.id);
+
+      if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) {
+        allEntries.push(...cached.entries);
+        return;
+      }
+
+      const entries = await parseJobLogXml(log.xmlPath, log.id);
+      const cutIdIndex = new Map<string, ThriveJobLogEntry>();
+      for (const e of entries) {
+        if (e.cutId) cutIdIndex.set(e.cutId, e);
+      }
+
+      jobLogCaches.set(log.id, {
+        mtime: stat.mtimeMs,
+        size: stat.size,
+        entries,
+        cutIdIndex,
+      });
+
+      allEntries.push(...entries);
+    } catch (err) {
+      console.warn(`Could not read job log ${log.xmlPath}:`, (err as Error).message);
+    }
+  }));
+
+  return allEntries;
+}
+
+/**
+ * Look up a Thrive print job by its CutID in the JobLog history.
+ * Uses the cached CutID index for O(1) lookup.
+ */
+export async function findThriveJobByCutId(cutId: string): Promise<ThriveJobLogEntry | null> {
+  // Ensure caches are fresh
+  await getAllThriveJobLogEntries();
+
+  for (const cache of jobLogCaches.values()) {
+    const entry = cache.cutIdIndex.get(cutId);
+    if (entry) return entry;
+  }
+
+  return null;
+}
+
 // Export for use in routes
 export const thriveService = {
   getAllJobs: getAllThriveJobs,
+  getAllJobLogEntries: getAllThriveJobLogEntries,
+  findJobByCutId: findThriveJobByCutId,
   parseQueueFile,
   parseCutFile,
   scanCutFolder,

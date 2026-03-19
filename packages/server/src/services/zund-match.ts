@@ -46,13 +46,27 @@ export interface ZundJobMatch {
 
 /**
  * Extract the CutID identifier from a filename.
- * CutIDs look like: P1_T1_162_57_33277349
- * Found in Fiery/Thrive/Zund job names as a suffix.
+ * Two formats exist:
+ *   Fiery:  P1_T1_162_57_33277349 (underscore-separated, mostly numeric)
+ *   Thrive: 0DGPMDD2632 (alphanumeric mix with letters + trailing digits)
+ * CutIDs appear as suffixes on both print and cut job names,
+ * making them the strongest link between print→cut files.
  * Returns null if no cutID found.
  */
 export function extractCutId(name: string): string | null {
-  const match = name.match(/_(P\d+_T\d+_\d+_\d+(?:_\d+)?)(?:\.[^.]+)?$/i);
-  return match ? match[1] : null;
+  // Remove file extension first
+  const clean = name.replace(/\.(pdf|ai|eps|svg|zcc|xml|xml_tmp)$/i, '');
+
+  // Try Fiery format first (more specific pattern): _P1_T1_162_57_33277349
+  const fieryMatch = clean.match(/[_-]?(P\d+_T\d+_\d+_\d+(?:_\d+)?)$/i);
+  if (fieryMatch) return fieryMatch[1];
+
+  // Try Thrive format: _0DGPMDD2632 (7+ alphanumeric chars with 3+ trailing digits)
+  // Must contain at least one letter to avoid matching pure numeric ONYX/Fiery suffixes
+  const thriveMatch = clean.match(/[_-]?([A-Z0-9]{7,}\d{3,})$/i);
+  if (thriveMatch && !/^\d+$/.test(thriveMatch[1])) return thriveMatch[1];
+
+  return null;
 }
 
 /**
@@ -290,10 +304,14 @@ export async function matchZundJobsToOrders(daysBack = 30): Promise<ZundJobMatch
   const printCutJobs = await getPrintCutJobsFromThrive();
   console.log(`Found ${printCutJobs.length} print jobs with PRINTCUT patterns`);
   
-  // Build a lookup map of normalized print job names to WO
+  // Build lookup maps: normalized name → WO and cutId → WO
   const printJobMap = new Map<string, typeof printCutJobs[0]>();
+  const cutIdMap = new Map<string, typeof printCutJobs[0]>();
   for (const pj of printCutJobs) {
     printJobMap.set(pj.normalizedName, pj);
+    // Index by CutID for highest-confidence matching
+    const cutId = extractCutId(pj.fileName);
+    if (cutId) cutIdMap.set(cutId.toLowerCase(), pj);
   }
   
   const results: ZundJobMatch[] = [];
@@ -319,20 +337,29 @@ export async function matchZundJobsToOrders(daysBack = 30): Promise<ZundJobMatch
         match.possibleOrderNumbers = woMatches;
       }
     } else {
-      // Try exact match on normalized name
-      const exactMatch = printJobMap.get(info.normalized);
-      if (exactMatch) {
-        match.matchedOrderNumber = exactMatch.workOrderNumber;
-        match.matchedOrderId = exactMatch.orderId;
+      // Priority 1: CutID match (strongest signal — same ID on print and cut sides)
+      const zundCutId = extractCutId(zj.jobName);
+      const cutIdMatch = zundCutId ? cutIdMap.get(zundCutId.toLowerCase()) : null;
+      if (cutIdMatch) {
+        match.matchedOrderNumber = cutIdMatch.workOrderNumber;
+        match.matchedOrderId = cutIdMatch.orderId;
         match.matchConfidence = 'exact';
       } else {
-        // Try partial match - look for Zund job name containing print job name or vice versa
-        for (const [normalizedPrint, printJob] of printJobMap) {
-          if (info.normalized.includes(normalizedPrint) || normalizedPrint.includes(info.normalized)) {
-            match.matchedOrderNumber = printJob.workOrderNumber;
-            match.matchedOrderId = printJob.orderId;
-            match.matchConfidence = 'partial';
-            break;
+        // Priority 2: Exact normalized name match
+        const exactMatch = printJobMap.get(info.normalized);
+        if (exactMatch) {
+          match.matchedOrderNumber = exactMatch.workOrderNumber;
+          match.matchedOrderId = exactMatch.orderId;
+          match.matchConfidence = 'exact';
+        } else {
+          // Priority 3: Partial match - substring containment
+          for (const [normalizedPrint, printJob] of printJobMap) {
+            if (info.normalized.includes(normalizedPrint) || normalizedPrint.includes(info.normalized)) {
+              match.matchedOrderNumber = printJob.workOrderNumber;
+              match.matchedOrderId = printJob.orderId;
+              match.matchConfidence = 'partial';
+              break;
+            }
           }
         }
       }

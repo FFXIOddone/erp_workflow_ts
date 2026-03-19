@@ -29,6 +29,10 @@ for %%d in (vite-erp-web vite-erp-portal vite-erp-station-printing vite-erp-stat
     if exist "%TEMP%\%%d" rmdir /s /q "%TEMP%\%%d" >nul 2>nul
 )
 
+:: Ensure Zund Statistics share is mapped (credentials expire after reboot)
+echo Mapping Zund Statistics share...
+net use \\192.168.254.28\Statistics /user:User Wilde1234 /persistent:yes >nul 2>nul
+
 :: Check if node_modules exists; if not, install deps
 if not exist "node_modules" (
     echo Installing dependencies...

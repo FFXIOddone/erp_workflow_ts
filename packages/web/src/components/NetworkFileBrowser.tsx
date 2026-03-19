@@ -471,6 +471,14 @@ export function NetworkFileBrowser({ orderId, orderNumber }: NetworkFileBrowserP
                   </button>
                 </span>
               )}
+              <button
+                onClick={() => { setShowFolderPicker(true); setBrowseCurrentPath(''); }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 rounded text-xs font-medium transition-colors"
+                title="Link a different folder"
+              >
+                <Link2 className="w-3 h-3" />
+                Link Folder
+              </button>
               <span className="text-xs text-gray-400 truncate max-w-xs" title={data.folderPath}>
                 {data.customerFolder && data.folderName 
                   ? `${data.customerFolder} / ${data.folderName}` 

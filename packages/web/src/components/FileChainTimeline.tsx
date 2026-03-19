@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { Clock, Printer, Scissors, FileCheck, ChevronRight, Link2, Shield } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Clock, Printer, Scissors, FileCheck, ChevronRight, Link2, Shield, CheckCircle, X, Lock } from 'lucide-react';
 import { api } from '../lib/api';
 
 interface FileChainLink {
@@ -26,6 +26,9 @@ interface FileChainLink {
   width?: number;
   height?: number;
   quantity?: number;
+  confirmed?: boolean;
+  confirmedAt?: string;
+  confirmedById?: string;
   createdAt: string;
 }
 
@@ -46,13 +49,21 @@ const CONFIDENCE_STYLES: Record<string, string> = {
   NONE: 'bg-gray-100 text-gray-500',
 };
 
-function ConfidenceBadge({ confidence }: { confidence?: string }) {
+function ConfidenceBadge({ confidence, confirmed }: { confidence?: string; confirmed?: boolean }) {
+  if (confirmed || confidence === 'MANUAL') {
+    return (
+      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700">
+        <Lock className="h-2.5 w-2.5" />
+        Confirmed
+      </span>
+    );
+  }
   if (!confidence || confidence === 'NONE') return null;
   const style = CONFIDENCE_STYLES[confidence] || CONFIDENCE_STYLES.NONE;
   return (
     <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full ${style}`}>
       <Shield className="h-2.5 w-2.5" />
-      {confidence}
+      Suggested &middot; {confidence}
     </span>
   );
 }
@@ -74,6 +85,8 @@ function StepBadge({ label, status, time, icon: Icon }: { label: string; status?
 }
 
 export function FileChainTimeline({ orderId }: { orderId: string }) {
+  const queryClient = useQueryClient();
+
   const { data: links, isLoading } = useQuery({
     queryKey: ['file-chain', orderId],
     queryFn: async () => {
@@ -81,6 +94,42 @@ export function FileChainTimeline({ orderId }: { orderId: string }) {
       return (res.data.data || []) as FileChainLink[];
     },
     enabled: !!orderId,
+  });
+
+  const confirmMutation = useMutation({
+    mutationFn: (linkId: string) => api.put(`/file-chain/links/${linkId}/confirm`),
+    onMutate: async (linkId) => {
+      await queryClient.cancelQueries({ queryKey: ['file-chain', orderId] });
+      const previous = queryClient.getQueryData<FileChainLink[]>(['file-chain', orderId]);
+      queryClient.setQueryData<FileChainLink[]>(['file-chain', orderId], (old) =>
+        old?.map((l) => l.id === linkId ? { ...l, confirmed: true } : l)
+      );
+      return { previous };
+    },
+    onError: (_err, _linkId, context) => {
+      if (context?.previous) queryClient.setQueryData(['file-chain', orderId], context.previous);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['file-chain', orderId] });
+    },
+  });
+
+  const dismissMutation = useMutation({
+    mutationFn: (linkId: string) => api.put(`/file-chain/links/${linkId}/dismiss`),
+    onMutate: async (linkId) => {
+      await queryClient.cancelQueries({ queryKey: ['file-chain', orderId] });
+      const previous = queryClient.getQueryData<FileChainLink[]>(['file-chain', orderId]);
+      queryClient.setQueryData<FileChainLink[]>(['file-chain', orderId], (old) =>
+        old?.map((l) => l.id === linkId ? { ...l, cutFileName: undefined, cutFilePath: undefined, linkConfidence: 'NONE' } : l)
+      );
+      return { previous };
+    },
+    onError: (_err, _linkId, context) => {
+      if (context?.previous) queryClient.setQueryData(['file-chain', orderId], context.previous);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['file-chain', orderId] });
+    },
   });
 
   if (isLoading) {
@@ -150,7 +199,28 @@ export function FileChainTimeline({ orderId }: { orderId: string }) {
                   {link.cutId}
                 </span>
               )}
-              <ConfidenceBadge confidence={link.linkConfidence} />
+              <ConfidenceBadge confidence={link.linkConfidence} confirmed={link.confirmed} />
+              {/* Confirm/Dismiss buttons for unconfirmed auto-linked suggestions */}
+              {link.cutFileName && !link.confirmed && link.linkConfidence !== 'MANUAL' && (
+                <span className="inline-flex items-center gap-1 ml-1">
+                  <button
+                    onClick={() => confirmMutation.mutate(link.id)}
+                    disabled={confirmMutation.isPending}
+                    className="p-0.5 rounded hover:bg-green-100 text-gray-400 hover:text-green-600 transition-colors"
+                    title="Confirm this link"
+                  >
+                    <CheckCircle className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => dismissMutation.mutate(link.id)}
+                    disabled={dismissMutation.isPending}
+                    className="p-0.5 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-colors"
+                    title="Dismiss this link"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              )}
               {link.cutFileSource && (
                 <span className="text-[10px] text-gray-400">{link.cutFileSource}</span>
               )}

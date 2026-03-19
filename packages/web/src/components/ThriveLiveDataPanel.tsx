@@ -390,7 +390,7 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
                         {job.printMedia || <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">
-                        {job.createTime ? format(new Date(job.createTime), 'MM/dd HH:mm') : '—'}
+                        {job.createTime && !isNaN(new Date(job.createTime).getTime()) ? format(new Date(job.createTime), 'MM/dd HH:mm') : '—'}
                       </td>
                       <td className="px-3 py-2 text-center text-gray-600">
                         {job.numCopies}

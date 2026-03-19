@@ -60,7 +60,7 @@ export function ZundInfoCard({ orderNumber }: ZundInfoCardProps) {
   const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['thrive-cuts', orderNumber],
+    queryKey: ['thrive-jobs', orderNumber],
     queryFn: async () => {
       const response = await api.get(`/equipment/thrive/workorder/${orderNumber}`);
       return response.data.data;
@@ -82,7 +82,6 @@ export function ZundInfoCard({ orderNumber }: ZundInfoCardProps) {
       return api.post(`/equipment/thrive/workorder/${orderNumber}/link-job`, job);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['thrive-cuts', orderNumber] });
       queryClient.invalidateQueries({ queryKey: ['thrive-jobs', orderNumber] });
       queryClient.invalidateQueries({ queryKey: ['unlinked-cut-jobs'] });
       setShowLinkModal(false);
@@ -95,7 +94,6 @@ export function ZundInfoCard({ orderNumber }: ZundInfoCardProps) {
       return api.delete(`/equipment/thrive/workorder/${orderNumber}/link-job/${linkId}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['thrive-cuts', orderNumber] });
       queryClient.invalidateQueries({ queryKey: ['thrive-jobs', orderNumber] });
     },
   });
@@ -105,7 +103,6 @@ export function ZundInfoCard({ orderNumber }: ZundInfoCardProps) {
       return api.post(`/equipment/thrive/workorder/${orderNumber}/dismiss-job`, params);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['thrive-cuts', orderNumber] });
       queryClient.invalidateQueries({ queryKey: ['thrive-jobs', orderNumber] });
     },
   });

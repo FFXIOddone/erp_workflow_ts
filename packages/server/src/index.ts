@@ -321,21 +321,21 @@ async function start(): Promise<void> {
     console.log('✅ Database connected');
 
     // Initialize email service
-    await initEmailService();
+    // await initEmailService();
 
     // Start email queue processor (runs every 60 seconds)
-    const EMAIL_QUEUE_INTERVAL = parseInt(process.env.EMAIL_QUEUE_INTERVAL ?? '60000', 10);
-    setInterval(async () => {
-      try {
-        const result = await processEmailQueue();
-        if (result.sent > 0 || result.failed > 0) {
-          console.log(`📧 Email queue: ${result.sent} sent, ${result.failed} failed`);
-        }
-      } catch (error) {
-        console.error('❌ Email queue error:', error);
-      }
-    }, EMAIL_QUEUE_INTERVAL);
-    console.log(`📧 Email queue processor started (interval: ${EMAIL_QUEUE_INTERVAL / 1000}s)`);
+    // const EMAIL_QUEUE_INTERVAL = parseInt(process.env.EMAIL_QUEUE_INTERVAL ?? '60000', 10);
+    // setInterval(async () => {
+    //   try {
+    //     const result = await processEmailQueue();
+    //     if (result.sent > 0 || result.failed > 0) {
+    //       console.log(`📧 Email queue: ${result.sent} sent, ${result.failed} failed`);
+    //     }
+    //   } catch (error) {
+    //     console.error('❌ Email queue error:', error);
+    //   }
+    // }, EMAIL_QUEUE_INTERVAL);
+    // console.log(`📧 Email queue processor started (interval: ${EMAIL_QUEUE_INTERVAL / 1000}s)`);
 
     // Process alert rules every 5 minutes
     setInterval(async () => {
@@ -391,8 +391,16 @@ async function start(): Promise<void> {
     console.log('⚡ Equipment watch rules processor started (interval: 1 minute)');
 
     // QuickBooks auto-poll — creates WorkOrders from new QB invoices/sales orders
-    const QB_POLL_INTERVAL = parseInt(process.env.QB_POLL_INTERVAL ?? '300000', 10);
-    startQBAutoPoll(QB_POLL_INTERVAL);
+    // const QB_POLL_INTERVAL = parseInt(process.env.QB_POLL_INTERVAL ?? '300000', 10);
+    // startQBAutoPoll(QB_POLL_INTERVAL);
+
+    // Pre-warm Zund live data cache in background
+    const { startZundLiveCacheWarmer } = await import('./services/zund-live.js');
+    startZundLiveCacheWarmer(45_000);
+
+    // Zund queue watcher — detect new .zcc files and auto-link to print jobs / work orders
+    const { startZundWatcher } = await import('./services/zund-watcher.js');
+    startZundWatcher();
 
     server.listen(PORT, HOST, () => {
       console.log(`🚀 Server running at http://${HOST}:${PORT}`);
