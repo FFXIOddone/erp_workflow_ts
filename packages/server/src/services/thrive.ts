@@ -96,7 +96,7 @@ export const THRIVE_CONFIG = {
     },
   ],
   zundMachines: [
-    { id: 'zund-1', ip: '192.168.254.38', name: 'Zund 1' },
+    { id: 'zund-1', ip: '192.168.254.38', name: 'Zund 1', statisticsPath: '\\\\192.168.254.38\\Statistics' },
     { id: 'zund-2', ip: '192.168.254.28', name: 'Zund 2', statisticsPath: '\\\\192.168.254.28\\Statistics' },
   ],
   fiery: {
@@ -109,8 +109,11 @@ export const THRIVE_CONFIG = {
 // Thrive job status codes (discovered from XML)
 const THRIVE_STATUS = {
   0: 'Pending',
+  2: 'Spooling',
   4: 'Processing',
+  6: 'RIPping',
   8: 'Ready to Print',
+  10: 'Sending to Printer',
   16: 'Printing',
   32: 'Printed',
   64: 'Error',
@@ -324,7 +327,9 @@ export async function parseQueueFile(queuePath: string): Promise<ThriveJob[]> {
         numCopies: parseInt(print.numcopies) || 1,
         inkTotal: job.ink_total || undefined,
         inkCoverage: job.ink_coverage?.replace('%', '') || undefined,
-        jobSize: size.crop_size || undefined,
+        jobSize: size.crop_size
+          ? size.crop_size.replace(/(\d+\.\d{3})\d*/g, '$1')
+          : undefined,
       };
       
       // Parse work order info from file path (preferred) or job name

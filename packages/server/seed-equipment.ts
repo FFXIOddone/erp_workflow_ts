@@ -143,8 +143,27 @@ const equipment = [
   },
 ];
 
+// Fix known incorrect IPs in existing equipment records
+const IP_FIXES: Record<string, string> = {
+  // "Zund 1" was created with .32 (WS-RACHEL) instead of .38 (actual Zund 1 PC)
+  '192.168.254.32': '192.168.254.38',
+};
+
+async function fixEquipmentIps() {
+  for (const [wrongIp, correctIp] of Object.entries(IP_FIXES)) {
+    const updated = await prisma.equipment.updateMany({
+      where: { ipAddress: wrongIp },
+      data: { ipAddress: correctIp },
+    });
+    if (updated.count > 0) {
+      console.log(`  Fixed IP: ${wrongIp} → ${correctIp} (${updated.count} record(s))`);
+    }
+  }
+}
+
 async function main() {
   await cleanup();
+  await fixEquipmentIps();
   console.log('Seeding equipment...');
   for (const eq of equipment) {
     const existing = await prisma.equipment.findFirst({ where: { name: eq.name } });

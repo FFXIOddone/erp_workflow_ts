@@ -2,7 +2,7 @@
  * Zund Cutter Statistics Service
  * 
  * Reads production statistics from Zund Cut Center's SQLite database
- * exposed via SMB share on the Zund 2 PC (\\192.168.254.28\Statistics\Statistic.db3).
+ * exposed via SMB share on both Zund PCs (\\<ip>\Statistics\Statistic.db3).
  * 
  * Data includes:
  * - Cutting job history (name, start/end, copies, material)
@@ -82,11 +82,10 @@ export interface ZundDashboard {
 
 // ============ Config ============
 
-// Zund 2 statistics share path
+// Zund statistics share paths (both machines have Statistic.db3 via SMB)
 const ZUND_STATS_PATHS: Record<string, string> = {
+  'zund1': '\\\\192.168.254.38\\Statistics\\Statistic.db3',
   'zund2': '\\\\192.168.254.28\\Statistics\\Statistic.db3',
-  // Add Zund 1 if/when its stats are shared:
-  // 'zund1': '\\\\192.168.254.38\\Statistics\\Statistic.db3',
 };
 
 // Local temp copy path (we copy the DB to avoid locking issues over SMB)

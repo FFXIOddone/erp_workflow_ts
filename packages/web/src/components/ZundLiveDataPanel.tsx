@@ -262,8 +262,8 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
                 ZCC v{dbVersion}
               </span>
             )}
-            {!hasStatsDb && (
-              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded ml-2">
+            {!hasStatsDb && dbVersion === null && (
+              <span className="text-xs bg-red-100 text-red-500 px-2 py-0.5 rounded ml-2">
                 No Stats DB
               </span>
             )}
@@ -335,40 +335,38 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
           </div>
         </div>
 
-        {/* Today's Stats (only if Stats DB available) */}
-        {todayStats && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className="text-center p-2 bg-blue-50/50 rounded-lg border border-blue-100">
-              <p className="text-lg font-bold text-blue-700">{todayStats.jobCount}</p>
-              <p className="text-xs text-blue-600">Jobs Today</p>
-            </div>
-            <div className="text-center p-2 bg-green-50/50 rounded-lg border border-green-100">
-              <p className="text-lg font-bold text-green-700">{todayStats.totalCuttingTimeMinutes}m</p>
-              <p className="text-xs text-green-600">Cutting Time</p>
-            </div>
-            <div className="text-center p-2 bg-amber-50/50 rounded-lg border border-amber-100">
-              <p className="text-lg font-bold text-amber-700">{todayStats.totalSetupTimeMinutes}m</p>
-              <p className="text-xs text-amber-600">Setup Time</p>
-            </div>
-            <div className="text-center p-2 bg-purple-50/50 rounded-lg border border-purple-100">
-              <p className="text-lg font-bold text-purple-700">{todayStats.totalCopiesCut}</p>
-              <p className="text-xs text-purple-600">Copies Cut</p>
-            </div>
-            <div className="text-center p-2 bg-gray-50/50 rounded-lg border border-gray-100">
-              <p className="text-lg font-bold text-gray-700">{todayStats.totalLengthCutMeters}m</p>
-              <p className="text-xs text-gray-600">Cut Length</p>
-            </div>
+        {/* Today's Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="text-center p-2 bg-blue-50/50 rounded-lg border border-blue-100">
+            <p className="text-lg font-bold text-blue-700">{todayStats?.jobCount ?? '—'}</p>
+            <p className="text-xs text-blue-600">Jobs Today</p>
           </div>
-        )}
+          <div className="text-center p-2 bg-green-50/50 rounded-lg border border-green-100">
+            <p className="text-lg font-bold text-green-700">{todayStats ? `${todayStats.totalCuttingTimeMinutes}m` : '—'}</p>
+            <p className="text-xs text-green-600">Cutting Time</p>
+          </div>
+          <div className="text-center p-2 bg-amber-50/50 rounded-lg border border-amber-100">
+            <p className="text-lg font-bold text-amber-700">{todayStats ? `${todayStats.totalSetupTimeMinutes}m` : '—'}</p>
+            <p className="text-xs text-amber-600">Setup Time</p>
+          </div>
+          <div className="text-center p-2 bg-purple-50/50 rounded-lg border border-purple-100">
+            <p className="text-lg font-bold text-purple-700">{todayStats?.totalCopiesCut ?? '—'}</p>
+            <p className="text-xs text-purple-600">Copies Cut</p>
+          </div>
+          <div className="text-center p-2 bg-gray-50/50 rounded-lg border border-gray-100">
+            <p className="text-lg font-bold text-gray-700">{todayStats ? `${todayStats.totalLengthCutMeters}m` : '—'}</p>
+            <p className="text-xs text-gray-600">Cut Length</p>
+          </div>
+        </div>
       </div>
 
-      {/* ── Tool Wear (if available) ── */}
-      {toolWear && toolWear.length > 0 && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-md font-semibold text-gray-900 mb-3 flex items-center gap-2">
-            <Gauge className="h-4 w-4 text-gray-400" />
-            Tool Wear
-          </h3>
+      {/* ── Tool Wear ── */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h3 className="text-md font-semibold text-gray-900 mb-3 flex items-center gap-2">
+          <Gauge className="h-4 w-4 text-gray-400" />
+          Tool Wear
+        </h3>
+        {toolWear && toolWear.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {toolWear.map((tool, i) => (
               <div key={i} className="border border-gray-100 rounded-lg p-3">
@@ -399,8 +397,10 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-sm text-gray-400 text-center py-4">No tool wear data available</p>
+        )}
+      </div>
 
       {/* ── Jobs Table ── */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200">
@@ -755,7 +755,7 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
             Last updated: {format(new Date(liveData.timestamp), 'h:mm:ss a')}
           </span>
           <span>
-            Data sources: {hasStatsDb ? 'Stats DB + ' : ''}Thrive Cut Center + Fiery EFI Export
+            Data sources: {hasStatsDb ? 'Stats DB + ' : ''}Thrive Cut Center + Zund Queue
           </span>
         </div>
       </div>

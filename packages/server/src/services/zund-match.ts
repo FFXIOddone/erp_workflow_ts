@@ -10,10 +10,6 @@
  * - NESTING jobs = potentially multiple work orders
  */
 
-import Database from 'better-sqlite3';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
 import { prisma } from '../db/client.js';
 
 // Patterns that indicate print+cut files
@@ -126,14 +122,9 @@ export function extractIdentifiers(name: string): {
   return { normalized, dimensions, productName, isPrintCut, isNesting };
 }
 
-// Cache Zund jobs to avoid hammering the network share on every request
-let zundJobsCache: { data: any[]; timestamp: number } | null = null;
-let zundErrorCache: { timestamp: number } | null = null;
-const ZUND_CACHE_TTL = 60_000; // 1 minute cache for successful data
-const ZUND_ERROR_TTL = 120_000; // 2 minute cooldown after failure
-
 /**
- * Get completed Zund jobs from statistics database
+ * Get completed Zund jobs from statistics database (both Zund 1 and Zund 2).
+ * Delegates to zund-stats.ts which handles SMB copy, caching, and timeouts.
  */
 export async function getZundCompletedJobs(daysBack = 30): Promise<Array<{
   jobId: number;
@@ -144,108 +135,46 @@ export async function getZundCompletedJobs(daysBack = 30): Promise<Array<{
   copyTotal: number;
   cutter: string;
 }>> {
-  // Return cached data if still fresh
-  if (zundJobsCache && (Date.now() - zundJobsCache.timestamp) < ZUND_CACHE_TTL) {
-    return zundJobsCache.data;
-  }
-  // Don't retry if we recently failed — avoids spamming network share
-  if (zundErrorCache && (Date.now() - zundErrorCache.timestamp) < ZUND_ERROR_TTL) {
-    return [];
-  }
-  const source = '\\\\192.168.254.28\\Statistics\\Statistic.db3';
-  // Use a unique temp filename to avoid collisions with locked temp files
-  const dest = path.join(os.tmpdir(), `Statistic_match_${process.pid}_${Date.now()}.db3`);
-  
-  try {
-    // Try direct copy first
-    fs.copyFileSync(source, dest);
-  } catch {
-    try {
-      // Fallback: buffer copy works when the file is locked by another process
-      // because readFileSync uses a different OS primitive than copyFileSync
-      const buffer = fs.readFileSync(source);
-      fs.writeFileSync(dest, buffer);
-    } catch {
-      try {
-        // Fallback 2: Use Windows shell copy which handles locked files better
-        // The /Y flag suppresses overwrite prompt, /B copies as binary
-        const { execSync } = await import('child_process');
-        execSync(`copy /Y /B "${source}" "${dest}"`, { 
-          timeout: 15000, 
-          windowsHide: true,
-          stdio: 'pipe',
-        });
-        // Verify the file was actually copied
-        if (!fs.existsSync(dest) || fs.statSync(dest).size === 0) {
-          throw new Error('Copy produced empty file');
-        }
-      } catch (error3) {
-        try {
-          // Fallback 3: robocopy (can copy locked files via backup mode)
-          const { execSync } = await import('child_process');
-          const sourceDir = '\\\\192.168.254.28\\Statistics';
-          const destDir = path.dirname(dest);
-          const destFilename = path.basename(dest);
-          // robocopy exits with codes 0-7 for success, rename after copy
-          execSync(`robocopy "${sourceDir}" "${destDir}" "Statistic.db3" /B /R:1 /W:1`, {
-            timeout: 15000,
-            windowsHide: true,
-            stdio: 'pipe',
-          });
-          // robocopy copies with original name, rename to our temp name
-          const robocopyDest = path.join(destDir, 'Statistic.db3');
-          if (fs.existsSync(robocopyDest)) {
-            fs.renameSync(robocopyDest, dest);
-          }
-          if (!fs.existsSync(dest) || fs.statSync(dest).size === 0) {
-            throw new Error('Robocopy produced empty file');
-          }
-        } catch (error4) {
-          console.warn('Zund statistics DB unavailable (will retry in 2 min)');
-          zundErrorCache = { timestamp: Date.now() };
-          try { fs.unlinkSync(dest); } catch {}
-          return [];
-        }
-      }
-    }
-  }
-  
-  let db: Database.Database;
-  try {
-    db = new Database(dest, { readonly: true });
-  } catch (error) {
-    console.error('Could not open Zund statistics database:', error);
-    // Clean up temp file
-    try { fs.unlinkSync(dest); } catch {}
-    return [];
-  }
-  
-  const cutoffTime = Math.floor((Date.now() - daysBack * 24 * 60 * 60 * 1000) / 1000);
-  
-  const jobs = db.prepare(`
-    SELECT JobID, JobName, ProductionStart, ProductionEnd, CopyDone, CopyTotal, Cutter
-    FROM ProductionTimeJob 
-    WHERE ProductionStart > ?
-    ORDER BY ProductionStart DESC
-  `).all(cutoffTime);
-  
-  db.close();
-  // Clean up temp file after reading
-  try { fs.unlinkSync(dest); } catch {}
-  
-  const result = (jobs as any[]).map(j => ({
-    jobId: j.JobID,
-    jobName: j.JobName,
-    productionStart: new Date(j.ProductionStart * 1000),
-    productionEnd: new Date(j.ProductionEnd * 1000),
-    copyDone: j.CopyDone,
-    copyTotal: j.CopyTotal,
-    cutter: j.Cutter,
-  }));
+  const { getAvailableZunds, getRecentJobs, isZundStatsAccessible } = await import('./zund-stats.js');
+  const allJobs: Array<{
+    jobId: number;
+    jobName: string;
+    productionStart: Date;
+    productionEnd: Date;
+    copyDone: number;
+    copyTotal: number;
+    cutter: string;
+  }> = [];
 
-  // Store in cache
-  zundJobsCache = { data: result, timestamp: Date.now() };
-  return result;
+  const zundIds = getAvailableZunds();
+  const results = await Promise.allSettled(
+    zundIds.map(async (zundId) => {
+      const accessible = await isZundStatsAccessible(zundId);
+      if (!accessible) return [];
+      // getRecentJobs returns ISO strings; we need Dates for this API
+      const jobs = await getRecentJobs(zundId, 500);
+      const cutoff = Date.now() - daysBack * 24 * 60 * 60 * 1000;
+      return jobs
+        .filter(j => new Date(j.productionStart).getTime() > cutoff)
+        .map(j => ({
+          jobId: j.jobId,
+          jobName: j.jobName,
+          productionStart: new Date(j.productionStart),
+          productionEnd: j.productionEnd ? new Date(j.productionEnd) : new Date(),
+          copyDone: j.copyDone,
+          copyTotal: j.copyTotal,
+          cutter: j.cutter,
+        }));
+    })
+  );
+
+  for (const r of results) {
+    if (r.status === 'fulfilled') allJobs.push(...r.value);
+  }
+
+  // Sort newest first
+  allJobs.sort((a, b) => b.productionStart.getTime() - a.productionStart.getTime());
+  return allJobs;
 }
 
 /**

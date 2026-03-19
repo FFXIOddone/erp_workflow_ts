@@ -4,7 +4,13 @@ import * as path from 'path';
 import * as os from 'os';
 
 async function analyzeZundStats() {
-  const source = '\\\\192.168.254.28\\Statistics\\Statistic.db3';
+  // Test with either Zund — pass 'zund1' or 'zund2' as arg
+  const zundId = process.argv[2] || 'zund2';
+  const sources: Record<string, string> = {
+    'zund1': '\\\\192.168.254.38\\Statistics\\Statistic.db3',
+    'zund2': '\\\\192.168.254.28\\Statistics\\Statistic.db3',
+  };
+  const source = sources[zundId] || sources['zund2'];
   const dest = path.join(os.tmpdir(), 'Statistic.db3');
   
   console.log('Copying Zund statistics database...');

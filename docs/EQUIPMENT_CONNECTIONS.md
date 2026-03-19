@@ -7,7 +7,7 @@
 | Thrive Flatbed | 192.168.254.53 | ✅ Working | SMB Shares | No |
 | Thrive RIP2 | 192.168.254.77 | ✅ Working | SMB Shares | No |
 | Fiery (VUTEk) | 192.168.254.57 | ✅ Working | SMB Shares | **admin / (blank)** |
-| Zund 1 | 192.168.254.38 | ✅ Working | Via Thrive | No |
+| Zund 1 | 192.168.254.38 | ✅ Working | Via Thrive + SMB | HP USER / (blank) |
 | Zund 2 | 192.168.254.28 | ✅ Working | Via Thrive + SMB | User / Wilde1234 |
 | FedEx PC | 192.168.254.131 | ✅ Working | SMB Users Share | Shipping1 / Wilde1234 |
 
@@ -48,8 +48,8 @@ Thrive uses MongoDB internally but does NOT expose it externally. Data is access
 ## Zund Cutters
 
 ### Connection Details
-- **Zund 1**: `192.168.254.38` - Primary cutter
-- **Zund 2**: `192.168.254.28` - Secondary cutter (has `Statistics` share)
+- **Zund 1**: `192.168.254.38` - Primary cutter (has Statistics DB)
+- **Zund 2**: `192.168.254.28` - Secondary cutter (has Statistics DB)
 - **Ports**: 445 (SMB only)
 
 ### How It Works
@@ -71,9 +71,10 @@ Zund cutters receive cut files from Thrive via the `Thrive22Cutter_xxx\Zund Cut 
 - [ ] Correlate cut times with Thrive job queue for WO linking
 
 ### Statistics Database (SQLite)
-- **Location**: `\\WILDESIGNS-2NDZ\Statistics\Statistic.db3`
-- **Credentials**: `User` / `Wilde1234`
-- **Size**: ~10MB
+- **Zund 1**: `\\192.168.254.38\Statistics\Statistic.db3` (share needs to be created — see below)
+- **Zund 2**: `\\192.168.254.28\Statistics\Statistic.db3`
+- **Credentials**: Zund 1: `HP USER` / (blank) — Zund 2: `User` / `Wilde1234`
+- **Size**: ~10MB each
 
 **Tables**:
 | Table | Records | Description |

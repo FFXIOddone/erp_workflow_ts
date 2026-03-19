@@ -40,14 +40,24 @@ $ThriveFlatbed = @{
     )
 }
 
-$ZundConfig = @{
-    Name       = 'Zund 2'
-    IP         = '192.168.254.28'
-    SharePath  = '\\192.168.254.28\Statistics'
-    DBFile     = '\\192.168.254.28\Statistics\Statistic.db3'
-    Username   = 'User'
-    Password   = 'Wilde1234'
-}
+$ZundConfigs = @(
+    @{
+        Name       = 'Zund 1'
+        IP         = '192.168.254.38'
+        SharePath  = '\\192.168.254.38\Statistics'
+        DBFile     = '\\192.168.254.38\Statistics\Statistic.db3'
+        Username   = 'HP USER'
+        Password   = ''
+    },
+    @{
+        Name       = 'Zund 2'
+        IP         = '192.168.254.28'
+        SharePath  = '\\192.168.254.28\Statistics'
+        DBFile     = '\\192.168.254.28\Statistics\Statistic.db3'
+        Username   = 'User'
+        Password   = 'Wilde1234'
+    }
+)
 
 # ─── Helpers ────────────────────────────────────────────
 
@@ -190,68 +200,76 @@ foreach ($qf in $ThriveFlatbed.QueueFiles) {
 
 Write-Host ''
 
-# ─── Zund 2 (.28) ──────────────────────────────────────
+# ─── Zund Machines ──────────────────────────────────────
 
-Write-Host "[$($ZundConfig.Name)] — $($ZundConfig.IP)" -ForegroundColor Yellow
+foreach ($ZundConfig in $ZundConfigs) {
+    Write-Host "[$($ZundConfig.Name)] — $($ZundConfig.IP)" -ForegroundColor Yellow
 
-$ping28 = Test-Connection -ComputerName $ZundConfig.IP -Count 2 -Quiet
-if ($ping28) {
-    Write-Status 'Ping' 'PASS'
-} else {
-    Write-Status 'Ping' 'FAIL' 'Machine unreachable'
-    $allPassed = $false
-}
-
-# Test share access
-$shareOk = Test-Path $ZundConfig.SharePath
-if ($shareOk) {
-    Write-Status 'Statistics share' 'PASS' $ZundConfig.SharePath
-} else {
-    Write-Status 'Statistics share' 'FAIL' 'Not accessible — will attempt credential fix'
-    $allPassed = $false
-
-    # Attempt to map with credentials
-    Write-Host '  Attempting net use with stored credentials...' -ForegroundColor DarkGray
-    $secPass = ConvertTo-SecureString $ZundConfig.Password -AsPlainText -Force
-    $cred = New-Object System.Management.Automation.PSCredential($ZundConfig.Username, $secPass)
-    try {
-        net use $ZundConfig.SharePath /delete /y 2>$null | Out-Null
-        net use $ZundConfig.SharePath /user:$($ZundConfig.Username) $($ZundConfig.Password) /persistent:yes 2>&1 | Out-Null
-        if (Test-Path $ZundConfig.SharePath) {
-            Write-Status 'Credential fix' 'PASS' 'Share now accessible'
-        } else {
-            Write-Status 'Credential fix' 'FAIL' 'Still not accessible after net use'
-        }
-    } catch {
-        Write-Status 'Credential fix' 'FAIL' $_.Exception.Message
-    }
-}
-
-# Test DB file
-if (Test-Path $ZundConfig.DBFile) {
-    $dbInfo = Get-Item $ZundConfig.DBFile
-    $dbSizeMB = [math]::Round($dbInfo.Length / 1MB, 2)
-    $dbAge = [math]::Round(((Get-Date) - $dbInfo.LastWriteTime).TotalHours, 1)
-    if ($dbInfo.Length -gt 0) {
-        Write-Status 'Statistic.db3' 'PASS' "${dbSizeMB}MB, last modified ${dbAge}h ago"
+    $pingOk = Test-Connection -ComputerName $ZundConfig.IP -Count 2 -Quiet
+    if ($pingOk) {
+        Write-Status 'Ping' 'PASS'
     } else {
-        Write-Status 'Statistic.db3' 'FAIL' 'File is 0 bytes'
+        Write-Status 'Ping' 'FAIL' 'Machine unreachable'
+        $allPassed = $false
+        Write-Host ''
+        continue
+    }
+
+    # Test share access
+    $shareOk = Test-Path $ZundConfig.SharePath
+    if ($shareOk) {
+        Write-Status 'Statistics share' 'PASS' $ZundConfig.SharePath
+    } else {
+        Write-Status 'Statistics share' 'FAIL' 'Not accessible — will attempt credential fix'
+        $allPassed = $false
+
+        # Attempt to map with credentials
+        Write-Host '  Attempting net use with stored credentials...' -ForegroundColor DarkGray
+        try {
+            net use $ZundConfig.SharePath /delete /y 2>$null | Out-Null
+            if ($ZundConfig.Password -eq '') {
+                cmd /c "net use `"$($ZundConfig.SharePath)`" /user:`"$($ZundConfig.Username)`" `"`" /persistent:yes" 2>&1 | Out-Null
+            } else {
+                net use $ZundConfig.SharePath /user:$($ZundConfig.Username) $($ZundConfig.Password) /persistent:yes 2>&1 | Out-Null
+            }
+            if (Test-Path $ZundConfig.SharePath) {
+                Write-Status 'Credential fix' 'PASS' 'Share now accessible'
+            } else {
+                Write-Status 'Credential fix' 'FAIL' 'Still not accessible after net use'
+            }
+        } catch {
+            Write-Status 'Credential fix' 'FAIL' $_.Exception.Message
+        }
+    }
+
+    # Test DB file
+    if (Test-Path $ZundConfig.DBFile) {
+        $dbInfo = Get-Item $ZundConfig.DBFile
+        $dbSizeMB = [math]::Round($dbInfo.Length / 1MB, 2)
+        $dbAge = [math]::Round(((Get-Date) - $dbInfo.LastWriteTime).TotalHours, 1)
+        if ($dbInfo.Length -gt 0) {
+            Write-Status 'statistic.org.db3' 'PASS' "${dbSizeMB}MB, last modified ${dbAge}h ago"
+        } else {
+            Write-Status 'statistic.org.db3' 'FAIL' 'File is 0 bytes'
+            $allPassed = $false
+        }
+
+        # Try copy to temp
+        $tempDest = Join-Path $env:TEMP "diag_Statistic_$($ZundConfig.Name.Replace(' ',''))_$(Get-Date -Format 'yyyyMMdd_HHmmss').db3"
+        try {
+            Copy-Item $ZundConfig.DBFile $tempDest -ErrorAction Stop
+            Write-Status 'DB copy test' 'PASS' "Copied to $tempDest"
+            Remove-Item $tempDest -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Status 'DB copy test' 'FAIL' $_.Exception.Message
+            $allPassed = $false
+        }
+    } else {
+        Write-Status 'statistic.org.db3' 'FAIL' 'File not found'
         $allPassed = $false
     }
 
-    # Try copy to temp
-    $tempDest = Join-Path $env:TEMP "diag_Statistic_$(Get-Date -Format 'yyyyMMdd_HHmmss').db3"
-    try {
-        Copy-Item $ZundConfig.DBFile $tempDest -ErrorAction Stop
-        Write-Status 'DB copy test' 'PASS' "Copied to $tempDest"
-        Remove-Item $tempDest -Force -ErrorAction SilentlyContinue
-    } catch {
-        Write-Status 'DB copy test' 'FAIL' $_.Exception.Message
-        $allPassed = $false
-    }
-} else {
-    Write-Status 'Statistic.db3' 'FAIL' 'File not found'
-    $allPassed = $false
+    Write-Host ''
 }
 
 Write-Host ''

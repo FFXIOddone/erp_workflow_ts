@@ -2,7 +2,7 @@
  * Zund Live Data Service
  * 
  * Aggregates real-time cutting data for Zund machines from multiple sources:
- * 1. Zund Statistics SQLite DB (Zund 2 only — Zund 1 has no Statistics share)
+ * 1. Zund Statistics SQLite DB (both Zund 1 and Zund 2 via SMB shares)
  * 2. Thrive Cut Center folders (pending cut files to be sent from Thrive to Zund)
  * 3. File Server Zund Queue (\\wildesigns-fs1\Company Files\Zund — JobQueue + JobDoneQueue)
  * 4. Thrive print queue logs (for cross-referencing Cut IDs → Work Orders)
@@ -422,9 +422,8 @@ async function findWorkOrder(orderNumber: string): Promise<{ id: string; orderNu
 
 /**
  * Get comprehensive live data for a Zund machine.
- * 
- * For Zund 2: SQLite stats + Thrive cuts + Zund queue files
- * For Zund 1: Thrive cuts + Zund queue files (no Stats DB available)
+ *
+ * Both Zund 1 and Zund 2: SQLite stats + Thrive cuts + Zund queue files
  */
 export async function getZundLiveData(
   zundId: string,
@@ -819,20 +818,26 @@ let warmerInterval: ReturnType<typeof setInterval> | null = null;
 export function startZundLiveCacheWarmer(intervalMs = 45_000): void {
   if (warmerInterval) return; // Already running
 
+  const zundIds = getAvailableZunds();
+
   // Warm immediately on start
-  fetchZundLiveData('zund2', {}, 'zund2-{}').catch(
-    err => console.warn('[ZundLive] Initial cache warm failed:', err.message)
-  );
+  for (const id of zundIds) {
+    fetchZundLiveData(id, {}, `${id}-{}`).catch(
+      err => console.warn(`[ZundLive] Initial cache warm failed for ${id}:`, err.message)
+    );
+  }
 
   warmerInterval = setInterval(() => {
-    fetchZundLiveData('zund2', {}, 'zund2-{}').catch(
-      err => console.warn('[ZundLive] Cache warmer failed:', err.message)
-    );
+    for (const id of zundIds) {
+      fetchZundLiveData(id, {}, `${id}-{}`).catch(
+        err => console.warn(`[ZundLive] Cache warmer failed for ${id}:`, err.message)
+      );
+    }
   }, intervalMs);
 
   // Don't block process exit
   if (warmerInterval?.unref) warmerInterval.unref();
-  console.log(`[ZundLive] Cache warmer started (${intervalMs}ms interval)`);
+  console.log(`[ZundLive] Cache warmer started for [${zundIds.join(', ')}] (${intervalMs}ms interval)`);
 }
 
 export function stopZundLiveCacheWarmer(): void {
