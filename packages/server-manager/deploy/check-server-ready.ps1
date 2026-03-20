@@ -13,7 +13,7 @@
 
 $ErrorActionPreference = 'Continue'
 
-$SERVER_IP = "192.168.254.32"
+$SERVER_IP = "192.168.254.75"
 $ERP_SHARE = "\\$SERVER_IP\ERP"
 
 $pass = 0

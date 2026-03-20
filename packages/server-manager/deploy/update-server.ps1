@@ -27,7 +27,7 @@ param(
     [switch]$Frontend
 )
 
-$SERVER_IP = "192.168.254.32"
+$SERVER_IP = "192.168.254.75"
 $ERP_SHARE = "\\$SERVER_IP\ERP\erp_workflow_ts"
 $SOURCE = $PSScriptRoot | Split-Path | Split-Path
 
@@ -87,6 +87,6 @@ try {
 }
 
 Write-Host ""
-Write-Host "  Web:    http://192.168.254.32:5173" -ForegroundColor DarkGray
-Write-Host "  API:    http://192.168.254.32:8001" -ForegroundColor DarkGray
-Write-Host "  Portal: http://192.168.254.32:5174" -ForegroundColor DarkGray
+Write-Host "  Web:    http://192.168.254.75:5173" -ForegroundColor DarkGray
+Write-Host "  API:    http://192.168.254.75:8001" -ForegroundColor DarkGray
+Write-Host "  Portal: http://192.168.254.75:5174" -ForegroundColor DarkGray

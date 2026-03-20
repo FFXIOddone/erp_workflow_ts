@@ -10,9 +10,9 @@
 
 $ZundIP    = '192.168.254.38'
 $ShareName = 'Statistics'
-$LocalPath = 'C:\Program Data\Zund\02 Statistic database'
+$LocalPath = 'C:\ProgramData\Zund\02 Statistic database'
 $Username  = 'HP USER'
-$Password  = ''
+$Password  = 'Wilde1234'
 
 $ErrorActionPreference = 'Stop'
 $MB = 1048576
@@ -44,7 +44,7 @@ try {
     if ($existing) {
         Write-Host "  OK - Share already exists -> $($existing.Path)"
 
-        cmd /c "net use `"\\$ZundIP\$ShareName`" /user:`"$Username`" `"`" /persistent:yes" 2>&1 | Out-Null
+        cmd /c "net use `"\\$ZundIP\$ShareName`" /user:`"$Username`" `"$Password`" /persistent:yes" 2>&1 | Out-Null
         $dbFile = "\\$ZundIP\$ShareName\Statistic.db3"
         if (Test-Path $dbFile) {
             $info = Get-Item $dbFile
@@ -81,13 +81,13 @@ try {
     Write-Host "  1. RDP to $ZundIP  (mstsc /v:$ZundIP)"
     Write-Host '  2. Open PowerShell as Admin'
     Write-Host "  3. Run: New-SmbShare -Name Statistics -Path '$LocalPath' -FullAccess Everyone"
-    Write-Host "  4. From ERP server: net use \\$ZundIP\Statistics /user:`"HP USER`" `"`" /persistent:yes"
+    Write-Host "  4. From ERP server: net use \\$ZundIP\Statistics /user:`"HP USER`" `"Wilde1234`" /persistent:yes"
     exit 1
 }
 
 # Step 4: Map and verify
 Write-Host '[4] Mapping and verifying...'
-cmd /c "net use `"\\$ZundIP\$ShareName`" /user:`"$Username`" `"`" /persistent:yes" 2>&1 | Out-Null
+cmd /c "net use `"\\$ZundIP\$ShareName`" /user:`"$Username`" `"$Password`" /persistent:yes" 2>&1 | Out-Null
 
 $dbFile = "\\$ZundIP\$ShareName\Statistic.db3"
 if (Test-Path $dbFile) {

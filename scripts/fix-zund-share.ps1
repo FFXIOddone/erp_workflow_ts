@@ -17,10 +17,10 @@ $ZundMachines = @(
     @{
         Name      = 'Zund 1'
         IP        = '192.168.254.38'
-        SharePath = '\\192.168.254.38\Statistics'
-        DBFile    = '\\192.168.254.38\Statistics\Statistic.db3'
+        SharePath = '\\192.168.254.38\ProgramData\Zund\02 Statistic database'
+        DBFile    = '\\192.168.254.38\ProgramData\Zund\02 Statistic database\Statistic.db3'
         Username  = 'HP USER'
-        Password  = ''
+        Password  = 'Wilde1234'
     },
     @{
         Name      = 'Zund 2'
@@ -107,9 +107,9 @@ foreach ($zund in $ZundMachines) {
         $info = Get-Item $zund.DBFile
         $sizeMB = [math]::Round($info.Length / 1MB, 2)
         $ageHours = [math]::Round(((Get-Date) - $info.LastWriteTime).TotalHours, 1)
-        Write-Host "  [OK]   statistic.org.db3 found (${sizeMB}MB, modified ${ageHours}h ago)" -ForegroundColor Green
+        Write-Host "  [OK]   Statistic.db3 found (${sizeMB}MB, modified ${ageHours}h ago)" -ForegroundColor Green
     } else {
-        Write-Host "  [FAIL] statistic.org.db3 not found at $($zund.DBFile)" -ForegroundColor Red
+        Write-Host "  [FAIL] Statistic.db3 not found at $($zund.DBFile)" -ForegroundColor Red
         Write-Host ''
         continue
     }

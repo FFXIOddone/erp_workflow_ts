@@ -42,12 +42,12 @@ $ThriveFlatbed = @{
 
 $ZundConfigs = @(
     @{
-        Name       = 'Zund 1'
-        IP         = '192.168.254.38'
-        SharePath  = '\\192.168.254.38\Statistics'
-        DBFile     = '\\192.168.254.38\Statistics\Statistic.db3'
-        Username   = 'HP USER'
-        Password   = ''
+        Name      = 'Zund 1'
+        IP        = '192.168.254.38'
+        SharePath = '\\192.168.254.38\ProgramData\Zund\02 Statistic database'
+        DBFile    = '\\192.168.254.38\ProgramData\Zund\02 Statistic database\Statistic.db3'
+        Username  = 'HP USER'
+        Password  = 'Wilde1234'
     },
     @{
         Name       = 'Zund 2'
@@ -248,9 +248,9 @@ foreach ($ZundConfig in $ZundConfigs) {
         $dbSizeMB = [math]::Round($dbInfo.Length / 1MB, 2)
         $dbAge = [math]::Round(((Get-Date) - $dbInfo.LastWriteTime).TotalHours, 1)
         if ($dbInfo.Length -gt 0) {
-            Write-Status 'statistic.org.db3' 'PASS' "${dbSizeMB}MB, last modified ${dbAge}h ago"
+            Write-Status 'Statistic.db3' 'PASS' "${dbSizeMB}MB, last modified ${dbAge}h ago"
         } else {
-            Write-Status 'statistic.org.db3' 'FAIL' 'File is 0 bytes'
+            Write-Status 'Statistic.db3' 'FAIL' 'File is 0 bytes'
             $allPassed = $false
         }
 
@@ -265,7 +265,7 @@ foreach ($ZundConfig in $ZundConfigs) {
             $allPassed = $false
         }
     } else {
-        Write-Status 'statistic.org.db3' 'FAIL' 'File not found'
+        Write-Status 'Statistic.db3' 'FAIL' 'File not found'
         $allPassed = $false
     }
 

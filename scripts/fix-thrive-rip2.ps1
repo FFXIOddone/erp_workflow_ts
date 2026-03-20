@@ -34,7 +34,7 @@ $QueueXMLPaths = @(
 )
 # Also check the SMB share path (may differ from local path)
 $SMBShareNames = @('Thrive22Input_WS-RIP2', 'Thrive22Cutter_WS-RIP2')
-$ERPServerIP = '192.168.254.32'
+$ERPServerIP = '192.168.254.75'
 $MinDiskSpaceGB = 10
 
 # ─── Helpers ────────────────────────────────────────────

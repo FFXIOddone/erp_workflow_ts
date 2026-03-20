@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Deploy ERP to WS-RACHEL server (192.168.254.32)
+    Deploy ERP to WS-RACHEL server (192.168.254.75)
     Run this from Jake's PC to push code and start services.
 
 .DESCRIPTION
@@ -28,7 +28,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 # --- Configuration ----------------------------------------------------------------
-$SERVER_IP = "192.168.254.32"
+$SERVER_IP = "192.168.254.75"
 $SERVER_NAME = "WILDESIGNS-RACH"
 $ERP_SHARE = "\\$SERVER_IP\ERP"
 $ERP_LOCAL = "C:\ERP\erp_workflow_ts"
@@ -234,16 +234,16 @@ Write-Host @"
   Deployment Complete!
   ============================================================
 
-  ERP is running on WS-RACHEL (192.168.254.32):
+  ERP is running on WS-RACHEL (192.168.254.75):
 
-  API Server:   http://192.168.254.32:8001
-  Web App:      http://192.168.254.32:5173
-  Portal:       http://192.168.254.32:5174
-  pgAdmin:      http://192.168.254.32:5050
+  API Server:   http://192.168.254.75:8001
+  Web App:      http://192.168.254.75:5173
+  Portal:       http://192.168.254.75:5174
+  pgAdmin:      http://192.168.254.75:5050
 
   Remote access:
-    RDP:  mstsc /v:192.168.254.32
-    PS:   Enter-PSSession 192.168.254.32
+    RDP:  mstsc /v:192.168.254.75
+    PS:   Enter-PSSession 192.168.254.75
 
   To update later:
     .\deploy-to-server.ps1

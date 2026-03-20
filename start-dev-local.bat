@@ -32,8 +32,8 @@ for %%d in (vite-erp-web vite-erp-portal vite-erp-station-printing vite-erp-stat
 :: Ensure Zund Statistics shares are mapped (credentials expire after reboot)
 echo Mapping Zund Statistics shares...
 net use \\192.168.254.28\Statistics /user:User Wilde1234 /persistent:yes >nul 2>nul
-:: Zund 1 uses HP USER with blank password
-cmd /c "net use ""\\192.168.254.38\Statistics"" /user:""HP USER"" """" /persistent:yes" >nul 2>nul
+:: Zund 1 uses HP USER with Wilde1234
+cmd /c "net use ""\\192.168.254.38\ProgramData\Zund\02 Statistic database"" /user:""HP USER"" ""Wilde1234"" /persistent:yes" >nul 2>nul
 
 :: Check if node_modules exists; if not, install deps
 if not exist "node_modules" (

@@ -35,7 +35,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ROOT = $PSScriptRoot | Split-Path | Split-Path  # erp_workflow_ts root
-$SERVER_IP = "192.168.254.32"
+$SERVER_IP = "192.168.254.75"
 $ERP_SHARE = "\\$SERVER_IP\ERP\erp_workflow_ts"
 
 function Write-Step($n, $total, $msg) { Write-Host "`n━━━ [$n/$total] $msg ━━━" -ForegroundColor Cyan }
@@ -81,8 +81,8 @@ if (-not $DeployOnly) {
     )
     
     # Set API URL for production builds
-    $env:VITE_API_URL = if ($Local) { "http://localhost:8001" } else { "http://192.168.254.32:8001" }
-    $env:VITE_WS_URL = if ($Local) { "ws://localhost:8001" } else { "ws://192.168.254.32:8001" }
+    $env:VITE_API_URL = if ($Local) { "http://localhost:8001" } else { "http://192.168.254.75:8001" }
+    $env:VITE_WS_URL = if ($Local) { "ws://localhost:8001" } else { "ws://192.168.254.75:8001" }
     
     $failed = @()
     foreach ($app in $apps) {
@@ -234,9 +234,9 @@ echo.
 echo   ══════════════════════════════════════════════
 echo   ERP Server starting on port 8001
 echo.
-echo   Web App:    http://192.168.254.32:8001
-echo   Portal:     http://192.168.254.32:8001/portal
-echo   API:        http://192.168.254.32:8001/api/v1
+echo   Web App:    http://192.168.254.75:8001
+echo   Portal:     http://192.168.254.75:8001/portal
+echo   API:        http://192.168.254.75:8001/api/v1
 echo   ══════════════════════════════════════════════
 echo.
 
@@ -298,7 +298,7 @@ Write-Host @"
 ║                                                              ║
 ║  TO START on WS-RACHEL (one-time):                           ║
 ║                                                              ║
-║  1. RDP: mstsc /v:192.168.254.32                             ║
+║  1. RDP: mstsc /v:192.168.254.75                             ║
 ║     (or plug in a monitor)                                   ║
 ║                                                              ║
 ║  2. Open PowerShell as Admin and run:                        ║
@@ -314,9 +314,9 @@ Write-Host @"
 ║  OR just double-click: C:\ERP\erp_workflow_ts\start-erp.bat  ║
 ║                                                              ║
 ║  ACCESS (from any network PC):                               ║
-║    Web App:  http://192.168.254.32:8001                      ║
-║    Portal:   http://192.168.254.32:8001/portal               ║
-║    API:      http://192.168.254.32:8001/api/v1               ║
+║    Web App:  http://192.168.254.75:8001                      ║
+║    Portal:   http://192.168.254.75:8001/portal               ║
+║    API:      http://192.168.254.75:8001/api/v1               ║
 ║                                                              ║
 ║  SINGLE PROCESS = ~200MB RAM instead of 2GB+                 ║
 ║                                                              ║

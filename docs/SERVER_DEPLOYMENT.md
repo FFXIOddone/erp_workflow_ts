@@ -1,7 +1,7 @@
 # WS-RACHEL ERP Server Deployment Guide
 
 ## Overview
-Dedicated ERP server running on **WS-RACHEL** (192.168.254.32) — a repurposed Windows PC on the Wilde Signs network.
+Dedicated ERP server running on **WS-RACHEL** (192.168.254.75) — a repurposed Windows PC on the Wilde Signs network.
 
 ## One-Time Setup (requires physical access or local login)
 
@@ -59,34 +59,34 @@ Or double-click `push-to-server.bat` for quick updates.
 ### Remote Access
 ```powershell
 # RDP (graphical)
-mstsc /v:192.168.254.32
+mstsc /v:192.168.254.75
 
 # PowerShell (command line)
-Enter-PSSession 192.168.254.32
+Enter-PSSession 192.168.254.75
 
 # Quick command
-Invoke-Command -ComputerName 192.168.254.32 -ScriptBlock { pm2 list }
+Invoke-Command -ComputerName 192.168.254.75 -ScriptBlock { pm2 list }
 ```
 
 ### Check Status
 ```powershell
 # From Jake's PC
-Invoke-Command -ComputerName 192.168.254.32 -ScriptBlock { pm2 list }
-Invoke-Command -ComputerName 192.168.254.32 -ScriptBlock { pm2 logs --lines 20 }
+Invoke-Command -ComputerName 192.168.254.75 -ScriptBlock { pm2 list }
+Invoke-Command -ComputerName 192.168.254.75 -ScriptBlock { pm2 logs --lines 20 }
 ```
 
 ### Access ERP (from any PC on the network)
 | Service | URL |
 |---------|-----|
-| Web App | http://192.168.254.32:5173 |
-| API | http://192.168.254.32:8001 |
-| Portal | http://192.168.254.32:5174 |
-| pgAdmin | http://192.168.254.32:5050 |
-| Station: Printing | http://192.168.254.32:5180 |
-| Station: Production | http://192.168.254.32:5181 |
-| Station: Shipping | http://192.168.254.32:5182 |
-| Station: Design | http://192.168.254.32:5183 |
-| Order Entry | http://192.168.254.32:5184 |
+| Web App | http://192.168.254.75:5173 |
+| API | http://192.168.254.75:8001 |
+| Portal | http://192.168.254.75:5174 |
+| pgAdmin | http://192.168.254.75:5050 |
+| Station: Printing | http://192.168.254.75:5180 |
+| Station: Production | http://192.168.254.75:5181 |
+| Station: Shipping | http://192.168.254.75:5182 |
+| Station: Design | http://192.168.254.75:5183 |
+| Order Entry | http://192.168.254.75:5184 |
 
 ### Login
 - **ERP**: admin / admin123
@@ -117,20 +117,20 @@ WS-RACHEL (.32) - Dedicated Server
 ### ERP not loading?
 ```powershell
 # Check PM2 status
-Invoke-Command -ComputerName 192.168.254.32 -ScriptBlock { pm2 list }
+Invoke-Command -ComputerName 192.168.254.75 -ScriptBlock { pm2 list }
 
 # Check logs
-Invoke-Command -ComputerName 192.168.254.32 -ScriptBlock { pm2 logs erp-backend --lines 50 }
+Invoke-Command -ComputerName 192.168.254.75 -ScriptBlock { pm2 logs erp-backend --lines 50 }
 
 # Restart everything
-Invoke-Command -ComputerName 192.168.254.32 -ScriptBlock { pm2 reload all }
+Invoke-Command -ComputerName 192.168.254.75 -ScriptBlock { pm2 reload all }
 ```
 
 ### Database connection issues?
 ```powershell
-Invoke-Command -ComputerName 192.168.254.32 -ScriptBlock { docker ps }
+Invoke-Command -ComputerName 192.168.254.75 -ScriptBlock { docker ps }
 # If erp_postgres is not running:
-Invoke-Command -ComputerName 192.168.254.32 -ScriptBlock { 
+Invoke-Command -ComputerName 192.168.254.75 -ScriptBlock { 
     cd C:\ERP\erp_workflow_ts
     docker-compose up -d 
 }
@@ -144,5 +144,5 @@ pm2 resurrect
 
 ### WS-RACHEL is unreachable?
 1. Check physical connectivity (network cable, power)
-2. Ping: `ping 192.168.254.32`
+2. Ping: `ping 192.168.254.75`
 3. If down, walk over and check the PC is powered on

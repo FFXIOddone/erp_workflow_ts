@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    ERP Server Setup Script for WS-RACHEL (192.168.254.32)
+    ERP Server Setup Script for WS-RACHEL (192.168.254.75)
     Run this ONCE on WS-RACHEL to install all prerequisites.
 
 .DESCRIPTION
@@ -41,7 +41,7 @@ Write-Host @"
 
   ============================================================
   Wilde Signs ERP Server Setup
-  Target: WS-RACHEL (192.168.254.32)
+  Target: WS-RACHEL (192.168.254.75)
   ============================================================
 
 "@ -ForegroundColor Magenta
@@ -251,8 +251,8 @@ Write-Host @"
   2. After reboot, open Docker Desktop once
   3. From Jake's PC, run: deploy-to-server.ps1
 
-  RDP Access: mstsc /v:192.168.254.32
-  Remote PS:  Enter-PSSession 192.168.254.32
+  RDP Access: mstsc /v:192.168.254.75
+  Remote PS:  Enter-PSSession 192.168.254.75
 
   ============================================================
 
