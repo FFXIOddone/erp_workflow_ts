@@ -44,8 +44,8 @@ $ZundConfigs = @(
     @{
         Name      = 'Zund 1'
         IP        = '192.168.254.38'
-        SharePath = '\\192.168.254.38\ProgramData\Zund\02 Statistic database'
-        DBFile    = '\\192.168.254.38\ProgramData\Zund\02 Statistic database\Statistic.db3'
+        SharePath = '\\192.168.254.38\Statistics'
+        DBFile    = '\\192.168.254.38\Statistics\Statistic.db3'
         Username  = 'HP USER'
         Password  = 'Wilde1234'
     },

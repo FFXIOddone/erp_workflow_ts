@@ -71,7 +71,7 @@ Zund cutters receive cut files from Thrive via the `Thrive22Cutter_xxx\Zund Cut 
 - [ ] Correlate cut times with Thrive job queue for WO linking
 
 ### Statistics Database (SQLite)
-- **Zund 1**: `\\192.168.254.38\ProgramData\Zund\02 Statistic database\Statistic.db3`
+- **Zund 1**: `\\192.168.254.38\Statistics\Statistic.db3`
 - **Zund 2**: `\\192.168.254.28\Statistics\Statistic.db3`
 - **Credentials**: Zund 1: `HP USER` / `Wilde1234` — Zund 2: `User` / `Wilde1234`
 - **Size**: ~10MB each

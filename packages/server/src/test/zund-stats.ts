@@ -7,7 +7,7 @@ async function analyzeZundStats() {
   // Test with either Zund — pass 'zund1' or 'zund2' as arg
   const zundId = process.argv[2] || 'zund2';
   const sources: Record<string, string> = {
-    'zund1': '\\\\192.168.254.38\\ProgramData\\Zund\\02 Statistic database\\Statistic.db3',
+    'zund1': '\\\\192.168.254.38\\Statistics\\Statistic.db3',
     'zund2': '\\\\192.168.254.28\\Statistics\\Statistic.db3',
   };
   const source = sources[zundId] || sources['zund2'];

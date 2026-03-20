@@ -584,6 +584,25 @@ router.get('/:id/live-detail', async (req: AuthRequest, res: Response) => {
         console.error('[VUTEk] Error polling VUTEk data:', err.message);
       }
     })());
+
+    // Probe 7: Fiery print logs (recent jobs with WO linking)
+    probes.push((async () => {
+      try {
+        const fieryJobs = await getAllFieryJobs();
+        const linked = await linkFieryJobsToOrders(fieryJobs);
+        const sorted = linked
+          .sort((a, b) => {
+            const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+            const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+            return tb - ta;
+          })
+          .slice(0, 50);
+        (result as any).fieryJobs = sorted;
+      } catch (err: any) {
+        console.error('[Fiery] Error fetching print logs:', err.message);
+        (result as any).fieryJobs = [];
+      }
+    })());
   }
 
   // Wait for all probes to settle (don't fail if one times out)
@@ -1363,7 +1382,7 @@ router.get('/zund/:zundId/live', async (req: AuthRequest, res) => {
 
 import { thriveService, parseJobInfo } from '../services/thrive.js';
 import { zundMatchService, normalizeJobName, extractCutId } from '../services/zund-match.js';
-import { getAllFieryJobs, type FieryJob } from '../services/fiery.js';
+import { getAllFieryJobs, linkFieryJobsToOrders, type FieryJob, type FieryJobLinked } from '../services/fiery.js';
 
 // GET /equipment/thrive/config - Get Thrive equipment configuration
 router.get('/thrive/config', async (_req, res) => {

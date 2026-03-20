@@ -215,6 +215,7 @@ export default function EquipmentDetailPage() {
   const smbInfo = liveDetail?.smb;
   const ews = liveDetail?.ews;
   const vutek = liveDetail?.vutek;
+  const fieryJobs = liveDetail?.fieryJobs as any[] | undefined;
   const isOnline = live?.reachable ?? false;
   const connType = (equipment.connectionType || '').toUpperCase();
   const hasIp = !!equipment.ipAddress;
@@ -865,6 +866,7 @@ export default function EquipmentDetailPage() {
               {vutek && vutek.available && (
                 <VUTEkPanel
                   vutek={vutek}
+                  fieryJobs={fieryJobs}
                   onLaunchConnection={launchConnection}
                   onOpenFileShares={openFileShares}
                   onOpenWinServices={openWinServices}
@@ -1674,8 +1676,9 @@ const INK_COLOR_MAP: Record<string, string> = {
 };
 
 // ==================== VUTEk GS3250LX Pro Panel ====================
-function VUTEkPanel({ vutek, onLaunchConnection, onOpenFileShares, onOpenWinServices }: {
+function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, onOpenWinServices }: {
   vutek: any;
+  fieryJobs?: any[];
   onLaunchConnection: (type: 'rdp' | 'vnc', targetIp?: string) => void;
   onOpenFileShares: (ip?: string, name?: string) => void;
   onOpenWinServices: (ip?: string, name?: string) => void;
@@ -2462,6 +2465,244 @@ function VUTEkPanel({ vutek, onLaunchConnection, onOpenFileShares, onOpenWinServ
         );
       })()}
 
+      {/* ---- Fiery Print Logs (with WO Linking) ---- */}
+      {fieryJobs && fieryJobs.length > 0 && (() => {
+        const linkedJobs = fieryJobs.filter((j: any) => j.workOrder);
+        const highConfidence = fieryJobs.filter((j: any) => j.linkConfidence === 'high').length;
+        const withCutFiles = fieryJobs.filter((j: any) => j.hasZccCutFile).length;
+
+        return (
+          <CollapsibleSection
+            title="Fiery Print Logs"
+            icon={<Printer className="h-5 w-5 text-indigo-500" />}
+            badge={
+              <span className="text-xs text-gray-400 font-normal ml-1">
+                {fieryJobs.length} job{fieryJobs.length !== 1 ? 's' : ''} · {linkedJobs.length} linked to orders
+              </span>
+            }
+            subtitle="Source: Fiery XF Export Folder + Thrive cross-reference"
+            defaultOpen={true}
+          >
+            {/* Summary stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-indigo-700">{fieryJobs.length}</div>
+                <div className="text-xs text-indigo-600">Total Jobs</div>
+              </div>
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-green-700">{linkedJobs.length}</div>
+                <div className="text-xs text-green-600">Linked to WO</div>
+              </div>
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-purple-700">{highConfidence}</div>
+                <div className="text-xs text-purple-600">High Confidence</div>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center">
+                <div className="text-lg font-bold text-amber-700">{withCutFiles}</div>
+                <div className="text-xs text-amber-600">With Cut Files</div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
+                    <th className="pb-2 pr-3">Job</th>
+                    <th className="pb-2 pr-3">Work Order</th>
+                    <th className="pb-2 pr-3">Date</th>
+                    <th className="pb-2 pr-3">Media</th>
+                    <th className="pb-2 pr-3">Dimensions</th>
+                    <th className="pb-2 pr-3">Cut File</th>
+                    <th className="pb-2 pr-3">Confidence</th>
+                    <th className="pb-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {fieryJobs.map((job: any, idx: number) => {
+                    const isExpanded = expandedJob === `fiery-${idx}`;
+                    const dims = job.dimensions;
+                    const widthIn = dims ? (dims.width / 72).toFixed(1) : null;
+                    const heightIn = dims ? (dims.height / 72).toFixed(1) : null;
+
+                    return (
+                      <React.Fragment key={job.jobId || idx}>
+                        <tr
+                          className="cursor-pointer hover:bg-gray-50"
+                          onClick={() => setExpandedJob(isExpanded ? null : `fiery-${idx}`)}
+                        >
+                          <td className="py-2 pr-3">
+                            <div className="font-medium text-gray-900 truncate max-w-[220px]" title={job.jobName}>
+                              {job.jobName}
+                            </div>
+                            {job.fileName && job.fileName !== job.jobName && (
+                              <div className="text-xs text-gray-400 truncate max-w-[220px]" title={job.fileName}>
+                                {job.fileName}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 pr-3">
+                            {job.workOrder ? (
+                              <button
+                                className="inline-flex items-center gap-1 text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded hover:bg-purple-100 transition-colors"
+                                onClick={(e) => navigateToOrderZund(job.workOrder.orderNumber, e)}
+                              >
+                                <FileText className="h-3 w-3" />
+                                {job.workOrder.orderNumber}
+                              </button>
+                            ) : job.workOrderNumber ? (
+                              <button
+                                className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-purple-700"
+                                onClick={(e) => navigateToOrderZund(job.workOrderNumber, e)}
+                              >
+                                {job.workOrderNumber}
+                              </button>
+                            ) : (
+                              <span className="text-xs text-gray-300">—</span>
+                            )}
+                            {job.workOrder?.customerName && (
+                              <div className="text-xs text-gray-400 truncate max-w-[160px]">
+                                {job.workOrder.customerName}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 pr-3 text-xs text-gray-500">
+                            {job.timestamp ? fmtDate(job.timestamp) : '—'}
+                          </td>
+                          <td className="py-2 pr-3">
+                            {job.media?.description ? (
+                              <div className="text-xs text-gray-700 truncate max-w-[140px]" title={`${job.media.brand || ''} ${job.media.description}`}>
+                                {job.media.description}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-300">—</span>
+                            )}
+                          </td>
+                          <td className="py-2 pr-3 text-xs text-gray-600">
+                            {widthIn && heightIn ? `${widthIn}" × ${heightIn}"` : '—'}
+                          </td>
+                          <td className="py-2 pr-3">
+                            {job.hasZccCutFile ? (
+                              job.workOrder ? (
+                                <button
+                                  onClick={(e) => navigateToOrderZund(job.workOrder.orderNumber, e)}
+                                  className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 px-2 py-0.5 rounded font-medium hover:bg-green-100 transition-all"
+                                  title={job.zccFileName || 'ZCC cut file'}
+                                >
+                                  <Scissors className="h-3 w-3" /> ZCC
+                                </button>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 px-2 py-0.5 rounded font-medium">
+                                  <Scissors className="h-3 w-3" /> ZCC
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-xs text-gray-300">—</span>
+                            )}
+                          </td>
+                          <td className="py-2 pr-3">
+                            {job.linkConfidence && job.linkConfidence !== 'none' && (
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                                job.linkConfidence === 'high' ? 'bg-green-100 text-green-700'
+                                : job.linkConfidence === 'medium' ? 'bg-yellow-100 text-yellow-700'
+                                : 'bg-gray-100 text-gray-600'
+                              }`}>
+                                {job.linkConfidence}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2 w-8 text-gray-400">
+                            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={8} className="px-4 py-3 bg-gray-50 border-l-4 border-indigo-300">
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mb-3">
+                                {job.media?.brand && (
+                                  <div>
+                                    <span className="text-gray-400">Media Brand:</span>
+                                    <span className="ml-1 text-gray-700">{job.media.brand}</span>
+                                  </div>
+                                )}
+                                {job.media?.description && (
+                                  <div>
+                                    <span className="text-gray-400">Media:</span>
+                                    <span className="ml-1 text-gray-700">{job.media.description}</span>
+                                  </div>
+                                )}
+                                {job.media?.type && (
+                                  <div>
+                                    <span className="text-gray-400">Media Type:</span>
+                                    <span className="ml-1 text-gray-700">{job.media.type}</span>
+                                  </div>
+                                )}
+                                {widthIn && heightIn && (
+                                  <div>
+                                    <span className="text-gray-400">Sheet Size:</span>
+                                    <span className="ml-1 text-gray-700">{widthIn}" × {heightIn}"</span>
+                                  </div>
+                                )}
+                                {job.inks?.length > 0 && (
+                                  <div>
+                                    <span className="text-gray-400">Inks:</span>
+                                    <span className="ml-1 text-gray-700">{job.inks.join(', ')}</span>
+                                  </div>
+                                )}
+                                {job.zccFileName && (
+                                  <div>
+                                    <span className="text-gray-400">Cut File:</span>
+                                    <span className="ml-1 text-gray-700 font-mono">{job.zccFileName}</span>
+                                  </div>
+                                )}
+                                {job.thriveFilePath && (
+                                  <div className="col-span-2">
+                                    <span className="text-gray-400">Thrive Path:</span>
+                                    <span className="ml-1 text-gray-700 font-mono text-[11px]">{job.thriveFilePath}</span>
+                                  </div>
+                                )}
+                                {job.workOrder && (
+                                  <>
+                                    <div>
+                                      <span className="text-gray-400">Order:</span>
+                                      <button
+                                        className="ml-1 text-purple-700 hover:underline font-medium"
+                                        onClick={(e) => navigateToOrderZund(job.workOrder.orderNumber, e)}
+                                      >
+                                        {job.workOrder.orderNumber}
+                                      </button>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Customer:</span>
+                                      <span className="ml-1 text-gray-700">{job.workOrder.customerName}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Status:</span>
+                                      <span className="ml-1 text-gray-700">{job.workOrder.status}</span>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+
+                              {/* Link reasons */}
+                              {job.linkReasons?.length > 0 && (
+                                <div className="text-xs">
+                                  <span className="text-gray-400 font-medium">Match reasons: </span>
+                                  <span className="text-gray-600">{job.linkReasons.join(' · ')}</span>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CollapsibleSection>
+        );
+      })()}
+
       {/* ---- Data Source Info ---- */}
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
         <div className="flex items-start gap-3">
@@ -2472,6 +2713,7 @@ function VUTEkPanel({ vutek, onLaunchConnection, onOpenFileShares, onOpenWinServ
               <strong>History:</strong> VUTEk controller MySQL database via SSH — ink consumption, job timing, and print results.
               <strong> Cut Files:</strong> Fiery Export Folder (SMB share) — ZCC cut file matching.
               <strong> Ink Levels:</strong> SSH bag consumption tracking (RFID tags non-functional, estimates based on usage history).
+              <strong> Fiery Logs:</strong> JDF metadata from Fiery Export Folder with Thrive cross-reference for WO linking.
               <strong> Connectivity:</strong> TCP port scanning.
             </p>
           </div>

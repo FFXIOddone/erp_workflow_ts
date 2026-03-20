@@ -96,7 +96,7 @@ export const THRIVE_CONFIG = {
     },
   ],
   zundMachines: [
-    { id: 'zund-1', ip: '192.168.254.38', name: 'Zund 1', statisticsPath: '\\\\192.168.254.38\\ProgramData\\Zund\\02 Statistic database' },
+    { id: 'zund-1', ip: '192.168.254.38', name: 'Zund 1', statisticsPath: '\\\\192.168.254.38\\Statistics' },
     { id: 'zund-2', ip: '192.168.254.28', name: 'Zund 2', statisticsPath: '\\\\192.168.254.28\\Statistics' },
   ],
   fiery: {

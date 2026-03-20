@@ -84,7 +84,7 @@ export interface ZundDashboard {
 
 // Zund statistics share paths (both machines have Statistic.db3 via SMB)
 const ZUND_STATS_PATHS: Record<string, string> = {
-  'zund1': '\\\\192.168.254.38\\ProgramData\\Zund\\02 Statistic database\\Statistic.db3',
+  'zund1': '\\\\192.168.254.38\\Statistics\\Statistic.db3',
   'zund2': '\\\\192.168.254.28\\Statistics\\Statistic.db3',
 };
 

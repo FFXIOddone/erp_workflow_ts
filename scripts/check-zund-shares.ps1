@@ -14,7 +14,7 @@ Write-Host "  Program Data share: $z2prog"
 
 Write-Host ""
 Write-Host "=== Try shares on Zund 1 ==="
-$z1stats = Test-Path "\\192.168.254.38\ProgramData"
+$z1stats = Test-Path "\\192.168.254.38\Statistics"
 Write-Host "  Statistics share: $z1stats"
 $z1prog = Test-Path "\\192.168.254.38\Program Data"
 Write-Host "  Program Data share: $z1prog"
