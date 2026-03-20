@@ -157,24 +157,66 @@ async function refreshLocalCopy(zundId: string): Promise<string> {
 
 async function openDb(zundId: string): Promise<Database.Database> {
   const localPath = await refreshLocalCopy(zundId);
+  // Ensure material name map is loaded (no-op after first load, refreshes every 24h)
+  loadMaterialMap().catch(err => console.warn('[Zund] Material map load error:', err.message));
   return new Database(localPath, { readonly: true });
 }
 
 // ============ Material GUID to Name Mapping ============
 
-// Common Zund material GUIDs (from the DB)
-const MATERIAL_NAMES: Record<string, string> = {
-  '{b108bd98-9bf3-4e6a-a723-fd7938c009c0}': 'Foil / Vinyl',
-  '{CEB49D17-2803-42DB-8582-7016DB610949}': 'Plastic sheet - PP',
-  '{5c95edff-3e81-4aa2-b389-e82ba72523eb}': 'Corrugated Board',
-  '{82bcb47b-c98b-4abf-a5fb-5e95bb31e50d}': 'Foam Board',
-  '{84f0f18e-5c9d-466a-90b7-8cb22aa42eb5}': 'Acrylic',
-  '{a8cb5e5e-35d3-4c74-ac38-d40a97a7cf1b}': 'Aluminum Composite',
-  '{6ab75a5e-0f16-4e3d-98dc-09f22d5c6b87}': 'PVC',
+// Paths to Material.db3 on each Zund's "Zund Cut Center" share
+const ZUND_MATERIAL_PATHS: Record<string, string> = {
+  'zund1': '\\\\192.168.254.38\\Zund Cut Center\\Material.db3',
+  'zund2': '\\\\192.168.254.28\\Zund Cut Center\\Material.db3',
 };
 
+// Merged GUID→Name map from all Zund Material.db3 files (loaded on first use, refreshed every 24h)
+let materialNameMap: Record<string, string> = {};
+let materialMapLoadedAt = 0;
+const MATERIAL_MAP_TTL_MS = 86_400_000; // 24h
+
+export async function loadMaterialMap(): Promise<void> {
+  const now = Date.now();
+  if (now - materialMapLoadedAt < MATERIAL_MAP_TTL_MS && Object.keys(materialNameMap).length > 0) return;
+
+  const newMap: Record<string, string> = {};
+  ensureCacheDir();
+
+  for (const [zundId, remotePath] of Object.entries(ZUND_MATERIAL_PATHS)) {
+    const localPath = path.join(LOCAL_CACHE_DIR, `${zundId}_material.db3`);
+    try {
+      await withTimeout(fsP.copyFile(remotePath, localPath), 5000, `copyMaterial ${zundId}`);
+    } catch (err: any) {
+      if (!fs.existsSync(localPath)) {
+        console.warn(`[Zund] Cannot load Material.db3 for ${zundId}: ${err.message}`);
+        continue;
+      }
+      console.warn(`[Zund] Using cached Material.db3 for ${zundId}: ${err.message}`);
+    }
+
+    try {
+      const db = new Database(localPath, { readonly: true });
+      const rows = db.prepare('SELECT GUID, Name FROM Material WHERE Hidden = 0').all() as { GUID: string; Name: string }[];
+      for (const row of rows) {
+        // Normalize GUID to lowercase for case-insensitive lookup
+        newMap[row.GUID.toLowerCase()] = row.Name;
+      }
+      db.close();
+    } catch (err: any) {
+      console.warn(`[Zund] Failed to read Material.db3 for ${zundId}: ${err.message}`);
+    }
+  }
+
+  if (Object.keys(newMap).length > 0) {
+    materialNameMap = newMap;
+    materialMapLoadedAt = now;
+    console.log(`[Zund] Loaded ${Object.keys(newMap).length} material names from Material.db3`);
+  }
+}
+
 function getMaterialName(guid: string): string {
-  return MATERIAL_NAMES[guid] || guid;
+  if (!guid || !guid.startsWith('{')) return guid;
+  return materialNameMap[guid.toLowerCase()] || guid;
 }
 
 // ============ Public API ============

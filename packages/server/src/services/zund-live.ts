@@ -427,7 +427,7 @@ async function findWorkOrder(orderNumber: string): Promise<{ id: string; orderNu
  */
 export async function getZundLiveData(
   zundId: string,
-  options: { recentJobLimit?: number; zccLimit?: number; daysBack?: number } = {}
+  options: { recentJobLimit?: number; zccLimit?: number; daysBack?: number; statsOnly?: boolean } = {}
 ): Promise<ZundLiveData> {
   // Check TTL cache first (fresh data)
   const cacheKey = `${zundId}-${JSON.stringify(options)}`;
@@ -451,11 +451,11 @@ export async function getZundLiveData(
 /** Internal implementation that does the actual data fetching. */
 async function fetchZundLiveData(
   zundId: string,
-  options: { recentJobLimit?: number; zccLimit?: number; daysBack?: number },
+  options: { recentJobLimit?: number; zccLimit?: number; daysBack?: number; statsOnly?: boolean },
   cacheKey: string,
 ): Promise<ZundLiveData> {
 
-  const { recentJobLimit = 50, zccLimit = 50 } = options;
+  const { recentJobLimit = 50, zccLimit = 50, statsOnly = false } = options;
   // NOTE: isZundStatsAccessible moved inside Source 1 so it runs in parallel with Sources 2 & 3
 
   let hasStatsDb = false;
@@ -464,12 +464,14 @@ async function fetchZundLiveData(
   let todayStats = null;
   let toolWear: ZundDashboard['toolWear'] = [];
 
-  // ── Run all 3 sources in parallel ──
-  // Each source returns its own job array; we merge/dedup after
+  // ── Run sources in parallel ──
+  // statsOnly: only Source 1 (this machine's own data). Used by equipment detail pages.
+  // Full mode: all 3 sources merged. Reserved for future aggregated dashboard.
   type SourceResult = { jobs: ZundLiveJob[]; normalizedNames: Map<string, true> };
+  const emptyResult: SourceResult = { jobs: [], normalizedNames: new Map() };
 
   const [source1Result, source2Result, source3Result] = await Promise.allSettled([
-    // Source 1: Statistics DB (5s timeout — includes access check)
+    // Source 1: Statistics DB (this machine's own cut history)
     withTimeout((async (): Promise<SourceResult> => {
       const srcJobs: ZundLiveJob[] = [];
       const srcNames = new Map<string, true>();
@@ -555,8 +557,8 @@ async function fetchZundLiveData(
       return { jobs: srcJobs, normalizedNames: srcNames };
     })(), 15_000, 'Source1-StatsDB'),
 
-    // Source 2: Thrive Cut Center (5s timeout)
-    withTimeout((async (): Promise<SourceResult> => {
+    // Source 2: Thrive Cut Center (5s timeout) — skip in statsOnly mode
+    statsOnly ? Promise.resolve(emptyResult) : withTimeout((async (): Promise<SourceResult> => {
       const srcJobs: ZundLiveJob[] = [];
       const srcNames = new Map<string, true>();
       const cutFiles = await scanThriveCutFiles();
@@ -602,8 +604,8 @@ async function fetchZundLiveData(
       return { jobs: srcJobs, normalizedNames: srcNames };
     })(), 15_000, 'Source2-ThriveCut'),
 
-    // Source 3: File Server Zund Queue (5s timeout)
-    withTimeout((async (): Promise<SourceResult> => {
+    // Source 3: File Server Zund Queue (5s timeout) — skip in statsOnly mode
+    statsOnly ? Promise.resolve(emptyResult) : withTimeout((async (): Promise<SourceResult> => {
       const srcJobs: ZundLiveJob[] = [];
       const srcNames = new Map<string, true>();
       const queueFiles = await queueFileCache.getOrFetch(

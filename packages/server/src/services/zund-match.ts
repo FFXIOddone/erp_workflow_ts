@@ -57,10 +57,10 @@ export function extractCutId(name: string): string | null {
   const fieryMatch = clean.match(/[_-]?(P\d+_T\d+_\d+_\d+(?:_\d+)?)$/i);
   if (fieryMatch) return fieryMatch[1];
 
-  // Try Thrive format: _0DGPMDD2632 (7+ alphanumeric chars with 3+ trailing digits)
-  // Must contain at least one letter to avoid matching pure numeric ONYX/Fiery suffixes
-  const thriveMatch = clean.match(/[_-]?([A-Z0-9]{7,}\d{3,})$/i);
-  if (thriveMatch && !/^\d+$/.test(thriveMatch[1])) return thriveMatch[1];
+  // Try Thrive/Zund CutID format: _0DGPMDD2632 or _1365JIN263K
+  // 7+ alphanumeric chars containing both letters and digits (not pure numeric or pure alpha)
+  const thriveMatch = clean.match(/[_-]([A-Z0-9]{7,})$/i);
+  if (thriveMatch && /\d/.test(thriveMatch[1]) && /[A-Za-z]/.test(thriveMatch[1])) return thriveMatch[1];
 
   return null;
 }
@@ -77,8 +77,8 @@ export function normalizeJobName(name: string): string {
     .replace(/_P\d+_T\d+_\d+_\d+.*$/i, '') // _P1_T1_169_629_132221...
     .replace(/_\d{10,}$/i, '') // Long numeric suffix
     .replace(/[_-]copy\d*$/i, '') // -copy, _copy2, etc.
-    // Remove Thrive random ID suffixes (7+ alphanumeric at end)
-    .replace(/_[A-Z0-9]{7,}\d{3,}$/i, '') // _0RWRGPI2624
+    // Remove Thrive/Zund CutID suffixes (7+ alphanumeric with mixed letters+digits at end)
+    .replace(/_(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{7,}$/i, '') // _0RWRGPI2624, _1365JIN263K
     .replace(/\([^)]+\)$/, '') // (S&R) at end
     // Normalize separators
     .replace(/[-_]+/g, '_')

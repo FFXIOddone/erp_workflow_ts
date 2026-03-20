@@ -18,8 +18,10 @@ import {
 } from '../services/printer-monitor.js';
 import { TtlCache } from '../lib/ttl-cache.js';
 
-// Cache live-detail results for 30s to avoid re-polling on rapid page visits
-const liveDetailCache = new TtlCache<any>(30_000);
+// Cache live-detail results for 60s (stale-while-revalidate serves stale data while refreshing)
+const liveDetailCache = new TtlCache<any>(60_000);
+const portScanCache = new TtlCache<Record<string, boolean>>(86_400_000); // 24h TTL
+const deepSnmpCache = new TtlCache<any>(86_400_000); // 24h TTL for deep SNMP data
 import {
   getZundDashboard,
   getAvailableZunds,
@@ -29,6 +31,7 @@ import { pollHPEWS } from '../services/hp-ews.js';
 import { pollHPLEDM } from '../services/hp-ledm.js';
 import { pollVUTEk, isVUTEkIP } from '../services/vutek.js';
 import { pollVUTEkInk, forceRefreshVUTEkInk } from '../services/vutek-ink.js';
+import { getAllFieryJobs as getFieryJobs, linkFieryJobsToOrders, type FieryJob as FieryJobType } from '../services/fiery.js';
 import {
   CreateEquipmentSchema,
   UpdateEquipmentSchema,
@@ -374,214 +377,284 @@ router.get('/:id', async (req: AuthRequest, res) => {
 });
 
 // GET /equipment/:id/live-detail - Deep live status for a single piece of equipment
+// Uses stale-while-revalidate: returns cached/stale data instantly, refreshes in background
 router.get('/:id/live-detail', async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
 
-  // Check TTL cache first
-  const cached = liveDetailCache.get(id);
-  if (cached) {
-    return res.json({ success: true, data: cached });
-  }
+  try {
+    const data = await liveDetailCache.getOrFetchStale(id, async () => {
+      const equipment = await prisma.equipment.findUnique({
+        where: { id },
+      });
 
-  const equipment = await prisma.equipment.findUnique({
-    where: { id },
-  });
-
-  if (!equipment) {
-    throw NotFoundError('Equipment not found');
-  }
-
-  const result: any = {
-    equipmentId: id,
-    name: equipment.name,
-    connectionType: (equipment as any).connectionType || null,
-    ipAddress: equipment.ipAddress || null,
-  };
-
-  const connType = ((equipment as any).connectionType || '').toUpperCase();
-  const ip = equipment.ipAddress;
-
-  // ── Run all independent network probes in parallel ──
-  const probes: Promise<void>[] = [];
-
-  // Probe 1: Basic live status (SNMP or connectivity check)
-  if (ip) {
-    probes.push((async () => {
-      try {
-        let liveStatus;
-        if (connType === 'SNMP') {
-          liveStatus = await pollPrinterStatus(id, ip, (equipment as any).snmpCommunity || 'public');
-        } else {
-          liveStatus = await checkDeviceConnectivity(id, ip, connType, (equipment as any).snmpCommunity || 'public');
-        }
-        setCachedStatus(id, liveStatus);
-        result.live = {
-          reachable: liveStatus.reachable,
-          state: liveStatus.state,
-          stateMessage: liveStatus.stateMessage,
-          systemName: liveStatus.systemName,
-          systemDescription: liveStatus.systemDescription,
-          lastPolled: liveStatus.lastPolled,
-          supplies: liveStatus.supplies,
-          alerts: liveStatus.alerts,
-          errorMessage: liveStatus.errorMessage,
-        };
-      } catch (err: any) {
-        result.live = { reachable: false, state: 'offline', errorMessage: err.message };
+      if (!equipment) {
+        throw NotFoundError('Equipment not found');
       }
-    })());
-  }
 
-  // Probe 2: Deep SNMP data (page count, media trays, uptime, cover status)
-  if (ip && connType === 'SNMP') {
-    probes.push((async () => {
-      try {
-        const deepData = await Promise.race([
-          deepPollPrinterStatus(ip, (equipment as any).snmpCommunity || 'public'),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Deep SNMP poll timed out after 30s')), 30000)),
-        ]);
-        result.deep = deepData;
-      } catch (err: any) {
-        result.deep = { error: err.message };
-      }
-    })());
-  }
+      const result: any = {
+        equipmentId: id,
+        name: equipment.name,
+        connectionType: (equipment as any).connectionType || null,
+        ipAddress: equipment.ipAddress || null,
+      };
 
-  // Probe 3: Zund stats
-  const nameLower = equipment.name.toLowerCase();
-  if (nameLower.includes('zund') || nameLower.includes('cutter')) {
-    probes.push((async () => {
-      try {
-        const availableZunds = getAvailableZunds();
-        let zundId: string | null = null;
-        if (nameLower.includes('2') || nameLower.includes('second')) {
-          zundId = 'zund2';
-        } else if (nameLower.includes('1') || nameLower.includes('first')) {
-          zundId = 'zund1';
-        } else if (availableZunds.length > 0) {
-          zundId = availableZunds[0];
-        }
+      const connType = ((equipment as any).connectionType || '').toUpperCase();
+      const ip = equipment.ipAddress;
 
-        if (zundId && availableZunds.includes(zundId)) {
-          const accessible = await isZundStatsAccessible(zundId);
-          if (accessible) {
-            result.zund = await getZundDashboard(zundId);
-            result.zund.zundId = zundId;
-            result.zund.accessible = true;
-          } else {
-            result.zund = { zundId, accessible: false, message: 'Statistics database not accessible' };
-          }
-        } else {
-          result.zund = { available: availableZunds, message: 'No matching Zund stats found' };
-        }
-      } catch (err: any) {
-        result.zund = { error: err.message };
-      }
-    })());
-  }
+      // ── Run all independent network probes in parallel ──
+      const probes: Promise<void>[] = [];
 
-  // Probe 4: Port scan + NetBIOS (all devices with IP)
-  if (ip) {
-    probes.push((async () => {
-      try {
-        const net = await import('net');
-        const tcpCheck = (port: number, timeout = 2000): Promise<boolean> =>
-          new Promise((resolve) => {
-            const s = new net.Socket();
-            s.setTimeout(timeout);
-            s.on('connect', () => { s.destroy(); resolve(true); });
-            s.on('timeout', () => { s.destroy(); resolve(false); });
-            s.on('error', () => { s.destroy(); resolve(false); });
-            s.connect(port, ip);
-          });
-
-        const portDefs = [
-          { key: 'http',  port: 80 },
-          { key: 'https', port: 443 },
-          { key: 'smb',   port: 445 },
-          { key: 'rdp',   port: 3389 },
-          { key: 'vnc',   port: 5900 },
-          { key: 'ssh',   port: 22 },
-          { key: 'ipp',   port: 631 },
-          { key: 'winrm', port: 5985 },
-          { key: 'snmp',  port: 161 },
-          { key: 'rpc',   port: 135 },
-        ];
-
-        const checks = await Promise.allSettled(
-          portDefs.map(({ port }) => tcpCheck(port))
-        );
-
-        result.ports = {};
-        portDefs.forEach(({ key }, i) => {
-          result.ports[key] = (checks[i] as any).value ?? false;
-        });
-
-        // NetBIOS hostname lookup if SMB port is open
-        if (result.ports.smb || connType === 'SMB') {
+      // Probe 1: Basic live status (SNMP or connectivity check)
+      if (ip) {
+        probes.push((async () => {
           try {
-            const { exec } = await import('child_process');
-            const { promisify } = await import('util');
-            const execAsync = promisify(exec);
-            const { stdout } = await execAsync(`nbtstat -A ${ip}`, { timeout: 5000 });
-            const match = stdout.match(/^\s+(\S+)\s+<00>\s+UNIQUE/m);
-            if (match) {
-              result.smb = { hostname: match[1].trim() };
+            let liveStatus;
+            if (connType === 'SNMP') {
+              liveStatus = await pollPrinterStatus(id, ip, (equipment as any).snmpCommunity || 'public');
+            } else {
+              liveStatus = await checkDeviceConnectivity(id, ip, connType, (equipment as any).snmpCommunity || 'public');
+            }
+            setCachedStatus(id, liveStatus);
+            result.live = {
+              reachable: liveStatus.reachable,
+              state: liveStatus.state,
+              stateMessage: liveStatus.stateMessage,
+              systemName: liveStatus.systemName,
+              systemDescription: liveStatus.systemDescription,
+              lastPolled: liveStatus.lastPolled,
+              supplies: liveStatus.supplies,
+              alerts: liveStatus.alerts,
+              errorMessage: liveStatus.errorMessage,
+            };
+          } catch (err: any) {
+            result.live = { reachable: false, state: 'offline', errorMessage: err.message };
+          }
+        })());
+      }
+
+      // Probe 2: Deep SNMP data (page count, media trays, uptime, cover status) — 24h cache
+      if (ip && connType === 'SNMP') {
+        probes.push((async () => {
+          try {
+            result.deep = await deepSnmpCache.getOrFetchStale(ip, async () => {
+              return await Promise.race([
+                deepPollPrinterStatus(ip, (equipment as any).snmpCommunity || 'public'),
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Deep SNMP poll timed out after 30s')), 30000)),
+              ]);
+            });
+          } catch (err: any) {
+            result.deep = { error: err.message };
+          }
+        })());
+      }
+
+      // Probe 3: Zund stats
+      const nameLower = equipment.name.toLowerCase();
+      if (nameLower.includes('zund') || nameLower.includes('cutter')) {
+        probes.push((async () => {
+          try {
+            const availableZunds = getAvailableZunds();
+            let zundId: string | null = null;
+            if (nameLower.includes('2') || nameLower.includes('second')) {
+              zundId = 'zund2';
+            } else if (nameLower.includes('1') || nameLower.includes('first')) {
+              zundId = 'zund1';
+            } else if (availableZunds.length > 0) {
+              zundId = availableZunds[0];
+            }
+
+            if (zundId && availableZunds.includes(zundId)) {
+              const accessible = await isZundStatsAccessible(zundId);
+              if (accessible) {
+                result.zund = await getZundDashboard(zundId);
+                result.zund.zundId = zundId;
+                result.zund.accessible = true;
+              } else {
+                result.zund = { zundId, accessible: false, message: 'Statistics database not accessible' };
+              }
+            } else {
+              result.zund = { available: availableZunds, message: 'No matching Zund stats found' };
+            }
+          } catch (err: any) {
+            result.zund = { error: err.message };
+          }
+        })());
+      }
+
+      // Probe 4: Port scan + NetBIOS (all devices with IP) — 24h cache
+      if (ip) {
+        probes.push((async () => {
+          try {
+            const cachedPorts = portScanCache.get(ip);
+            if (cachedPorts) {
+              result.ports = cachedPorts;
+              return;
+            }
+
+            const net = await import('net');
+            const tcpCheck = (port: number, timeout = 2000): Promise<boolean> =>
+              new Promise((resolve) => {
+                const s = new net.Socket();
+                s.setTimeout(timeout);
+                s.on('connect', () => { s.destroy(); resolve(true); });
+                s.on('timeout', () => { s.destroy(); resolve(false); });
+                s.on('error', () => { s.destroy(); resolve(false); });
+                s.connect(port, ip);
+              });
+
+            const portDefs = [
+              { key: 'http',  port: 80 },
+              { key: 'https', port: 443 },
+              { key: 'smb',   port: 445 },
+              { key: 'rdp',   port: 3389 },
+              { key: 'vnc',   port: 5900 },
+              { key: 'ssh',   port: 22 },
+              { key: 'ipp',   port: 631 },
+              { key: 'winrm', port: 5985 },
+              { key: 'snmp',  port: 161 },
+              { key: 'rpc',   port: 135 },
+            ];
+
+            const checks = await Promise.allSettled(
+              portDefs.map(({ port }) => tcpCheck(port))
+            );
+
+            result.ports = {};
+            portDefs.forEach(({ key }, i) => {
+              result.ports[key] = (checks[i] as any).value ?? false;
+            });
+
+            portScanCache.set(ip, result.ports);
+
+            // NetBIOS hostname lookup if SMB port is open
+            if (result.ports.smb || connType === 'SMB') {
+              try {
+                const { exec } = await import('child_process');
+                const { promisify } = await import('util');
+                const execAsync = promisify(exec);
+                const { stdout } = await execAsync(`nbtstat -A ${ip}`, { timeout: 5000 });
+                const match = stdout.match(/^\s+(\S+)\s+<00>\s+UNIQUE/m);
+                if (match) {
+                  result.smb = { hostname: match[1].trim() };
+                }
+              } catch {}
             }
           } catch {}
-        }
-      } catch {}
-    })());
-  }
-
-  // Probe 5: HP EWS / LEDM
-  if (ip) {
-    probes.push((async () => {
-      let ewsAvailable = false;
-
-      // Try modern EWS (JSON) first
-      try {
-        const ewsData = await pollHPEWS(ip);
-        if (ewsData.available && (ewsData.identity || ewsData.ink.length > 0)) {
-          result.ews = ewsData;
-          setCachedEWSData(req.params.id, ewsData);
-          prisma.equipmentDataCache.upsert({
-            where: { sourceType_sourceKey: { sourceType: 'HP_EWS', sourceKey: req.params.id } },
-            update: { data: ewsData as any, capturedAt: new Date(), cachedAt: new Date() },
-            create: { equipmentId: req.params.id, sourceType: 'HP_EWS', sourceKey: req.params.id, data: ewsData as any, capturedAt: new Date() },
-          }).catch(() => {});
-          ewsAvailable = true;
-        }
-      } catch {}
-
-      // Fall back to LEDM XML API for older HP Latex printers
-      if (!ewsAvailable) {
-        try {
-          const ledmData = await pollHPLEDM(ip);
-          if (ledmData.available) {
-            result.ews = ledmData;
-            setCachedEWSData(req.params.id, ledmData);
-            prisma.equipmentDataCache.upsert({
-              where: { sourceType_sourceKey: { sourceType: 'HP_EWS', sourceKey: req.params.id } },
-              update: { data: ledmData as any, capturedAt: new Date(), cachedAt: new Date() },
-              create: { equipmentId: req.params.id, sourceType: 'HP_EWS', sourceKey: req.params.id, data: ledmData as any, capturedAt: new Date() },
-            }).catch(() => {});
-          }
-        } catch {}
+        })());
       }
-    })());
-  }
 
-  // Probe 6: VUTEk
-  if (ip && isVUTEkIP(ip)) {
-    probes.push((async () => {
-      try {
-        const vutekData = await pollVUTEk();
-        if (vutekData.available) {
-          (result as any).vutek = vutekData;
+      // Probe 5: HP EWS / LEDM — only for printers (SNMP/HTTP), not SMB file shares or cutters
+      if (ip && connType !== 'SMB') {
+        probes.push((async () => {
+          let ewsAvailable = false;
+
+          // Try modern EWS (JSON) first
+          try {
+            const ewsData = await pollHPEWS(ip);
+            if (ewsData.available && (ewsData.identity || ewsData.ink.length > 0)) {
+              result.ews = ewsData;
+              setCachedEWSData(id, ewsData);
+              prisma.equipmentDataCache.upsert({
+                where: { sourceType_sourceKey: { sourceType: 'HP_EWS', sourceKey: id } },
+                update: { data: ewsData as any, capturedAt: new Date(), cachedAt: new Date() },
+                create: { equipmentId: id, sourceType: 'HP_EWS', sourceKey: id, data: ewsData as any, capturedAt: new Date() },
+              }).catch(() => {});
+              ewsAvailable = true;
+            }
+          } catch {}
+
+          // Fall back to LEDM XML API for older HP Latex printers
+          if (!ewsAvailable) {
+            try {
+              const ledmData = await pollHPLEDM(ip);
+              if (ledmData.available) {
+                result.ews = ledmData;
+                setCachedEWSData(id, ledmData);
+                prisma.equipmentDataCache.upsert({
+                  where: { sourceType_sourceKey: { sourceType: 'HP_EWS', sourceKey: id } },
+                  update: { data: ledmData as any, capturedAt: new Date(), cachedAt: new Date() },
+                  create: { equipmentId: id, sourceType: 'HP_EWS', sourceKey: id, data: ledmData as any, capturedAt: new Date() },
+                }).catch(() => {});
+              }
+            } catch {}
+          }
+        })());
+      }
+
+      // Probe 6: VUTEk
+      if (ip && isVUTEkIP(ip)) {
+        probes.push((async () => {
+          try {
+            const vutekData = await pollVUTEk();
+            if (vutekData.available) {
+              (result as any).vutek = vutekData;
+            }
+          } catch (err: any) {
+            console.error('[VUTEk] Error polling VUTEk data:', err.message);
+          }
+        })());
+
+        // Probe 7: Fiery print logs (recent jobs with WO linking)
+        probes.push((async () => {
+          try {
+            const fieryJobs = await getFieryJobs();
+            const linked = await linkFieryJobsToOrders(fieryJobs);
+            // Most recent first, limit to 50
+            const sorted = linked
+              .sort((a, b) => {
+                const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+                const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+                return tb - ta;
+              })
+              .slice(0, 50);
+            (result as any).fieryJobs = sorted;
+          } catch (err: any) {
+            console.error('[Fiery] Error fetching print logs:', err.message);
+            (result as any).fieryJobs = [];
+          }
+        })());
+      }
+
+      // Wait for all probes to settle (don't fail if one times out)
+      await Promise.allSettled(probes);
+
+      // Post-processing that depends on multiple probe results
+      if (connType === 'SNMP') {
+        // Enrich supply data with all raw fields
+        if (result.live?.supplies) {
+          result.live.supplies = result.live.supplies.map((s: any) => ({
+            ...s,
+            rawLevel: s.currentLevel,
+            rawMax: s.maxCapacity,
+            colorHex: s.colorHex || s.color || null,
+            supplyType: s.type || 'unknown',
+          }));
         }
-      } catch (err: any) {
-        console.error('[VUTEk] Error polling VUTEk data:', err.message);
+
+        // Expose raw SNMP metadata
+        result.snmpMeta = {
+          protocol: 'SNMPv2c',
+          community: (equipment as any).snmpCommunity || 'public',
+          pollTimestamp: new Date().toISOString(),
+          oids: {
+            SYS_DESCR: '1.3.6.1.2.1.1.1.0',
+            SYS_NAME: '1.3.6.1.2.1.1.5.0',
+            SYS_UPTIME: '1.3.6.1.2.1.1.3.0',
+            HR_PRINTER_STATUS: '1.3.6.1.2.1.25.3.5.1.1.1',
+            HR_DEVICE_STATUS: '1.3.6.1.2.1.25.3.2.1.5.1',
+            PRT_COVER_STATUS: '1.3.6.1.2.1.43.6.1.1.3.1.1',
+            PRT_CONSOLE_DISPLAY: '1.3.6.1.2.1.43.16.5.1.2.1.1',
+            PRT_MARKER_SUPPLIES: '1.3.6.1.2.1.43.11.1.1.*',
+            PRT_MARKER_COUNTER: '1.3.6.1.2.1.43.10.2.1.4',
+            PRT_INPUT: '1.3.6.1.2.1.43.8.2.1.*',
+            PRT_ALERT: '1.3.6.1.2.1.43.18.1.1.*',
+          },
+        };
+
+        // EWS provides richer ink data than SNMP - clear SNMP supplies to avoid duplicates
+        if (result.ews?.ink?.length > 0 && result.live?.supplies) {
+          result.live.supplies = [];
+        }
       }
     })());
 
@@ -605,52 +678,18 @@ router.get('/:id/live-detail', async (req: AuthRequest, res: Response) => {
     })());
   }
 
-  // Wait for all probes to settle (don't fail if one times out)
-  await Promise.allSettled(probes);
+      return result;
+    });
 
-  // Post-processing that depends on multiple probe results
-  if (connType === 'SNMP') {
-    // Enrich supply data with all raw fields
-    if (result.live?.supplies) {
-      result.live.supplies = result.live.supplies.map((s: any) => ({
-        ...s,
-        rawLevel: s.currentLevel,
-        rawMax: s.maxCapacity,
-        colorHex: s.colorHex || s.color || null,
-        supplyType: s.type || 'unknown',
-      }));
-    }
-
-    // Expose raw SNMP metadata
-    result.snmpMeta = {
-      protocol: 'SNMPv2c',
-      community: (equipment as any).snmpCommunity || 'public',
-      pollTimestamp: new Date().toISOString(),
-      oids: {
-        SYS_DESCR: '1.3.6.1.2.1.1.1.0',
-        SYS_NAME: '1.3.6.1.2.1.1.5.0',
-        SYS_UPTIME: '1.3.6.1.2.1.1.3.0',
-        HR_PRINTER_STATUS: '1.3.6.1.2.1.25.3.5.1.1.1',
-        HR_DEVICE_STATUS: '1.3.6.1.2.1.25.3.2.1.5.1',
-        PRT_COVER_STATUS: '1.3.6.1.2.1.43.6.1.1.3.1.1',
-        PRT_CONSOLE_DISPLAY: '1.3.6.1.2.1.43.16.5.1.2.1.1',
-        PRT_MARKER_SUPPLIES: '1.3.6.1.2.1.43.11.1.1.*',
-        PRT_MARKER_COUNTER: '1.3.6.1.2.1.43.10.2.1.4',
-        PRT_INPUT: '1.3.6.1.2.1.43.8.2.1.*',
-        PRT_ALERT: '1.3.6.1.2.1.43.18.1.1.*',
-      },
-    };
-
-    // EWS provides richer ink data than SNMP - clear SNMP supplies to avoid duplicates
-    if (result.ews?.ink?.length > 0 && result.live?.supplies) {
-      result.live.supplies = [];
+    res.json({ success: true, data });
+  } catch (err: any) {
+    if (err.status === 404) {
+      res.status(404).json({ success: false, error: err.message });
+    } else {
+      console.error('[LiveDetail] Error:', err.message);
+      res.status(500).json({ success: false, error: err.message });
     }
   }
-
-  // Cache the assembled result
-  liveDetailCache.set(id, result);
-
-  res.json({ success: true, data: result });
 });
 
 // POST /equipment - Create equipment
@@ -1362,7 +1401,7 @@ router.get('/zund/:zundId/live', async (req: AuthRequest, res) => {
     );
 
     const data = await Promise.race([
-      getZundLiveData(zundId, { recentJobLimit: limit, zccLimit }),
+      getZundLiveData(zundId, { recentJobLimit: limit, zccLimit, statsOnly: true }),
       timeout,
     ]);
 
@@ -1726,7 +1765,7 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
       // ─── Fiery Jobs (pass pre-fetched Thrive data to avoid duplicate network call) ───
       (async () => {
         try {
-          const allFieryJobs = await getAllFieryJobs(printJobs);
+          const allFieryJobs = await getFieryJobs(printJobs);
           return allFieryJobs
             .filter(fj => {
               if (fj.workOrderNumber === orderNumber || fj.workOrderNumber === `WO${bareNumber}`) return true;
@@ -1750,7 +1789,7 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
             });
         } catch (fieryError) {
           console.log(`Warning: Could not fetch Fiery jobs: ${fieryError}`);
-          return [] as Array<FieryJob & { matchedVia?: string }>;
+          return [] as Array<FieryJobType & { matchedVia?: string }>;
         }
       })(),
     ]);
@@ -2252,7 +2291,7 @@ router.get('/thrive/unlinked-jobs', async (req: AuthRequest, res) => {
 
     if (!jobType || jobType === 'FIERY_JOB') {
       try {
-        const allFieryJobs = await getAllFieryJobs();
+        const allFieryJobs = await getFieryJobs();
         result.fieryJobs = allFieryJobs
           .filter(fj => !fj.workOrderNumber && !linkedFieryIds.has(fj.jobId))
           .map(fj => ({
