@@ -3,16 +3,23 @@ import {
   CheckCircle,
   Circle,
   PlayCircle,
+  Send,
   AlertTriangle,
   AlertCircle,
   Calendar,
   User,
   Package,
   Clock,
+  Activity,
   ChevronDown,
   ChevronUp,
   ChevronRight,
   Printer,
+  Monitor,
+  HardDrive,
+  FileText,
+  FolderOpen,
+  Loader2,
   RefreshCw,
   ArrowLeft,
   Wifi,
@@ -20,11 +27,13 @@ import {
   Undo2,
   Layers,
   List,
+  Wrench,
 } from 'lucide-react';
 import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import { useWebSocket, type WsStatus } from '../lib/useWebSocket';
 import toast from 'react-hot-toast';
+import { PrintingMethod, inferRoutingFromOrderDetails } from '@erp/shared';
 
 // ─── Types ────────────────────────────────────────────
 
@@ -45,6 +54,10 @@ interface LineItem {
   unitPrice?: number;
   notes?: string | null;
   itemMaster?: { name: string } | null;
+  completions?: Array<{
+    station: string;
+    completed: boolean;
+  }>;
 }
 
 interface WorkOrder {
@@ -64,7 +77,142 @@ interface WorkOrder {
   nestingFileName?: string | null;
 }
 
-type PrintStation = 'ROLL_TO_ROLL' | 'FLATBED' | 'SCREEN_PRINT';
+interface HotfolderTarget {
+  id: string;
+  name: string;
+  path: string;
+  ripType: string;
+  station: string;
+  machineId: string;
+  machineName: string;
+  equipmentId?: string;
+}
+
+interface RipQueueKpis {
+  totalJobs: number;
+  inQueue: number;
+  processing: number;
+  printing: number;
+  completedToday: number;
+  failedToday: number;
+  avgQueueToRipMinutes?: number | null;
+  avgRipToPrintMinutes?: number | null;
+  avgPrintMinutes?: number | null;
+  avgTotalMinutes?: number | null;
+}
+
+interface RipJobSummary {
+  id: string;
+  workOrderId: string;
+  sourceFileName: string;
+  hotfolderName: string;
+  ripType: string;
+  status: string;
+  queuedAt?: string;
+  printStartedAt?: string | null;
+  printCompletedAt?: string | null;
+  workOrder?: {
+    id: string;
+    orderNumber: string;
+    customerName: string;
+    description?: string | null;
+    dueDate?: string | null;
+  } | null;
+  equipment?: {
+    id: string;
+    name: string;
+    station?: string | null;
+  } | null;
+}
+
+interface RipDashboardData {
+  hotfolders: HotfolderTarget[];
+  activeJobs: RipJobSummary[];
+  recentCompleted: RipJobSummary[];
+  kpis: RipQueueKpis;
+}
+
+interface ThriveConnectivityData {
+  status: Record<string, { online: boolean; error?: string }>;
+  summary: {
+    online: number;
+    offline: number;
+    total: number;
+  };
+}
+
+interface EquipmentListItem {
+  id: string;
+  name: string;
+  type: string;
+  manufacturer?: string | null;
+  model?: string | null;
+  location?: string | null;
+  station?: string | null;
+  status: string;
+  ipAddress?: string | null;
+}
+
+interface EquipmentListResponse {
+  items: EquipmentListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pages: number;
+}
+
+interface EquipmentLiveStatus {
+  equipmentId: string;
+  name: string;
+  station?: string | null;
+  reachable: boolean;
+  state: string;
+  stateMessage?: string | null;
+  lastPolled?: string | null;
+  alerts?: string[];
+  errorMessage?: string | null;
+}
+
+interface OrderAttachment {
+  id: string;
+  fileName: string;
+  filePath: string;
+  fileType: string;
+  fileSize?: number | null;
+  description?: string | null;
+}
+
+interface ShopFloorFileChainLink {
+  id: string;
+  printFileName?: string | null;
+  printFilePath?: string | null;
+  linkConfidence?: string | null;
+  status?: string | null;
+  confirmed?: boolean | null;
+}
+
+interface RipFileValidation {
+  valid: boolean;
+  size?: number;
+  error?: string;
+  fileName?: string;
+  resolvedPath?: string;
+}
+
+interface SendCandidate {
+  id: string;
+  kind: 'attachment' | 'fileChain';
+  label: string;
+  detail: string;
+  attachmentId?: string;
+  sourceFilePath?: string;
+  fileTypeLabel: string;
+}
+
+type PrintStation =
+  | PrintingMethod.ROLL_TO_ROLL
+  | PrintingMethod.FLATBED
+  | PrintingMethod.SCREEN_PRINT;
 
 // ─── Constants ────────────────────────────────────────
 
@@ -118,10 +266,26 @@ const PRIORITY_CONFIG: Record<number, { label: string; color: string; textColor:
   5: { label: 'LOWEST', color: 'bg-gray-300', textColor: 'text-gray-700' },
 };
 
+const HIDDEN_ATTACHMENT_TYPES = new Set(['EMAIL', 'INVOICE', 'PACKING_SLIP', 'SHIPMENT_LOG']);
+const PRINT_FILE_PATTERN = /\.(ai|eps|pdf|png|jpe?g|tiff?|psd)$/i;
+const AUTO_SEND_CANDIDATE_ID = '__auto__';
+
 // ─── Helpers ──────────────────────────────────────────
 
 function isPrintStation(s: string): s is PrintStation {
   return s === 'ROLL_TO_ROLL' || s === 'FLATBED' || s === 'SCREEN_PRINT';
+}
+
+function inferPrintStations(order: Pick<WorkOrder, 'description' | 'notes'>): PrintStation[] {
+  return inferRoutingFromOrderDetails({
+    description: order.description,
+    notes: order.notes,
+  }).filter((station): station is PrintStation => isPrintStation(station));
+}
+
+function getOrderPrintStations(order: Pick<WorkOrder, 'routing' | 'description' | 'notes'>): PrintStation[] {
+  const explicitStations = order.routing.filter(isPrintStation) as PrintStation[];
+  return explicitStations.length > 0 ? explicitStations : inferPrintStations(order);
 }
 
 function isOverdue(dateStr: string | null | undefined): boolean {
@@ -147,22 +311,148 @@ function formatDate(dateStr: string | null | undefined): string {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return 'Unknown';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown';
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatFileSize(bytes: number | null | undefined): string {
+  if (!bytes || bytes <= 0) return 'Unknown size';
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+function isAbsoluteOrUncPath(pathValue: string | null | undefined): boolean {
+  if (!pathValue) return false;
+  return /^[A-Za-z]:[\\/]/.test(pathValue) || pathValue.startsWith('\\\\');
+}
+
+function getRipStatusClasses(status: string): string {
+  switch (status) {
+    case 'PRINTING':
+      return 'bg-violet-100 text-violet-700';
+    case 'READY':
+    case 'SENDING':
+      return 'bg-indigo-100 text-indigo-700';
+    case 'PROCESSING':
+      return 'bg-blue-100 text-blue-700';
+    case 'PRINTED':
+    case 'COMPLETED':
+      return 'bg-green-100 text-green-700';
+    case 'FAILED':
+      return 'bg-red-100 text-red-700';
+    default:
+      return 'bg-gray-100 text-gray-700';
+  }
+}
+
+function getEquipmentStatusClasses(status: string): string {
+  switch (status) {
+    case 'OPERATIONAL':
+      return 'bg-green-100 text-green-700';
+    case 'DEGRADED':
+    case 'WARMING_UP':
+      return 'bg-amber-100 text-amber-700';
+    case 'DOWN':
+    case 'OFFLINE':
+      return 'bg-red-100 text-red-700';
+    case 'MAINTENANCE':
+      return 'bg-blue-100 text-blue-700';
+    default:
+      return 'bg-gray-100 text-gray-700';
+  }
+}
+
+function getLiveStateClasses(state: string | null | undefined): string {
+  switch (state) {
+    case 'printing':
+      return 'bg-violet-100 text-violet-700';
+    case 'warmup':
+    case 'drying':
+      return 'bg-amber-100 text-amber-700';
+    case 'idle':
+      return 'bg-green-100 text-green-700';
+    case 'paused':
+      return 'bg-orange-100 text-orange-700';
+    case 'error':
+    case 'offline':
+      return 'bg-red-100 text-red-700';
+    default:
+      return 'bg-gray-100 text-gray-700';
+  }
+}
+
+function buildSendCandidates(
+  attachments: OrderAttachment[],
+  fileChainLinks: ShopFloorFileChainLink[],
+): SendCandidate[] {
+  const fileChainCandidates = fileChainLinks
+    .filter((link) => Boolean(link.printFileName?.trim() || link.printFilePath?.trim()))
+    .map((link) => ({
+      id: `file-chain:${link.id}`,
+      kind: 'fileChain' as const,
+      label: link.printFileName?.trim() || 'Linked print file',
+      detail:
+        [link.status?.replace(/_/g, ' '), link.linkConfidence]
+          .filter(Boolean)
+          .join(' • ') || 'Existing file-chain print file',
+      sourceFilePath: link.printFilePath?.trim() || undefined,
+      fileTypeLabel: 'FILE CHAIN',
+    }));
+
+  const attachmentCandidates = attachments
+    .filter((attachment) => {
+      if (HIDDEN_ATTACHMENT_TYPES.has(attachment.fileType)) return false;
+      return (
+        attachment.fileType === 'ARTWORK' ||
+        attachment.fileType === 'PROOF' ||
+        attachment.fileType === 'OTHER' ||
+        PRINT_FILE_PATTERN.test(attachment.fileName || '')
+      );
+    })
+    .map((attachment) => ({
+      id: `attachment:${attachment.id}`,
+      kind: 'attachment' as const,
+      label: attachment.fileName,
+      detail: [
+        attachment.fileType,
+        isAbsoluteOrUncPath(attachment.filePath) ? 'network path' : 'uploaded attachment',
+      ].join(' • '),
+      attachmentId: attachment.id,
+      sourceFilePath: isAbsoluteOrUncPath(attachment.filePath) ? attachment.filePath : undefined,
+      fileTypeLabel: attachment.fileType,
+    }));
+
+  return [...fileChainCandidates, ...attachmentCandidates].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'fileChain' ? -1 : 1;
+    return a.label.localeCompare(b.label);
+  });
+}
+
 /**
  * Find the "active" print station for an order — the first one
  * in routing that is IN_PROGRESS, or failing that the first NOT_STARTED one.
  */
 function getActivePrintStation(order: WorkOrder, userStations: PrintStation[]): PrintStation | null {
+  const relevantStations = getOrderPrintStations(order).filter((station) => userStations.includes(station));
+
   // First look for one that's in progress
-  for (const st of order.routing) {
-    if (!userStations.includes(st as PrintStation)) continue;
+  for (const st of relevantStations) {
     const prog = order.stationProgress.find((sp) => sp.station === st);
-    if (prog?.status === 'IN_PROGRESS') return st as PrintStation;
+    if (prog?.status === 'IN_PROGRESS') return st;
   }
   // Then look for one that hasn't started
-  for (const st of order.routing) {
-    if (!userStations.includes(st as PrintStation)) continue;
+  for (const st of relevantStations) {
     const prog = order.stationProgress.find((sp) => sp.station === st);
-    if (!prog || prog.status === 'NOT_STARTED') return st as PrintStation;
+    if (!prog || prog.status === 'NOT_STARTED') return st;
   }
   return null;
 }
@@ -170,6 +460,23 @@ function getActivePrintStation(order: WorkOrder, userStations: PrintStation[]): 
 function getStationStatus(order: WorkOrder, station: string): 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' {
   const prog = order.stationProgress.find((sp) => sp.station === station);
   return (prog?.status as 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED') || 'NOT_STARTED';
+}
+
+function buildCompletionMap(orders: WorkOrder[]): Record<string, Record<string, boolean>> {
+  const completionMap: Record<string, Record<string, boolean>> = {};
+
+  for (const order of orders) {
+    for (const lineItem of order.lineItems ?? []) {
+      for (const completion of lineItem.completions ?? []) {
+        if (!completionMap[lineItem.id]) {
+          completionMap[lineItem.id] = {};
+        }
+        completionMap[lineItem.id][completion.station] = completion.completed;
+      }
+    }
+  }
+
+  return completionMap;
 }
 
 // ─── Component ────────────────────────────────────────
@@ -192,13 +499,58 @@ export function PrintingStation() {
   const [revisionNotes, setRevisionNotes] = useState('');
   const [viewMode, setViewMode] = useState<'orders' | 'material'>('orders');
   const [completions, setCompletions] = useState<Record<string, Record<string, boolean>>>({});
+  const [ripDashboard, setRipDashboard] = useState<RipDashboardData | null>(null);
+  const [thriveStatus, setThriveStatus] = useState<ThriveConnectivityData | null>(null);
+  const [printEquipment, setPrintEquipment] = useState<EquipmentListItem[]>([]);
+  const [liveEquipmentStatus, setLiveEquipmentStatus] = useState<Record<string, EquipmentLiveStatus>>({});
+  const [operationsLoading, setOperationsLoading] = useState(true);
+  const [operationsError, setOperationsError] = useState<string | null>(null);
+  const [sendToRipOrder, setSendToRipOrder] = useState<WorkOrder | null>(null);
+  const [sendCandidates, setSendCandidates] = useState<SendCandidate[]>([]);
+  const [sendCandidatesLoading, setSendCandidatesLoading] = useState(false);
+  const [sendCandidatesError, setSendCandidatesError] = useState<string | null>(null);
+  const [selectedSendCandidateId, setSelectedSendCandidateId] = useState(AUTO_SEND_CANDIDATE_ID);
+  const [manualSourcePath, setManualSourcePath] = useState('');
+  const [showManualPathFallback, setShowManualPathFallback] = useState(false);
+  const [selectedHotfolderId, setSelectedHotfolderId] = useState('');
+  const [sendNotes, setSendNotes] = useState('');
+  const [sendCopies, setSendCopies] = useState(1);
+  const [sendValidation, setSendValidation] = useState<RipFileValidation | null>(null);
+  const [sendingToRip, setSendingToRip] = useState(false);
   const fetchRef = useRef<() => void>();
+  const operationsFetchRef = useRef<() => void>();
 
   // Determine user's print stations
   const userStations = useMemo(() => {
     const allowed = (user?.allowedStations || []).filter(isPrintStation);
     return allowed.length > 0 ? allowed : (['ROLL_TO_ROLL', 'FLATBED'] as PrintStation[]);
   }, [user?.allowedStations]);
+
+  const fetchJson = useCallback(
+    async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+      if (!token) throw new Error('Not authenticated');
+
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...((options.headers as Record<string, string>) || {}),
+      };
+
+      const res = await fetch(`${config.apiUrl}${path}`, { ...options, headers });
+      if (res.status === 401) {
+        logout();
+        throw new Error('Session expired');
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || body.message || `API error: ${res.status}`);
+      }
+
+      const json = await res.json();
+      return (json.data !== undefined ? json.data : json) as T;
+    },
+    [config.apiUrl, token, logout],
+  );
 
   // ─── WebSocket (live updates) ───────────────────────
 
@@ -213,6 +565,16 @@ export function PrintingStation() {
       ) {
         fetchRef.current?.();
       }
+      if (
+        t === 'FILE_CHAIN_UPDATED' ||
+        t.startsWith('RIP_JOB_') ||
+        t === 'EQUIPMENT_LIVE_STATUS' ||
+        t === 'EQUIPMENT_UPDATED' ||
+        t === 'EQUIPMENT_CREATED' ||
+        t === 'EQUIPMENT_DELETED'
+      ) {
+        operationsFetchRef.current?.();
+      }
     }, []),
   );
 
@@ -220,12 +582,15 @@ export function PrintingStation() {
 
   const fetchOrders = useCallback(async () => {
     if (!token) return;
+    setLoading(true);
     try {
       const params = new URLSearchParams({
         pageSize: '500',
         status: 'IN_PROGRESS,PENDING,ON_HOLD',
         lightweight: 'true',
         myStations: 'true',
+        includeLineItems: 'true',
+        includeLineItemCompletions: 'true',
       });
       const res = await fetch(`${config.apiUrl}/orders?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -239,35 +604,17 @@ export function PrintingStation() {
       if (!res.ok) throw new Error(`API error: ${res.status}`);
 
       const json = await res.json();
-      const items: WorkOrder[] = json.data?.items || json.data || [];
-      setOrders(items);
+      const items = json.data?.items ?? json.data ?? [];
+      const orderList: WorkOrder[] = Array.isArray(items) ? items : [];
+      setOrders(orderList);
       setError(null);
-
-      // Fetch line item completions for all orders
-      const compMap: Record<string, Record<string, boolean>> = {};
-      for (const order of items) {
-        try {
-          const compRes = await fetch(
-            `${config.apiUrl}/orders/${order.id}/line-items/completion`,
-            { headers: { Authorization: `Bearer ${token}` } },
-          );
-          if (compRes.ok) {
-            const compJson = await compRes.json();
-            for (const c of compJson.data || []) {
-              if (!compMap[c.lineItemId]) compMap[c.lineItemId] = {};
-              compMap[c.lineItemId][c.station] = c.completed;
-            }
-          }
-        } catch {
-          // Silently skip — completions are optional enhancement
-        }
-      }
+      const compMap = buildCompletionMap(orderList);
       setCompletions(compMap);
 
       // Keep detail view in sync
       setDetailOrder((prev) => {
         if (!prev) return null;
-        return items.find((o) => o.id === prev.id) || null;
+        return orderList.find((o) => o.id === prev.id) || null;
       });
     } catch (err: any) {
       setError(err.message || 'Failed to fetch work orders');
@@ -276,13 +623,97 @@ export function PrintingStation() {
     }
   }, [config.apiUrl, token, logout]);
 
+  const fetchPrintingOperations = useCallback(async () => {
+    if (!token) return;
+    setOperationsLoading(true);
+    try {
+      const [dashboardData, thriveData, equipmentData, liveStatuses] = await Promise.all([
+        fetchJson<RipDashboardData>('/rip-queue/dashboard'),
+        fetchJson<ThriveConnectivityData>('/equipment/thrive/status'),
+        fetchJson<EquipmentListResponse>('/equipment?pageSize=100'),
+        fetchJson<EquipmentLiveStatus[]>('/equipment/live-status'),
+      ]);
+
+      setRipDashboard(dashboardData);
+      setThriveStatus(thriveData);
+      setPrintEquipment(
+        (equipmentData.items ?? []).filter(
+          (item) => Boolean(item.station) && isPrintStation(item.station || ''),
+        ),
+      );
+      setLiveEquipmentStatus(
+        Object.fromEntries(
+          liveStatuses.map((status) => [status.equipmentId, status]),
+        ),
+      );
+      setOperationsError(null);
+    } catch (err: any) {
+      setOperationsError(err.message || 'Failed to load print operations');
+    } finally {
+      setOperationsLoading(false);
+    }
+  }, [fetchJson, token]);
+
   fetchRef.current = fetchOrders;
+  operationsFetchRef.current = fetchPrintingOperations;
 
   useEffect(() => {
     fetchOrders();
     const interval = setInterval(fetchOrders, 15000);
     return () => clearInterval(interval);
   }, [fetchOrders]);
+
+  useEffect(() => {
+    fetchPrintingOperations();
+    const interval = setInterval(fetchPrintingOperations, 30000);
+    return () => clearInterval(interval);
+  }, [fetchPrintingOperations]);
+
+  const closeSendToRipModal = useCallback(() => {
+    setSendToRipOrder(null);
+    setSendCandidates([]);
+    setSendCandidatesLoading(false);
+    setSendCandidatesError(null);
+    setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+    setManualSourcePath('');
+    setShowManualPathFallback(false);
+    setSelectedHotfolderId('');
+    setSendNotes('');
+    setSendCopies(1);
+    setSendValidation(null);
+    setSendingToRip(false);
+  }, []);
+
+  const openSendToRipModal = useCallback(
+    async (order: WorkOrder) => {
+      setSendToRipOrder(order);
+      setSendCandidates([]);
+      setSendCandidatesLoading(true);
+      setSendCandidatesError(null);
+      setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+      setManualSourcePath('');
+      setShowManualPathFallback(false);
+      setSelectedHotfolderId('');
+      setSendNotes('');
+      setSendCopies(1);
+      setSendValidation(null);
+
+      try {
+        const [attachments, fileChainLinks] = await Promise.all([
+          fetchJson<OrderAttachment[]>(`/orders/${order.id}/attachments`),
+          fetchJson<ShopFloorFileChainLink[]>(`/file-chain/orders/${order.id}`),
+        ]);
+        const nextCandidates = buildSendCandidates(attachments, fileChainLinks);
+        setSendCandidates(nextCandidates);
+        setShowManualPathFallback(nextCandidates.length === 0);
+      } catch (err: any) {
+        setSendCandidatesError(err.message || 'Failed to load order files');
+      } finally {
+        setSendCandidatesLoading(false);
+      }
+    },
+    [fetchJson],
+  );
 
   // ─── Station Actions ────────────────────────────────
 
@@ -299,7 +730,6 @@ export function PrintingStation() {
         throw new Error(body.error || body.message || `Failed (${res.status})`);
       }
       toast.success(`Started ${ALL_STATION_LABELS[station] || station}`);
-      fetchOrders();
     } catch (err: any) {
       toast.error(err.message || 'Failed to start station');
     } finally {
@@ -320,7 +750,6 @@ export function PrintingStation() {
         throw new Error(body.error || body.message || `Failed (${res.status})`);
       }
       toast.success(`Completed ${ALL_STATION_LABELS[station] || station}`);
-      fetchOrders();
     } catch (err: any) {
       toast.error(err.message || 'Failed to complete station');
     } finally {
@@ -338,7 +767,6 @@ export function PrintingStation() {
       if (res.status === 401) { logout(); return; }
       if (!res.ok) throw new Error('Failed');
       toast.success(`Re-opened ${ALL_STATION_LABELS[station] || station}`);
-      fetchOrders();
     } catch {
       toast.error('Failed to uncomplete station');
     } finally {
@@ -358,7 +786,6 @@ export function PrintingStation() {
       });
       if (!res.ok) throw new Error(`API ${res.status}`);
       toast.success(`${orderNumber} marked complete`);
-      fetchOrders();
     } catch {
       toast.error('Failed to complete order');
     }
@@ -392,7 +819,7 @@ export function PrintingStation() {
     > = {} as any;
 
     userStations.forEach((station) => {
-      const stationOrders = orders.filter((o) => o.routing.includes(station));
+      const stationOrders = orders.filter((o) => getOrderPrintStations(o).includes(station));
       const s = { notStarted: 0, inProgress: 0, completed: 0, total: stationOrders.length, overdue: 0 };
       stationOrders.forEach((order) => {
         const progress = order.stationProgress.find((sp) => sp.station === station);
@@ -410,10 +837,10 @@ export function PrintingStation() {
     let filtered = orders;
 
     if (selectedStation !== 'ALL') {
-      filtered = filtered.filter((o) => o.routing.includes(selectedStation));
+      filtered = filtered.filter((o) => getOrderPrintStations(o).includes(selectedStation));
     } else {
       filtered = filtered.filter((o) =>
-        o.routing.some((r) => userStations.includes(r as PrintStation)),
+        getOrderPrintStations(o).some((station) => userStations.includes(station)),
       );
     }
 
@@ -426,7 +853,7 @@ export function PrintingStation() {
       } else {
         // In ALL view, hide orders where every print station is completed
         filtered = filtered.filter((o) => {
-          const printStations = o.routing.filter((r) => userStations.includes(r as PrintStation));
+          const printStations = getOrderPrintStations(o).filter((station) => userStations.includes(station));
           if (printStations.length === 0) return true;
           return !printStations.every((st) => {
             const prog = o.stationProgress.find((sp) => sp.station === st);
@@ -477,6 +904,208 @@ export function PrintingStation() {
   // The active station key for line-item completions
   const activeStation = selectedStation !== 'ALL' ? selectedStation : (userStations[0] || 'ROLL_TO_ROLL');
 
+  const visibleStations = selectedStation === 'ALL' ? userStations : [selectedStation];
+
+  const hotfolderStationMap = useMemo(() => {
+    const map = new Map<string, PrintStation>();
+    for (const hotfolder of ripDashboard?.hotfolders ?? []) {
+      if (isPrintStation(hotfolder.station)) {
+        map.set(hotfolder.name.toLowerCase(), hotfolder.station);
+      }
+    }
+    return map;
+  }, [ripDashboard?.hotfolders]);
+
+  const filteredHotfolders = useMemo(
+    () =>
+      (ripDashboard?.hotfolders ?? []).filter(
+        (hotfolder) =>
+          isPrintStation(hotfolder.station) && visibleStations.includes(hotfolder.station),
+      ),
+    [ripDashboard?.hotfolders, visibleStations],
+  );
+
+  const filteredActiveRipJobs = useMemo(
+    () =>
+      (ripDashboard?.activeJobs ?? []).filter((job) => {
+        if (job.equipment?.station && isPrintStation(job.equipment.station)) {
+          return visibleStations.includes(job.equipment.station);
+        }
+
+        const mappedStation = hotfolderStationMap.get(job.hotfolderName.toLowerCase());
+        return mappedStation ? visibleStations.includes(mappedStation) : true;
+      }),
+    [ripDashboard?.activeJobs, visibleStations, hotfolderStationMap],
+  );
+
+  const printerCards = useMemo(
+    () =>
+      printEquipment
+        .filter(
+          (equipment) =>
+            Boolean(equipment.station) &&
+            isPrintStation(equipment.station || '') &&
+            visibleStations.includes(equipment.station as PrintStation),
+        )
+        .map((equipment) => ({
+          equipment,
+          live: liveEquipmentStatus[equipment.id] || null,
+          activeJob:
+            filteredActiveRipJobs.find(
+              (job) =>
+                job.equipment?.id === equipment.id ||
+                job.hotfolderName.toLowerCase() === equipment.name.toLowerCase(),
+            ) || null,
+        })),
+    [printEquipment, liveEquipmentStatus, filteredActiveRipJobs, visibleStations],
+  );
+
+  const activeRipJobByOrderId = useMemo(() => {
+    const next: Record<string, RipJobSummary> = {};
+    for (const job of filteredActiveRipJobs) {
+      const orderId = job.workOrder?.id || job.workOrderId;
+      if (orderId && !next[orderId]) {
+        next[orderId] = job;
+      }
+    }
+    return next;
+  }, [filteredActiveRipJobs]);
+
+  const autoSelectedSendCandidate = sendCandidates[0] || null;
+  const selectedSendCandidate =
+    selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID
+      ? autoSelectedSendCandidate
+      : sendCandidates.find((candidate) => candidate.id === selectedSendCandidateId) || null;
+
+  const sendHotfolderOptions = useMemo(() => {
+    if (!sendToRipOrder) return filteredHotfolders;
+
+    const orderStations = getOrderPrintStations(sendToRipOrder).filter((station) =>
+      userStations.includes(station),
+    );
+    const matching = filteredHotfolders.filter(
+      (hotfolder) => isPrintStation(hotfolder.station) && orderStations.includes(hotfolder.station),
+    );
+
+    return matching.length > 0 ? matching : filteredHotfolders;
+  }, [sendToRipOrder, filteredHotfolders, userStations]);
+
+  useEffect(() => {
+    if (sendToRipOrder && !selectedHotfolderId && sendHotfolderOptions[0]) {
+      setSelectedHotfolderId(sendHotfolderOptions[0].id);
+    }
+  }, [sendToRipOrder, selectedHotfolderId, sendHotfolderOptions]);
+
+  useEffect(() => {
+    if (!sendToRipOrder) return;
+
+    let payload: Record<string, unknown> | null = null;
+    if (selectedSendCandidateId === 'manual') {
+      const trimmedManualPath = manualSourcePath.trim();
+      if (!trimmedManualPath) {
+        setSendValidation(null);
+        return;
+      }
+      payload = { filePath: trimmedManualPath };
+    } else if (selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID) {
+      payload = { workOrderId: sendToRipOrder.id };
+    } else if (selectedSendCandidate?.attachmentId) {
+      payload = {
+        workOrderId: sendToRipOrder.id,
+        attachmentId: selectedSendCandidate.attachmentId,
+      };
+    } else if (selectedSendCandidate?.sourceFilePath) {
+      payload = { filePath: selectedSendCandidate.sourceFilePath };
+    } else {
+      setSendValidation(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const validation = await fetchJson<RipFileValidation>('/rip-queue/validate-file', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        if (!cancelled) setSendValidation(validation);
+      } catch (err: any) {
+        if (!cancelled) {
+          setSendValidation({ valid: false, error: err.message || 'Validation failed' });
+        }
+      }
+    }, selectedSendCandidateId === 'manual' ? 250 : 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [fetchJson, manualSourcePath, selectedSendCandidate, selectedSendCandidateId, sendToRipOrder]);
+
+  const canSendToRip =
+    Boolean(sendToRipOrder) &&
+    Boolean(selectedHotfolderId) &&
+    (selectedSendCandidateId === 'manual'
+      ? Boolean(manualSourcePath.trim())
+      : selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID
+        ? true
+        : Boolean(selectedSendCandidate)) &&
+    Boolean(sendValidation?.valid);
+
+  const handleSendToRip = useCallback(async () => {
+    if (!sendToRipOrder) return;
+    if (!selectedHotfolderId) {
+      toast.error('Select a printer hotfolder first');
+      return;
+    }
+
+    const payload: Record<string, unknown> = {
+      workOrderId: sendToRipOrder.id,
+      hotfolderId: selectedHotfolderId,
+      copies: sendCopies,
+      notes: sendNotes || undefined,
+    };
+
+    if (selectedSendCandidateId === 'manual') {
+      payload.sourceFilePath = manualSourcePath.trim();
+    } else if (selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID) {
+      // Let the server pick the best accessible file linked to this work order.
+    } else if (selectedSendCandidate?.attachmentId) {
+      payload.attachmentId = selectedSendCandidate.attachmentId;
+    } else if (selectedSendCandidate?.sourceFilePath) {
+      payload.sourceFilePath = selectedSendCandidate.sourceFilePath;
+    } else {
+      toast.error('Choose a source file first');
+      return;
+    }
+
+    setSendingToRip(true);
+    try {
+      await fetchJson('/rip-queue/jobs', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      toast.success(`Sent ${sendToRipOrder.orderNumber} to RIP`);
+      closeSendToRipModal();
+      fetchPrintingOperations();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send to RIP');
+    } finally {
+      setSendingToRip(false);
+    }
+  }, [
+    closeSendToRipModal,
+    fetchJson,
+    fetchPrintingOperations,
+    manualSourcePath,
+    selectedHotfolderId,
+    selectedSendCandidate,
+    selectedSendCandidateId,
+    sendCopies,
+    sendNotes,
+    sendToRipOrder,
+  ]);
+
   // ─── Detail View ────────────────────────────────────
 
   if (detailOrder) {
@@ -487,9 +1116,11 @@ export function PrintingStation() {
         selectedStation={selectedStation === 'ALL' ? null : selectedStation}
         isUpdating={updatingOrder === detailOrder.id}
         wsStatus={wsStatus}
+        activeRipJob={activeRipJobByOrderId[detailOrder.id] || null}
         onStart={startStation}
         onComplete={completeStation}
         onUncomplete={uncompleteStation}
+        onSendToRip={openSendToRipModal}
         onBack={() => setDetailOrder(null)}
       />
     );
@@ -502,17 +1133,25 @@ export function PrintingStation() {
     const progress = actionStation
       ? order.stationProgress.find((sp) => sp.station === actionStation)
       : null;
+    const stationStatus = actionStation ? getStationStatus(order, actionStation) : 'NOT_STARTED';
+    const startedAtLabel =
+      stationStatus === 'IN_PROGRESS' && progress?.startedAt
+        ? ` - started ${formatDate(progress.startedAt)}`
+        : '';
+    const stationWasInferred = actionStation ? !order.routing.includes(actionStation) : false;
     const overdue = isOverdue(order.dueDate);
     const dueToday = isDueToday(order.dueDate);
     const isExpanded = expandedOrder === order.id;
     const isUpdating = updatingOrder === order.id;
+    const activeRipJob = activeRipJobByOrderId[order.id] || null;
     const pri = PRIORITY_CONFIG[order.priority] || PRIORITY_CONFIG[3];
+    const routingDisplay = order.routing.length > 0 ? order.routing : getOrderPrintStations(order);
 
     return (
       <div
         key={order.id}
         className={`bg-white rounded-lg border transition-shadow hover:shadow-md ${
-          overdue && progress?.status !== 'COMPLETED'
+          overdue && stationStatus !== 'COMPLETED'
             ? 'border-red-200 bg-red-50/30'
             : 'border-gray-200'
         }`}
@@ -529,7 +1168,7 @@ export function PrintingStation() {
                 <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${pri.color} ${pri.textColor}`}>
                   {pri.label}
                 </span>
-                {overdue && progress?.status !== 'COMPLETED' && (
+                {overdue && stationStatus !== 'COMPLETED' && (
                   <span className="flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-700">
                     <AlertTriangle className="h-3 w-3" /> Overdue
                   </span>
@@ -560,9 +1199,9 @@ export function PrintingStation() {
               {/* Routing station badges in ALL view */}
               {selectedStation === 'ALL' && (
                 <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-                  {order.routing.filter(isPrintStation).map((st) => {
+                  {getOrderPrintStations(order).map((st) => {
                     const stStatus = getStationStatus(order, st);
-                    const cfg = STATION_CONFIG[st as PrintStation];
+                    const cfg = STATION_CONFIG[st];
                     return (
                       <span
                         key={st}
@@ -593,14 +1232,24 @@ export function PrintingStation() {
         </button>
 
         {/* Action bar: Start / Complete buttons always visible */}
-        {actionStation && progress && (
-          <div className="px-4 pb-3 flex items-center justify-between border-t border-gray-100 pt-2">
-            <span className="text-xs text-gray-500">
-              {STATION_CONFIG[actionStation as PrintStation]?.label || actionStation}
-              {progress.status === 'IN_PROGRESS' && progress.startedAt && ` — started ${formatDate(progress.startedAt)}`}
-            </span>
-            <div className="flex items-center gap-2">
-              {progress.status === 'NOT_STARTED' && (
+        {actionStation && (
+          <div className="px-4 pb-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2">
+            <div className="min-w-0">
+              <div className={`text-xs ${stationWasInferred ? 'text-amber-600' : 'text-gray-500'}`}>
+                {STATION_CONFIG[actionStation as PrintStation]?.label || actionStation}
+                {stationWasInferred ? ' - inferred from order details' : startedAtLabel}
+              </div>
+              {activeRipJob && (
+                <div className="mt-1 flex items-center gap-2 text-xs text-indigo-700">
+                  <span className={`px-2 py-0.5 rounded-full ${getRipStatusClasses(activeRipJob.status)}`}>
+                    {activeRipJob.status.replace(/_/g, ' ')}
+                  </span>
+                  <span className="truncate">{activeRipJob.hotfolderName}</span>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {stationStatus === 'NOT_STARTED' && (
                 <button
                   onClick={(e) => { e.stopPropagation(); startStation(order.id, actionStation); }}
                   disabled={isUpdating}
@@ -609,7 +1258,7 @@ export function PrintingStation() {
                   <PlayCircle className="h-4 w-4" /> Start
                 </button>
               )}
-              {progress.status === 'IN_PROGRESS' && (
+              {stationStatus === 'IN_PROGRESS' && (
                 <button
                   onClick={(e) => { e.stopPropagation(); completeStation(order.id, actionStation); }}
                   disabled={isUpdating}
@@ -618,7 +1267,7 @@ export function PrintingStation() {
                   <CheckCircle className="h-4 w-4" /> Complete
                 </button>
               )}
-              {progress.status === 'COMPLETED' && (
+              {stationStatus === 'COMPLETED' && (
                 <span className="text-sm text-green-600 flex items-center gap-1">
                   <CheckCircle className="h-4 w-4" /> Done
                 </span>
@@ -633,6 +1282,17 @@ export function PrintingStation() {
               >
                 <CheckCircle className="w-4 h-4" />
                 Done
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openSendToRipModal(order);
+                }}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                title="Send file to RIP"
+              >
+                <Send className="w-4 h-4" />
+                Send
               </button>
               <button
                 onClick={(e) => {
@@ -667,7 +1327,7 @@ export function PrintingStation() {
             <div className="pt-3">
               <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Routing Progress</h4>
               <div className="flex items-center gap-1 flex-wrap mb-3">
-                {order.routing.map((st, idx) => {
+                {routingDisplay.map((st, idx) => {
                   const stStatus = getStationStatus(order, st);
                   const label = ALL_STATION_LABELS[st] || st.replace(/_/g, ' ');
                   return (
@@ -815,8 +1475,40 @@ export function PrintingStation() {
               />
               Show completed
             </label>
-            <button onClick={fetchOrders} className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+            <button
+              onClick={() => {
+                fetchOrders();
+                fetchPrintingOperations();
+              }}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+            >
+              <RefreshCw className={`w-4 h-4 ${(loading || operationsLoading) ? 'animate-spin' : ''}`} /> Refresh
+            </button>
+            <button
+              onClick={async () => {
+                const ordersMissingPrint = filteredOrders.filter((o) => {
+                  const printStations = ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT'];
+                  return !o.routing.some((s) => printStations.includes(s));
+                });
+                if (ordersMissingPrint.length === 0) {
+                  alert('All visible orders already have printing routes');
+                  return;
+                }
+                try {
+                  const res = (await fetchJson('/api/v1/orders/batch/fix-printing-routing', {
+                    method: 'POST',
+                    body: JSON.stringify({ orderIds: ordersMissingPrint.map((o) => o.id) }),
+                  })) as { fixed: number };
+                  alert(`Fixed ${res.fixed} order${res.fixed !== 1 ? 's' : ''} - adding ROLL_TO_ROLL & FLATBED`);
+                  fetchOrders();
+                } catch (err: any) {
+                  alert(`Error fixing routes: ${err.message}`);
+                }
+              }}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm text-amber-600 hover:bg-amber-50 rounded-lg"
+              title="Add missing printing stations to visible orders"
+            >
+              <Wrench className="w-4 h-4" /> Fix Routes
             </button>
           </div>
         </div>
@@ -887,12 +1579,26 @@ export function PrintingStation() {
         </div>
       )}
 
+      {operationsError && (
+        <div className="mx-4 mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2 text-amber-800 text-sm">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {operationsError}
+          <button
+            onClick={fetchPrintingOperations}
+            className="ml-auto text-xs underline hover:no-underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Content */}
-      {viewMode === 'material' ? (
-        <div className="flex-1 overflow-auto p-4 space-y-4">
-          {Object.entries(materialGroups).map(([material, items]) => (
-            <div key={material} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-              <div className="bg-blue-50 px-4 py-2 border-b flex items-center justify-between">
+      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_23rem]">
+        <div className="min-h-0 overflow-auto">
+          {viewMode === 'material' ? (
+            <div className="p-4 space-y-4">
+              {Object.entries(materialGroups).map(([material, items]) => (
+                <div key={material} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                  <div className="bg-blue-50 px-4 py-2 border-b flex items-center justify-between">
                 <span className="font-semibold text-blue-900">{material}</span>
                 <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
                   {items.length} item{items.length !== 1 ? 's' : ''}
@@ -918,60 +1624,340 @@ export function PrintingStation() {
               </div>
             </div>
           ))}
-          {Object.keys(materialGroups).length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <Layers className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-lg font-medium text-gray-900 mb-1">No line items to group</p>
-              <p className="text-sm text-gray-500">
-                {filteredOrders.length === 0
-                  ? 'No orders in queue'
-                  : 'No line items found in the current orders'}
-              </p>
+              {Object.keys(materialGroups).length === 0 && (
+                <div className="text-center py-12 text-gray-400">
+                  <Layers className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p className="text-lg font-medium text-gray-900 mb-1">No line items to group</p>
+                  <p className="text-sm text-gray-500">
+                    {filteredOrders.length === 0
+                      ? 'No orders in queue'
+                      : 'No line items found in the current orders'}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-4">
+              {filteredOrders.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">
+                  <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p className="text-lg font-medium text-gray-900 mb-1">No orders in queue</p>
+                  <p className="text-sm text-gray-500">
+                    {selectedStation !== 'ALL'
+                      ? `No active orders at ${STATION_CONFIG[selectedStation]?.label}`
+                      : 'No active orders with print stations in routing'}
+                  </p>
+                </div>
+              ) : selectedStation === 'ALL' ? (
+                <div className="space-y-2">
+                  {filteredOrders.map((order) => renderOrderCard(order))}
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {renderSection(
+                    'In Progress',
+                    groupedOrders.inProgress || [],
+                    <PlayCircle className="h-5 w-5 text-blue-600" />,
+                    'bg-blue-50 text-blue-700',
+                    selectedStation,
+                  )}
+                  {renderSection(
+                    'Waiting to Start',
+                    groupedOrders.notStarted || [],
+                    <Clock className="h-5 w-5 text-gray-600" />,
+                    'bg-gray-100 text-gray-700',
+                    selectedStation,
+                  )}
+                  {showCompleted &&
+                    renderSection(
+                      'Completed',
+                      groupedOrders.completed || [],
+                      <CheckCircle className="h-5 w-5 text-green-600" />,
+                      'bg-green-50 text-green-700',
+                      selectedStation,
+                    )}
+                </div>
+              )}
             </div>
           )}
         </div>
-      ) : (
-        <div className="flex-1 overflow-auto p-4">
-          {filteredOrders.length === 0 ? (
-            <div className="text-center py-12 text-gray-400">
-              <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-lg font-medium text-gray-900 mb-1">No orders in queue</p>
-              <p className="text-sm text-gray-500">
-                {selectedStation !== 'ALL'
-                  ? `No active orders at ${STATION_CONFIG[selectedStation]?.label}`
-                  : 'No active orders with print stations in routing'}
-              </p>
+
+        <PrintingOperationsSidebar
+          visibleStations={visibleStations}
+          operationsLoading={operationsLoading}
+          hotfolders={filteredHotfolders}
+          thriveStatus={thriveStatus}
+          ripDashboard={ripDashboard}
+          activeJobs={filteredActiveRipJobs}
+          printerCards={printerCards}
+          onRefresh={fetchPrintingOperations}
+        />
+      </div>
+
+      {sendToRipOrder && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={closeSendToRipModal}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Send to RIP</h3>
+                <p className="text-sm text-gray-500">
+                  {sendToRipOrder.orderNumber} · {sendToRipOrder.customerName}
+                </p>
+              </div>
+              <button
+                onClick={closeSendToRipModal}
+                className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+              >
+                Close
+              </button>
             </div>
-          ) : selectedStation === 'ALL' ? (
-            <div className="space-y-2">
-              {filteredOrders.map((order) => renderOrderCard(order))}
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {renderSection(
-                'In Progress',
-                groupedOrders.inProgress || [],
-                <PlayCircle className="h-5 w-5 text-blue-600" />,
-                'bg-blue-50 text-blue-700',
-                selectedStation,
-              )}
-              {renderSection(
-                'Waiting to Start',
-                groupedOrders.notStarted || [],
-                <Clock className="h-5 w-5 text-gray-600" />,
-                'bg-gray-100 text-gray-700',
-                selectedStation,
-              )}
-              {showCompleted &&
-                renderSection(
-                  'Completed',
-                  groupedOrders.completed || [],
-                  <CheckCircle className="h-5 w-5 text-green-600" />,
-                  'bg-green-50 text-green-700',
-                  selectedStation,
+
+            <div className="space-y-5">
+              <section className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                  <FileText className="w-4 h-4 text-indigo-600" />
+                  Source file
+                </div>
+
+                {sendCandidatesLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-3">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading order files...
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <button
+                        onClick={() => {
+                          setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+                          setShowManualPathFallback(false);
+                        }}
+                        className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
+                          selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID
+                            ? 'border-indigo-400 bg-indigo-50'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-900">Auto-select best order file</p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {autoSelectedSendCandidate
+                                ? `${autoSelectedSendCandidate.label} · ${autoSelectedSendCandidate.detail}`
+                                : 'Use the best accessible linked file or attachment on this order'}
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                            AUTO
+                          </span>
+                        </div>
+                      </button>
+
+                      {sendCandidates.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500 px-1">
+                            Choose a specific linked file
+                          </p>
+                          {sendCandidates.map((candidate) => (
+                            <button
+                              key={candidate.id}
+                              onClick={() => {
+                                setSelectedSendCandidateId(candidate.id);
+                                setShowManualPathFallback(false);
+                              }}
+                              className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
+                                selectedSendCandidateId === candidate.id
+                                  ? 'border-indigo-400 bg-indigo-50'
+                                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-gray-900 truncate">{candidate.label}</p>
+                                  <p className="text-xs text-gray-500 truncate">{candidate.detail}</p>
+                                </div>
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                  {candidate.fileTypeLabel}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {!showManualPathFallback && (
+                        <button
+                          onClick={() => {
+                            setSelectedSendCandidateId('manual');
+                            setShowManualPathFallback(true);
+                          }}
+                          className="text-sm text-indigo-700 hover:text-indigo-800 font-medium"
+                        >
+                          Use a custom network path instead
+                        </button>
+                      )}
+                    </div>
+
+                    {showManualPathFallback && (
+                      <div className="space-y-2">
+                        <button
+                          onClick={() => setSelectedSendCandidateId('manual')}
+                          className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
+                            selectedSendCandidateId === 'manual'
+                              ? 'border-indigo-400 bg-indigo-50'
+                              : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-gray-900">Manual network path</p>
+                              <p className="text-xs text-gray-500">Only needed when the order has no usable linked files</p>
+                            </div>
+                            <FolderOpen className="w-4 h-4 text-gray-400" />
+                          </div>
+                        </button>
+
+                        {selectedSendCandidateId === 'manual' && (
+                          <input
+                            type="text"
+                            value={manualSourcePath}
+                            onChange={(e) => setManualSourcePath(e.target.value)}
+                            placeholder="\\\\server\\share\\Customer\\WO####\\PRINT\\file.pdf"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
+                          />
+                        )}
+
+                        {selectedSendCandidateId === 'manual' && sendCandidates.length > 0 && (
+                          <button
+                            onClick={() => {
+                              setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+                              setShowManualPathFallback(false);
+                            }}
+                            className="text-sm text-gray-600 hover:text-gray-800"
+                          >
+                            Back to automatic file selection
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
+
+                {sendCandidatesError && (
+                  <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    {sendCandidatesError}
+                  </div>
+                )}
+
+                {sendValidation && (
+                  <div
+                    className={`text-sm rounded-lg px-3 py-2 border ${
+                      sendValidation.valid
+                        ? 'bg-green-50 border-green-200 text-green-700'
+                        : 'bg-red-50 border-red-200 text-red-700'
+                    }`}
+                  >
+                    {sendValidation.valid
+                      ? `Ready: ${sendValidation.fileName || 'Selected file'} (${formatFileSize(sendValidation.size)})`
+                      : sendValidation.error || 'File validation failed'}
+                  </div>
+                )}
+              </section>
+
+              <section className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                  <HardDrive className="w-4 h-4 text-blue-600" />
+                  Select hotfolder
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {sendHotfolderOptions.map((hotfolder) => {
+                    const machineStatus = thriveStatus?.status?.[hotfolder.machineId];
+                    const jobCount = filteredActiveRipJobs.filter(
+                      (job) => job.hotfolderName.toLowerCase() === hotfolder.name.toLowerCase(),
+                    ).length;
+                    return (
+                      <button
+                        key={hotfolder.id}
+                        onClick={() => setSelectedHotfolderId(hotfolder.id)}
+                        className={`rounded-lg border px-3 py-3 text-left transition-colors ${
+                          selectedHotfolderId === hotfolder.id
+                            ? 'border-indigo-400 bg-indigo-50'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">{hotfolder.name}</p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {hotfolder.ripType} · {hotfolder.machineName}
+                            </p>
+                          </div>
+                          <span
+                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                              machineStatus?.online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                            }`}
+                          >
+                            {machineStatus?.online ? (jobCount > 0 ? `Busy ${jobCount}` : 'Ready') : 'Offline'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 truncate mt-2">{hotfolder.path}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+                {sendHotfolderOptions.length === 0 && (
+                  <div className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-3">
+                    No matching hotfolders are configured for the selected print stations.
+                  </div>
+                )}
+              </section>
+
+              <section className="grid grid-cols-1 md:grid-cols-[10rem_minmax(0,1fr)] gap-4">
+                <label className="block">
+                  <span className="text-sm font-medium text-gray-700">Copies</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={sendCopies}
+                    onChange={(e) => setSendCopies(Math.max(1, Number(e.target.value) || 1))}
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-gray-700">Operator notes</span>
+                  <textarea
+                    value={sendNotes}
+                    onChange={(e) => setSendNotes(e.target.value)}
+                    placeholder="Optional RIP notes, media reminders, or printer instructions"
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none h-20"
+                  />
+                </label>
+              </section>
             </div>
-          )}
+
+            <div className="flex items-center justify-end gap-3 mt-6">
+              <button
+                onClick={closeSendToRipModal}
+                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSendToRip}
+                disabled={!canSendToRip || sendingToRip}
+                className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {sendingToRip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Send to RIP
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1041,7 +2027,6 @@ export function PrintingStation() {
                     setShowRevisionModal(false);
                     setRevisionReason('');
                     setRevisionNotes('');
-                    fetchOrders();
                   } catch {
                     toast.error('Failed to send revision request');
                   }
@@ -1069,9 +2054,11 @@ function OrderDetailPanel({
   selectedStation,
   isUpdating,
   wsStatus,
+  activeRipJob,
   onStart,
   onComplete,
   onUncomplete,
+  onSendToRip,
   onBack,
 }: {
   order: WorkOrder;
@@ -1079,15 +2066,18 @@ function OrderDetailPanel({
   selectedStation: PrintStation | null;
   isUpdating: boolean;
   wsStatus: WsStatus;
+  activeRipJob: RipJobSummary | null;
   onStart: (orderId: string, station: string) => void;
   onComplete: (orderId: string, station: string) => void;
   onUncomplete: (orderId: string, station: string) => void;
+  onSendToRip: (order: WorkOrder) => void;
   onBack: () => void;
 }) {
   const dueDate = order.dueDate ? new Date(order.dueDate) : null;
   const overdue = dueDate ? dueDate < new Date() : false;
   const pri = PRIORITY_CONFIG[order.priority] || PRIORITY_CONFIG[3];
-  const orderPrintStations = order.routing.filter(isPrintStation) as PrintStation[];
+  const orderPrintStations = getOrderPrintStations(order);
+  const routingDisplay = order.routing.length > 0 ? order.routing : orderPrintStations;
 
   return (
     <div className="flex flex-col h-full">
@@ -1118,7 +2108,7 @@ function OrderDetailPanel({
         </div>
         {/* Routing breadcrumb */}
         <div className="px-4 pb-2.5 flex items-center gap-0.5 overflow-x-auto">
-          {order.routing.map((rt, i) => {
+          {routingDisplay.map((rt, i) => {
             const stStatus = getStationStatus(order, rt);
             return (
               <div key={rt} className="flex items-center gap-0.5 flex-shrink-0">
@@ -1156,7 +2146,26 @@ function OrderDetailPanel({
 
         {/* Print Station Actions — the main purpose of this view */}
         <div className="px-4 py-3">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase mb-3">Print Stations</h3>
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div>
+              <h3 className="text-xs font-semibold text-gray-500 uppercase">Print Stations</h3>
+              {activeRipJob && (
+                <div className="mt-1 flex items-center gap-2 text-xs text-indigo-700">
+                  <span className={`px-2 py-0.5 rounded-full ${getRipStatusClasses(activeRipJob.status)}`}>
+                    {activeRipJob.status.replace(/_/g, ' ')}
+                  </span>
+                  <span className="truncate">{activeRipJob.hotfolderName}</span>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => onSendToRip(order)}
+              className="px-3 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 flex items-center gap-2"
+            >
+              <Send className="w-4 h-4" />
+              Send to RIP
+            </button>
+          </div>
           <div className="space-y-3">
             {orderPrintStations.map((ps) => {
               const stStatus = getStationStatus(order, ps);
@@ -1180,8 +2189,10 @@ function OrderDetailPanel({
                         <span className={`font-semibold text-sm ${stStatus === 'COMPLETED' ? 'text-green-700' : cfg.color}`}>
                           {cfg.label}
                         </span>
-                        <div className="text-xs text-gray-500">
-                          {stStatus === 'COMPLETED' && prog?.completedAt
+                        <div className={`text-xs ${order.routing.includes(ps) ? 'text-gray-500' : 'text-amber-600'}`}>
+                          {!order.routing.includes(ps)
+                            ? 'Inferred from order details'
+                            : stStatus === 'COMPLETED' && prog?.completedAt
                             ? `Completed ${formatDate(prog.completedAt)}`
                             : stStatus === 'IN_PROGRESS' && prog?.startedAt
                             ? `Started ${formatDate(prog.startedAt)}`
@@ -1229,7 +2240,7 @@ function OrderDetailPanel({
             })}
             {orderPrintStations.length === 0 && (
               <p className="text-sm text-gray-400 text-center py-4">
-                No print stations in this order's routing
+                No print stations found for this order
               </p>
             )}
           </div>
@@ -1289,3 +2300,201 @@ function OrderDetailPanel({
     </div>
   );
 }
+
+function PrintingOperationsSidebar({
+  visibleStations,
+  operationsLoading,
+  hotfolders,
+  thriveStatus,
+  ripDashboard,
+  activeJobs,
+  printerCards,
+  onRefresh,
+}: {
+  visibleStations: PrintStation[];
+  operationsLoading: boolean;
+  hotfolders: HotfolderTarget[];
+  thriveStatus: ThriveConnectivityData | null;
+  ripDashboard: RipDashboardData | null;
+  activeJobs: RipJobSummary[];
+  printerCards: Array<{
+    equipment: EquipmentListItem;
+    live: EquipmentLiveStatus | null;
+    activeJob: RipJobSummary | null;
+  }>;
+  onRefresh: () => void;
+}) {
+  const stationLabel = visibleStations.map((station) => STATION_CONFIG[station]?.label || station).join(', ');
+
+  return (
+    <aside className="border-t xl:border-t-0 xl:border-l border-gray-200 bg-gray-50/80 min-h-0 overflow-auto p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-gray-900">Live Print Ops</h3>
+          <p className="text-xs text-gray-500">{stationLabel}</p>
+        </div>
+        <button
+          onClick={onRefresh}
+          className="p-2 text-gray-500 hover:bg-white rounded-lg border border-gray-200"
+          title="Refresh print operations"
+        >
+          <RefreshCw className={`w-4 h-4 ${operationsLoading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wide">
+            <Activity className="w-3.5 h-3.5 text-blue-600" />
+            In Queue
+          </div>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">{ripDashboard?.kpis?.inQueue ?? 0}</p>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wide">
+            <Loader2 className="w-3.5 h-3.5 text-indigo-600" />
+            RIPping
+          </div>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">{ripDashboard?.kpis?.processing ?? 0}</p>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wide">
+            <Printer className="w-3.5 h-3.5 text-violet-600" />
+            Printing
+          </div>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">{ripDashboard?.kpis?.printing ?? 0}</p>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wide">
+            <CheckCircle className="w-3.5 h-3.5 text-green-600" />
+            Today
+          </div>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">{ripDashboard?.kpis?.completedToday ?? 0}</p>
+        </div>
+      </div>
+
+      <section className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <HardDrive className="w-4 h-4 text-blue-600" />
+          <h4 className="font-medium text-gray-900">Hotfolder Status</h4>
+        </div>
+
+        {hotfolders.length === 0 ? (
+          <p className="text-sm text-gray-500">No hotfolders configured for these print stations.</p>
+        ) : (
+          <div className="space-y-2">
+            {hotfolders.map((hotfolder) => {
+              const machineStatus = thriveStatus?.status?.[hotfolder.machineId];
+              const activeCount = activeJobs.filter(
+                (job) => job.hotfolderName.toLowerCase() === hotfolder.name.toLowerCase(),
+              ).length;
+
+              return (
+                <div key={hotfolder.id} className="rounded-lg border border-gray-200 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{hotfolder.name}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {hotfolder.ripType} · {hotfolder.machineName}
+                      </p>
+                    </div>
+                    <span
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        machineStatus?.online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      }`}
+                    >
+                      {machineStatus?.online ? (activeCount > 0 ? `Busy ${activeCount}` : 'Ready') : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 truncate mt-2">{hotfolder.path}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <FileText className="w-4 h-4 text-indigo-600" />
+          <h4 className="font-medium text-gray-900">Active RIP Jobs</h4>
+        </div>
+
+        {activeJobs.length === 0 ? (
+          <p className="text-sm text-gray-500">No active RIP jobs for the selected print stations.</p>
+        ) : (
+          <div className="space-y-2">
+            {activeJobs.slice(0, 8).map((job) => (
+              <div key={job.id} className="rounded-lg border border-gray-200 px-3 py-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {job.workOrder?.orderNumber || 'Unlinked job'}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">{job.sourceFileName}</p>
+                  </div>
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getRipStatusClasses(job.status)}`}>
+                    {job.status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-gray-500">
+                  <span className="truncate">{job.hotfolderName}</span>
+                  <span>{formatDateTime(job.printStartedAt || job.queuedAt)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Monitor className="w-4 h-4 text-green-600" />
+          <h4 className="font-medium text-gray-900">Printer Status</h4>
+        </div>
+
+        {printerCards.length === 0 ? (
+          <p className="text-sm text-gray-500">No tracked printers found for these stations.</p>
+        ) : (
+          <div className="space-y-2">
+            {printerCards.map(({ equipment, live, activeJob }) => (
+              <div key={equipment.id} className="rounded-lg border border-gray-200 px-3 py-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{equipment.name}</p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {STATION_CONFIG[equipment.station as PrintStation]?.label || equipment.station || equipment.type}
+                    </p>
+                  </div>
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getEquipmentStatusClasses(equipment.status)}`}>
+                    {equipment.status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+
+                <div className="mt-3 flex items-center gap-2 text-xs">
+                  <span className={`px-2 py-0.5 rounded-full font-medium ${getLiveStateClasses(live?.state)}`}>
+                    {live?.state ? live.state.toUpperCase() : live?.reachable === false ? 'OFFLINE' : 'UNKNOWN'}
+                  </span>
+                  {live?.stateMessage && <span className="text-gray-500 truncate">{live.stateMessage}</span>}
+                </div>
+
+                {activeJob && (
+                  <div className="mt-2 text-xs text-indigo-700">
+                    {activeJob.workOrder?.orderNumber || 'Active job'} · {activeJob.status.replace(/_/g, ' ')}
+                  </div>
+                )}
+
+                {live?.alerts && live.alerts.length > 0 && (
+                  <div className="mt-2 text-xs text-amber-700 truncate">
+                    Alerts: {live.alerts.slice(0, 2).join(', ')}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </aside>
+  );
+}
+

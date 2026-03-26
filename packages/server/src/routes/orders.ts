@@ -17,7 +17,11 @@ import {
   BulkDeleteSchema,
   BulkStationStatusSchema,
   BulkMultiStationStatusSchema,
+  DesignRevisionStatus,
   EmailTrigger,
+  inferRoutingFromOrderDetails,
+  isDesignOnlyOrder,
+  PrintingMethod,
   PARENT_SUB_STATIONS,
   SUB_STATION_PARENTS,
 } from '@erp/shared';
@@ -39,18 +43,202 @@ import { updateStreak, checkAchievements } from '../services/gamification.js';
 import { applyRoutingDefaults } from '../lib/routing-defaults.js';
 
 export const ordersRouter = Router();
+const MATERIAL_DEDUCTION_STATIONS = ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT', 'CUT', 'FABRICATION', 'INSTALLATION'];
+const AUTO_ADVANCE_FROM = ['PRODUCTION', 'SCREEN_PRINT', 'FLATBED', 'ROLL_TO_ROLL', 'DESIGN',
+  'FLATBED_PRINTING', 'ROLL_TO_ROLL_PRINTING', 'PRODUCTION_ZUND', 'PRODUCTION_FINISHING', 'SHIPPING_QC'];
 
 // All routes require authentication
 ordersRouter.use(authenticate);
 
+async function deductMaterialsOnStationCompleteIfNeeded(orderId: string, station: string, userId: string): Promise<void> {
+  if (!MATERIAL_DEDUCTION_STATIONS.includes(station)) {
+    return;
+  }
+
+  try {
+    const deductResult = await bomAutomationService.deductMaterialsOnStationComplete(orderId, station, userId);
+
+    if (deductResult.deducted > 0) {
+      await prisma.workEvent.create({
+        data: {
+          orderId,
+          eventType: 'MATERIAL_DEDUCTED',
+          description: `Auto-deducted ${deductResult.deducted} material(s) from inventory`,
+          userId,
+          details: { station, deducted: deductResult.deducted, errors: deductResult.errors },
+        },
+      });
+
+      broadcast({ type: 'INVENTORY_UPDATED', payload: { orderId } });
+    }
+  } catch (err) {
+    console.warn(`Material deduction warning for order ${orderId}:`, err);
+  }
+}
+
+async function completeDesignOnlyOrderIfNeeded(orderId: string, userId: string): Promise<boolean> {
+  const order = await prisma.workOrder.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      orderNumber: true,
+      description: true,
+      routing: true,
+      status: true,
+    },
+  });
+
+  if (!order || !isDesignOnlyOrder({ description: order.description, routing: order.routing as string[] })) {
+    return false;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.workOrder.update({
+      where: { id: orderId },
+      data: {
+        status: 'COMPLETED',
+        routing: [PrintingMethod.DESIGN],
+      },
+    });
+
+    await tx.stationProgress.deleteMany({
+      where: {
+        orderId,
+        station: { not: 'DESIGN' as never },
+      },
+    });
+
+    await tx.stationProgress.upsert({
+      where: { orderId_station: { orderId, station: 'DESIGN' } },
+      update: {
+        status: 'COMPLETED',
+        completedAt: new Date(),
+        completedById: userId,
+      },
+      create: {
+        orderId,
+        station: 'DESIGN',
+        status: 'COMPLETED',
+        completedAt: new Date(),
+        completedById: userId,
+      },
+    });
+
+    if (
+      order.status !== 'COMPLETED' ||
+      (order.routing as string[]).length !== 1 ||
+      (order.routing as string[])[0] !== PrintingMethod.DESIGN
+    ) {
+      await tx.workEvent.create({
+        data: {
+          orderId,
+          eventType: 'STATUS_CHANGED',
+          description: 'Design-only order completed',
+          userId,
+          details: {
+            status: 'COMPLETED',
+            reason: 'DESIGN_ONLY',
+            normalizedRouting: [PrintingMethod.DESIGN],
+          },
+        },
+      });
+    }
+  });
+
+  broadcast({
+    type: 'ORDER_UPDATED',
+    payload: { orderId, status: 'COMPLETED' },
+    timestamp: new Date(),
+  });
+
+  return true;
+}
+
+async function autoAdvanceNextStationIfNeeded(orderId: string, station: string, skip = false): Promise<void> {
+  if (skip || !AUTO_ADVANCE_FROM.includes(station)) {
+    return;
+  }
+
+  const order = await prisma.workOrder.findUnique({
+    where: { id: orderId },
+    select: { routing: true },
+  });
+
+  if (!order) {
+    return;
+  }
+
+  const routing = order.routing as string[];
+  const currentIdx = routing.indexOf(station);
+  const nextStation = currentIdx >= 0 && currentIdx < routing.length - 1 ? routing[currentIdx + 1] : null;
+
+  if (!nextStation) {
+    return;
+  }
+
+  await prisma.stationProgress.updateMany({
+    where: {
+      orderId,
+      station: nextStation as never,
+      status: 'NOT_STARTED',
+    },
+    data: {
+      status: 'IN_PROGRESS',
+      startedAt: new Date(),
+    },
+  });
+  broadcast({ type: 'STATION_UPDATED', payload: { orderId, station: nextStation, status: 'IN_PROGRESS' }, timestamp: new Date() });
+}
+
+async function autoCompleteParentStationIfNeeded(orderId: string, station: string, userId: string): Promise<void> {
+  const parentStation = SUB_STATION_PARENTS[station];
+  if (!parentStation) {
+    return;
+  }
+
+  const siblingSubStations = PARENT_SUB_STATIONS[parentStation] || [];
+  const siblingProgress = await prisma.stationProgress.findMany({
+    where: {
+      orderId,
+      station: { in: siblingSubStations as never[] },
+    },
+  });
+  const allComplete = siblingProgress.length > 0 && siblingProgress.every(sp => sp.status === 'COMPLETED');
+  if (!allComplete) {
+    return;
+  }
+
+  const parentExists = await prisma.stationProgress.findUnique({
+    where: { orderId_station: { orderId, station: parentStation as never } },
+  });
+  if (!parentExists || parentExists.status === 'COMPLETED') {
+    return;
+  }
+
+  await prisma.stationProgress.update({
+    where: { orderId_station: { orderId, station: parentStation as never } },
+    data: { status: 'COMPLETED', completedAt: new Date(), completedById: userId },
+  });
+  await prisma.workEvent.create({
+    data: {
+      orderId,
+      eventType: 'STATION_COMPLETED',
+      description: `Station ${parentStation} auto-completed (all sub-stations done)`,
+      userId,
+      details: { station: parentStation, autoCompleted: true },
+    },
+  });
+  broadcast({ type: 'STATION_UPDATED', payload: { orderId, station: parentStation, status: 'COMPLETED' }, timestamp: new Date() });
+}
+
 // GET /orders/active-time - Get user's active (running) time entry
 ordersRouter.get('/active-time', async (req: AuthRequest, res: Response) => {
   const userId = req.userId!;
-  
+
   const activeEntry = await prisma.timeEntry.findFirst({
     where: {
       userId,
-      endTime: null, // Still running
+      endTime: null,
     },
     include: {
       order: {
@@ -68,7 +256,7 @@ ordersRouter.get('/active-time', async (req: AuthRequest, res: Response) => {
 });
 
 // GET /orders/stats - Dashboard summary counts (avoids fetching full order rows)
-ordersRouter.get('/stats', async (req: AuthRequest, res: Response) => {
+ordersRouter.get('/stats', async (_req: AuthRequest, res: Response) => {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date();
@@ -104,12 +292,12 @@ ordersRouter.get('/stats', async (req: AuthRequest, res: Response) => {
     success: true,
     data: {
       total,
-      pending: counts['PENDING'] ?? 0,
-      inProgress: counts['IN_PROGRESS'] ?? 0,
-      completed: counts['COMPLETED'] ?? 0,
-      onHold: counts['ON_HOLD'] ?? 0,
-      shipped: counts['SHIPPED'] ?? 0,
-      cancelled: counts['CANCELLED'] ?? 0,
+      pending: counts.PENDING ?? 0,
+      inProgress: counts.IN_PROGRESS ?? 0,
+      completed: counts.COMPLETED ?? 0,
+      onHold: counts.ON_HOLD ?? 0,
+      shipped: counts.SHIPPED ?? 0,
+      cancelled: counts.CANCELLED ?? 0,
       dueToday,
       overdue,
     },
@@ -119,85 +307,76 @@ ordersRouter.get('/stats', async (req: AuthRequest, res: Response) => {
 // GET /orders - List orders with filtering
 ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
   const filters = OrderFilterSchema.parse(req.query);
-  const { 
-    page, pageSize, status, priority, station, myStations,
-    search, assignedToId, fromDate, toDate, dueDateFrom, dueDateTo,
-    dateFilter, hasAttachments, sortBy, sortOrder, companyBrand, lightweight 
+  const {
+    page,
+    status,
+    priority,
+    station,
+    myStations,
+    search,
+    assignedToId,
+    fromDate,
+    toDate,
+    dueDateFrom,
+    dueDateTo,
+    dateFilter,
+    hasAttachments,
+    sortBy,
+    sortOrder,
+    companyBrand,
+    lightweight,
   } = filters;
 
-  // Three tiers of include depth:
-  // 1. Default: everything (order detail page)
-  // 2. Lightweight: skips attachments (shop floor views that need line items)
-  // 3. Summary: only stationProgress + assignedTo (order list table — fastest)
-  const isSummary = lightweight && !req.query.includeLineItems;
-  const orderInclude = isSummary
-    ? {
-        stationProgress: { select: { id: true, station: true, status: true } },
-        assignedTo: { select: { id: true, displayName: true } },
-      }
-    : lightweight
-    ? {
-        lineItems: {
-          orderBy: { itemNumber: 'asc' as const },
-          include: { itemMaster: { select: { name: true } } },
-        },
-        stationProgress: true,
-        createdBy: { select: { id: true, displayName: true } },
-        assignedTo: { select: { id: true, displayName: true } },
-      }
-    : {
-        lineItems: { include: { itemMaster: { select: { name: true } } } },
-        stationProgress: true,
-        attachments: true,
-        createdBy: { select: { id: true, displayName: true } },
-        assignedTo: { select: { id: true, displayName: true } },
-      };
+  const limitParam = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : undefined;
+  const pageSize =
+    Number.isFinite(limitParam) && (limitParam ?? 0) > 0
+      ? Math.min(limitParam as number, 500)
+      : filters.pageSize;
+  const includeLineItems = req.query.includeLineItems === 'true';
+  const includeLineItemCompletions = req.query.includeLineItemCompletions === 'true';
+  const includeRevisionRequests = req.query.includeRevisionRequests === 'true';
+  const isSummary = lightweight && !includeLineItems && !includeRevisionRequests;
 
   const where: Record<string, unknown> = {};
-  
-  // Multi-status filter (array of statuses)
+
   if (status && status.length > 0) {
     where.status = status.length === 1 ? status[0] : { in: status };
   }
-  
-  // Priority filter (array of priorities)
+
   if (priority && priority.length > 0) {
     where.priority = priority.length === 1 ? priority[0] : { in: priority };
   }
-  
-  // Company brand filter
+
   if (companyBrand) {
     where.companyBrand = companyBrand;
   }
-  
-  if (assignedToId) where.assignedToId = assignedToId;
-  
-  // Created date range filter
+
+  if (assignedToId) {
+    where.assignedToId = assignedToId;
+  }
+
   if (fromDate || toDate) {
     where.createdAt = {};
     if (fromDate) (where.createdAt as Record<string, Date>).gte = fromDate;
     if (toDate) (where.createdAt as Record<string, Date>).lte = toDate;
   }
-  
-  // Due date range filter
+
   if (dueDateFrom || dueDateTo) {
     where.dueDate = {};
     if (dueDateFrom) (where.dueDate as Record<string, Date>).gte = dueDateFrom;
     if (dueDateTo) (where.dueDate as Record<string, Date>).lte = dueDateTo;
   }
-  
-  // Handle dateFilter for dashboard quick filters
+
   if (dateFilter) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    // Exclude completed/shipped/cancelled orders for date-based filters
+
     if (!status || status.length === 0) {
       where.status = { notIn: ['COMPLETED', 'SHIPPED', 'CANCELLED'] };
     }
-    
+
     if (dateFilter === 'dueToday') {
       where.dueDate = {
         gte: today,
@@ -216,7 +395,7 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
       };
     }
   }
-  
+
   if (search) {
     where.OR = [
       { orderNumber: { contains: search, mode: 'insensitive' } },
@@ -226,17 +405,15 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
       { quickbooksOrderNum: { contains: search, mode: 'insensitive' } },
     ];
   }
-  
+
   if (station) {
     where.routing = { has: station };
   }
-  
-  // Filter by user's allowed stations - show orders where routing includes ANY of user's stations
+
   if (myStations && req.user?.allowedStations?.length) {
     where.routing = { hasSome: req.user.allowedStations };
   }
-  
-  // Filter orders that have attachments
+
   if (hasAttachments !== undefined) {
     if (hasAttachments) {
       where.attachments = { some: {} };
@@ -245,34 +422,68 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
     }
   }
 
-  // Cursor-based pagination for infinite scroll / virtualized tables
+  const orderInclude: Record<string, unknown> = isSummary
+    ? {
+        stationProgress: { select: { id: true, station: true, status: true } },
+        assignedTo: { select: { id: true, displayName: true } },
+      }
+    : {
+        stationProgress: true,
+        createdBy: { select: { id: true, displayName: true } },
+        assignedTo: { select: { id: true, displayName: true } },
+      };
+
+  if (!lightweight || includeLineItems) {
+    orderInclude.lineItems = {
+      orderBy: { itemNumber: 'asc' as const },
+      include: {
+        itemMaster: { select: { name: true } },
+        ...(includeLineItemCompletions
+          ? {
+              completions: {
+                select: { station: true, completed: true },
+              },
+            }
+          : {}),
+      },
+    };
+  }
+
+  if (!lightweight) {
+    orderInclude.attachments = true;
+  }
+
+  if (includeRevisionRequests) {
+    orderInclude.revisionRequests = {
+      orderBy: { createdAt: 'desc' as const },
+      include: {
+        requestedBy: { select: { id: true, displayName: true } },
+        resolvedBy: { select: { id: true, displayName: true } },
+      },
+    };
+  }
+
   if (filters.useCursor) {
-    const limit = Math.min(filters.pageSize, 100); // Use pageSize as limit, max 100
+    const limit = Math.min(pageSize, 100);
     const cursor = filters.cursor;
-    
-    const cursorWhere = cursor 
-      ? { ...where, id: { lt: cursor } } // Assuming descending order by default
-      : where;
-    
-    // For cursor pagination, we need to adjust ordering based on sortBy
-    // We need a secondary sort on ID for stable pagination
+    const cursorWhere = cursor ? { ...where, id: { lt: cursor } } : where;
     const orderByArray = [
       { [sortBy]: sortOrder },
-      { id: sortOrder }, // Secondary sort for stable pagination
+      { id: sortOrder },
     ];
-    
+
     const orders = await prisma.workOrder.findMany({
       where: cursorWhere,
-      include: orderInclude,
-      orderBy: orderByArray,
-      take: limit + 1, // Fetch one extra to check if there's more
+      include: orderInclude as any,
+      orderBy: orderByArray as any,
+      take: limit + 1,
     });
-    
+
     const hasMore = orders.length > limit;
     const items = hasMore ? orders.slice(0, -1) : orders;
     const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
     const prevCursor = cursor ? items[0]?.id ?? null : null;
-    
+
     return res.json({
       success: true,
       data: {
@@ -280,18 +491,15 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
         nextCursor,
         prevCursor,
         hasMore,
-        // Optionally include total (can be expensive for large datasets)
-        // total: await prisma.workOrder.count({ where }),
       },
     });
   }
 
-  // Standard offset-based pagination (legacy)
   const [orders, total] = await Promise.all([
     prisma.workOrder.findMany({
       where,
-      include: orderInclude,
-      orderBy: { [sortBy]: sortOrder },
+      include: orderInclude as any,
+      orderBy: { [sortBy]: sortOrder } as any,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
@@ -317,7 +525,6 @@ ordersRouter.post('/bulk/status', async (req: AuthRequest, res: Response) => {
   const userId = req.userId!;
   const { orderIds, status } = BulkStatusChangeSchema.parse(req.body);
 
-  // Get current orders to capture old status
   const orders = await prisma.workOrder.findMany({
     where: { id: { in: orderIds } },
     select: { id: true, orderNumber: true, status: true, assignedToId: true },
@@ -327,7 +534,6 @@ ordersRouter.post('/bulk/status', async (req: AuthRequest, res: Response) => {
     throw BadRequestError('No valid orders found');
   }
 
-  // Filter orders that actually need updating (different status)
   const ordersToUpdate = orders.filter((o) => o.status !== status);
 
   if (ordersToUpdate.length === 0) {
@@ -337,25 +543,21 @@ ordersRouter.post('/bulk/status', async (req: AuthRequest, res: Response) => {
     });
   }
 
-  // Update all orders in a transaction
   await prisma.$transaction(async (tx) => {
-    // Update status for all orders
     await tx.workOrder.updateMany({
       where: { id: { in: ordersToUpdate.map((o) => o.id) } },
       data: { status },
     });
 
-    // Create events for each order
     await tx.workEvent.createMany({
       data: ordersToUpdate.map((order) => ({
         orderId: order.id,
         eventType: 'STATUS_CHANGED',
-        description: `Bulk status change: ${order.status} → ${status}`,
+        description: `Bulk status change: ${order.status} -> ${status}`,
         userId,
       })),
     });
 
-    // Create notifications for assigned users
     for (const order of ordersToUpdate) {
       if (order.assignedToId && order.assignedToId !== userId) {
         await createNotification({
@@ -369,7 +571,6 @@ ordersRouter.post('/bulk/status', async (req: AuthRequest, res: Response) => {
     }
   });
 
-  // Broadcast updates for each order
   for (const order of ordersToUpdate) {
     broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
   }
@@ -388,13 +589,11 @@ ordersRouter.post('/bulk/assign', async (req: AuthRequest, res: Response) => {
   const userId = req.userId!;
   const { orderIds, assignedToId } = BulkAssignSchema.parse(req.body);
 
-  // Verify assignee exists if not null
   if (assignedToId) {
     const assignee = await prisma.user.findUnique({ where: { id: assignedToId } });
     if (!assignee) throw BadRequestError('Assignee not found');
   }
 
-  // Get current orders to capture old assignment
   const orders = await prisma.workOrder.findMany({
     where: { id: { in: orderIds } },
     select: { id: true, orderNumber: true, assignedToId: true },
@@ -404,7 +603,6 @@ ordersRouter.post('/bulk/assign', async (req: AuthRequest, res: Response) => {
     throw BadRequestError('No valid orders found');
   }
 
-  // Filter orders that need updating
   const ordersToUpdate = orders.filter((o) => o.assignedToId !== assignedToId);
 
   if (ordersToUpdate.length === 0) {
@@ -414,12 +612,10 @@ ordersRouter.post('/bulk/assign', async (req: AuthRequest, res: Response) => {
     });
   }
 
-  // Get assignee name for events
   const assigneeName = assignedToId
     ? (await prisma.user.findUnique({ where: { id: assignedToId }, select: { displayName: true } }))?.displayName || 'Unknown'
     : 'Unassigned';
 
-  // Update all orders in a transaction
   await prisma.$transaction(async (tx) => {
     await tx.workOrder.updateMany({
       where: { id: { in: ordersToUpdate.map((o) => o.id) } },
@@ -435,7 +631,6 @@ ordersRouter.post('/bulk/assign', async (req: AuthRequest, res: Response) => {
       })),
     });
 
-    // Notify the new assignee
     if (assignedToId && assignedToId !== userId) {
       await createNotification({
         userId: assignedToId,
@@ -447,7 +642,6 @@ ordersRouter.post('/bulk/assign', async (req: AuthRequest, res: Response) => {
     }
   });
 
-  // Broadcast updates
   for (const order of ordersToUpdate) {
     broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
   }
@@ -494,13 +688,12 @@ ordersRouter.post('/bulk/priority', async (req: AuthRequest, res: Response) => {
       data: ordersToUpdate.map((order) => ({
         orderId: order.id,
         eventType: 'PRIORITY_CHANGED',
-        description: `Bulk priority change: ${order.priority} → ${priority}`,
+        description: `Bulk priority change: ${order.priority} -> ${priority}`,
         userId,
       })),
     });
   });
 
-  // Broadcast updates
   for (const order of ordersToUpdate) {
     broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
   }
@@ -528,7 +721,6 @@ ordersRouter.post('/bulk/cancel', async (req: AuthRequest, res: Response) => {
     throw BadRequestError('No valid orders found');
   }
 
-  // Filter out already cancelled orders
   const ordersToCancel = orders.filter((o) => o.status !== 'CANCELLED');
 
   if (ordersToCancel.length === 0) {
@@ -548,13 +740,12 @@ ordersRouter.post('/bulk/cancel', async (req: AuthRequest, res: Response) => {
       data: ordersToCancel.map((order) => ({
         orderId: order.id,
         eventType: 'STATUS_CHANGED',
-        description: `Bulk cancelled: ${order.status} → CANCELLED`,
+        description: `Bulk cancelled: ${order.status} -> CANCELLED`,
         userId,
       })),
     });
   });
 
-  // Broadcast updates
   for (const order of ordersToCancel) {
     broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
   }
@@ -573,26 +764,24 @@ ordersRouter.post('/bulk/station-status', async (req: AuthRequest, res: Response
   const userId = req.userId!;
   const { orderIds, station, status } = BulkStationStatusSchema.parse(req.body);
 
-  // Find all orders that have this station in their routing AND have a stationProgress record
   const orders = await prisma.workOrder.findMany({
     where: {
       id: { in: orderIds },
       routing: { has: station },
     },
     select: { id: true, orderNumber: true },
-    });
+  });
 
   if (orders.length === 0) {
     throw BadRequestError('No valid orders found with that station in their routing');
   }
 
-  const orderIdList = orders.map(o => o.id);
+  const orderIdList = orders.map((o) => o.id);
   const completedAt = status === 'COMPLETED' ? new Date() : null;
   const completedById = status === 'COMPLETED' ? userId : null;
   const startedAt = status === 'IN_PROGRESS' ? new Date() : undefined;
 
   await prisma.$transaction(async (tx) => {
-    // Update all matching stationProgress records
     await tx.stationProgress.updateMany({
       where: {
         orderId: { in: orderIdList },
@@ -606,19 +795,34 @@ ordersRouter.post('/bulk/station-status', async (req: AuthRequest, res: Response
       },
     });
 
-    // Log events
     await tx.workEvent.createMany({
-      data: orders.map(order => ({
+      data: orders.map((order) => ({
         orderId: order.id,
         eventType: status === 'COMPLETED' ? 'STATION_COMPLETED' : 'STATION_STATUS_CHANGED',
-        description: `Bulk station update: ${station} → ${status}`,
+        description: `Bulk station update: ${station} -> ${status}`,
         userId,
         details: { station, status },
       })),
     });
   });
 
-  // Broadcast updates
+  const designOnlyCompletedOrderIds = new Set<string>();
+  if (status === 'COMPLETED' && station === PrintingMethod.DESIGN) {
+    for (const order of orders) {
+      if (await completeDesignOnlyOrderIfNeeded(order.id, userId)) {
+        designOnlyCompletedOrderIds.add(order.id);
+      }
+    }
+  }
+
+  if (status === 'COMPLETED') {
+    for (const order of orders) {
+      await deductMaterialsOnStationCompleteIfNeeded(order.id, station, userId);
+      await autoCompleteParentStationIfNeeded(order.id, station, userId);
+      await autoAdvanceNextStationIfNeeded(order.id, station, designOnlyCompletedOrderIds.has(order.id));
+    }
+  }
+
   for (const order of orders) {
     broadcast({ type: 'STATION_UPDATED', payload: { orderId: order.id, station, status }, timestamp: new Date() });
   }
@@ -639,10 +843,13 @@ ordersRouter.post('/bulk/multi-station-status', async (req: AuthRequest, res: Re
 
   let totalUpdated = 0;
   const allBroadcasts: { orderId: string; station: string; status: string }[] = [];
+  const designCompletionCandidates = new Set<string>();
+  const materialDeductionCandidates: Array<{ orderId: string; station: string }> = [];
+  const autoAdvanceCandidates: Array<{ orderId: string; station: string }> = [];
+  const parentAutoCompleteCandidates: Array<{ orderId: string; station: string }> = [];
 
   await prisma.$transaction(async (tx) => {
     for (const { station, status } of stationUpdates) {
-      // Find orders that have this station in their routing
       const orders = await tx.workOrder.findMany({
         where: {
           id: { in: orderIds },
@@ -653,12 +860,11 @@ ordersRouter.post('/bulk/multi-station-status', async (req: AuthRequest, res: Re
 
       if (orders.length === 0) continue;
 
-      const orderIdList = orders.map(o => o.id);
+      const orderIdList = orders.map((o) => o.id);
       const completedAt = status === 'COMPLETED' ? new Date() : null;
       const completedById = status === 'COMPLETED' ? userId : null;
       const startedAt = status === 'IN_PROGRESS' ? new Date() : undefined;
 
-      // Update all matching stationProgress records for this station
       await tx.stationProgress.updateMany({
         where: {
           orderId: { in: orderIdList },
@@ -672,12 +878,11 @@ ordersRouter.post('/bulk/multi-station-status', async (req: AuthRequest, res: Re
         },
       });
 
-      // Log events
       await tx.workEvent.createMany({
-        data: orders.map(order => ({
+        data: orders.map((order) => ({
           orderId: order.id,
           eventType: status === 'COMPLETED' ? 'STATION_COMPLETED' : 'STATION_STATUS_CHANGED',
-          description: `Bulk station update: ${station} → ${status}`,
+          description: `Bulk station update: ${station} -> ${status}`,
           userId,
           details: { station, status },
         })),
@@ -686,11 +891,41 @@ ordersRouter.post('/bulk/multi-station-status', async (req: AuthRequest, res: Re
       totalUpdated += orders.length;
       for (const order of orders) {
         allBroadcasts.push({ orderId: order.id, station, status });
+        if (station === PrintingMethod.DESIGN && status === 'COMPLETED') {
+          designCompletionCandidates.add(order.id);
+        }
+        if (status === 'COMPLETED' && MATERIAL_DEDUCTION_STATIONS.includes(station)) {
+          materialDeductionCandidates.push({ orderId: order.id, station });
+        }
+        if (status === 'COMPLETED' && AUTO_ADVANCE_FROM.includes(station)) {
+          autoAdvanceCandidates.push({ orderId: order.id, station });
+        }
+        if (status === 'COMPLETED' && SUB_STATION_PARENTS[station]) {
+          parentAutoCompleteCandidates.push({ orderId: order.id, station });
+        }
       }
     }
   });
 
-  // Broadcast all updates
+  const designOnlyCompletedOrderIds = new Set<string>();
+  for (const orderId of designCompletionCandidates) {
+    if (await completeDesignOnlyOrderIfNeeded(orderId, userId)) {
+      designOnlyCompletedOrderIds.add(orderId);
+    }
+  }
+
+  for (const { orderId, station } of materialDeductionCandidates) {
+    await deductMaterialsOnStationCompleteIfNeeded(orderId, station, userId);
+  }
+
+  for (const { orderId, station } of parentAutoCompleteCandidates) {
+    await autoCompleteParentStationIfNeeded(orderId, station, userId);
+  }
+
+  for (const { orderId, station } of autoAdvanceCandidates) {
+    await autoAdvanceNextStationIfNeeded(orderId, station, designOnlyCompletedOrderIds.has(orderId));
+  }
+
   for (const { orderId, station, status } of allBroadcasts) {
     broadcast({ type: 'STATION_UPDATED', payload: { orderId, station, status }, timestamp: new Date() });
   }
@@ -726,7 +961,7 @@ ordersRouter.post('/bulk/claim', async (req: AuthRequest, res: Response) => {
     throw BadRequestError('No valid orders found');
   }
 
-  const orderIdList = orders.map(o => o.id);
+  const orderIdList = orders.map((o) => o.id);
 
   await prisma.$transaction(async (tx) => {
     await tx.stationProgress.updateMany({
@@ -742,7 +977,7 @@ ordersRouter.post('/bulk/claim', async (req: AuthRequest, res: Response) => {
     });
 
     await tx.workEvent.createMany({
-      data: orders.map(order => ({
+      data: orders.map((order) => ({
         orderId: order.id,
         eventType: 'STATION_CLAIMED',
         description: `Order claimed at station ${station}`,
@@ -766,7 +1001,6 @@ ordersRouter.post('/bulk/claim', async (req: AuthRequest, res: Response) => {
 ordersRouter.post('/auto-advance-installations', async (req: AuthRequest, res: Response) => {
   const now = new Date();
 
-  // Find installation jobs whose scheduled date/time has arrived or passed
   const dueJobs = await prisma.installationJob.findMany({
     where: {
       scheduledDate: { lte: now },
@@ -791,7 +1025,7 @@ ordersRouter.post('/auto-advance-installations', async (req: AuthRequest, res: R
     return res.json({ success: true, data: { advanced: 0 } });
   }
 
-  const orderIds = dueJobs.map(j => j.workOrderId);
+  const orderIds = dueJobs.map((job) => job.workOrderId);
 
   await prisma.$transaction(async (tx) => {
     await tx.stationProgress.updateMany({
@@ -807,10 +1041,10 @@ ordersRouter.post('/auto-advance-installations', async (req: AuthRequest, res: R
     });
 
     await tx.workEvent.createMany({
-      data: dueJobs.map(j => ({
-        orderId: j.workOrderId,
+      data: dueJobs.map((job) => ({
+        orderId: job.workOrderId,
         eventType: 'STATION_AUTO_ADVANCED' as const,
-        description: `Installation auto-started (scheduled date reached)`,
+        description: 'Installation auto-started (scheduled date reached)',
         details: { station: 'INSTALLATION', reason: 'scheduled_date' },
         userId: req.userId!,
       })),
@@ -818,7 +1052,11 @@ ordersRouter.post('/auto-advance-installations', async (req: AuthRequest, res: R
   });
 
   for (const job of dueJobs) {
-    broadcast({ type: 'STATION_UPDATED', payload: { orderId: job.workOrderId, station: 'INSTALLATION', status: 'IN_PROGRESS' }, timestamp: new Date() });
+    broadcast({
+      type: 'STATION_UPDATED',
+      payload: { orderId: job.workOrderId, station: 'INSTALLATION', status: 'IN_PROGRESS' },
+      timestamp: now,
+    });
   }
 
   res.json({
@@ -829,20 +1067,22 @@ ordersRouter.post('/auto-advance-installations', async (req: AuthRequest, res: R
 
 // ============ Single Order Routes ============
 
-// GET /orders/by-number/:orderNumber - Lookup order by order number (returns id + basic info)
+// GET /orders/by-number/:orderNumber - Lookup order by order number
 ordersRouter.get('/by-number/:orderNumber', async (req: AuthRequest, res: Response) => {
   const order = await prisma.workOrder.findFirst({
     where: { orderNumber: { equals: req.params.orderNumber, mode: 'insensitive' } },
     select: { id: true, orderNumber: true, customerName: true, status: true },
   });
 
-  if (!order) throw NotFoundError(`Order ${req.params.orderNumber} not found`);
+  if (!order) {
+    throw NotFoundError(`Order ${req.params.orderNumber} not found`);
+  }
 
   res.json({ success: true, data: order });
 });
 
 // GET /orders/:id - Get single order
-ordersRouter.get('/:id', async (req: AuthRequest, res: Response) => {
+ordersRouter.get('/:id([0-9a-fA-F-]{36})', async (req: AuthRequest, res: Response) => {
   const order = await prisma.workOrder.findUnique({
     where: { id: req.params.id },
     include: {
@@ -857,7 +1097,9 @@ ordersRouter.get('/:id', async (req: AuthRequest, res: Response) => {
     },
   });
 
-  if (!order) throw NotFoundError('Order not found');
+  if (!order) {
+    throw NotFoundError('Order not found');
+  }
 
   res.json({ success: true, data: order });
 });
@@ -867,17 +1109,16 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
   const data = CreateWorkOrderSchema.parse(req.body);
   const userId = req.userId!;
 
-  // Enforce company requirement
   if (!data.companyId) {
     throw BadRequestError('companyId is required when creating an order');
   }
 
-  // If contactId provided, verify the contact has name + phone
   if (data.contactId) {
     const contact = await prisma.contact.findUnique({
       where: { id: data.contactId },
       select: { firstName: true, lastName: true, phone: true, mobile: true },
     });
+
     if (contact && !contact.firstName && !contact.lastName) {
       throw BadRequestError('Contact must have a name');
     }
@@ -886,7 +1127,6 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
     }
   }
 
-  // Auto-resolve primary contact if not provided
   if (data.companyId && !data.contactId) {
     const primaryContact = await prisma.contact.findFirst({
       where: { companyId: data.companyId, isPrimary: true },
@@ -897,12 +1137,10 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
     }
   }
 
-  // Apply routing defaults (auto-add PRODUCTION, SHIPPING_RECEIVING, etc.)
   const routing = applyRoutingDefaults(data.routing, {
     description: data.description,
   });
 
-  // Auto-generate order number if not provided (TEMP-YYYYMMDD-XXXX format)
   let orderNumber = data.orderNumber;
   if (!orderNumber) {
     const today = new Date();
@@ -915,25 +1153,31 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
     orderNumber = `TEMP-${dateStr}-${String(todayCount + 1).padStart(4, '0')}`;
   }
 
-  // Resolve customer name: prefer explicit, then look up from company, then contact
   let customerName = data.customerName || '';
-  let companyId = data.companyId || undefined;
-  let contactId = data.contactId || undefined;
+  const companyId = data.companyId || undefined;
+  const contactId = data.contactId || undefined;
 
   if (companyId && !customerName) {
-    const company = await prisma.company.findUnique({ where: { id: companyId }, select: { name: true } });
-    if (company) customerName = company.name;
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { name: true },
+    });
+    if (company) {
+      customerName = company.name;
+    }
   }
 
-  // Auto-resolve legacy customerId if not provided but customerName is
   let customerId = data.customerId || undefined;
   if (!customerId && !companyId && customerName) {
     const resolved = await resolveCustomerId(customerName);
-    if (resolved) customerId = resolved;
+    if (resolved) {
+      customerId = resolved;
+    }
   }
 
-  // Fallback customerName
-  if (!customerName) customerName = 'Walk-In';
+  if (!customerName) {
+    customerName = 'Walk-In';
+  }
 
   const order = await prisma.workOrder.create({
     data: {
@@ -945,6 +1189,7 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
       poNumber: data.poNumber,
       description: data.description,
       priority: data.priority,
+      companyBrand: data.companyBrand,
       dueDate: data.dueDate,
       notes: data.notes,
       routing,
@@ -979,7 +1224,6 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
     },
   });
 
-  // Create placeholder file chain entry for the new order
   try {
     await prisma.printCutLink.create({
       data: {
@@ -990,13 +1234,12 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
         linkConfidence: 'NONE',
       },
     });
-  } catch (e) {
-    console.error('Failed to create placeholder chain:', e);
+  } catch (err) {
+    console.error('Failed to create placeholder chain:', err);
   }
 
   broadcast({ type: 'ORDER_CREATED', payload: order, timestamp: new Date() });
 
-  // Log activity
   logActivity({
     action: ActivityAction.CREATE,
     entityType: EntityType.WORK_ORDER,
@@ -1008,21 +1251,19 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
     req,
   });
 
-  // Notify admins and managers of new order
   notifyAdminsAndManagers({
     type: 'ORDER_CREATED',
     title: 'New Order Created',
     message: `Order #${order.orderNumber} for ${order.customerName} has been created`,
     link: `/orders/${order.id}`,
     data: { orderId: order.id, orderNumber: order.orderNumber },
-  }).catch(err => console.error('Failed to create notification:', err));
+  }).catch((err) => console.error('Failed to create notification:', err));
 
-  // Send email notification to admins/managers
   const adminsManagers = await prisma.user.findMany({
     where: { role: { in: ['ADMIN', 'MANAGER'] }, isActive: true, email: { not: null } },
     select: { email: true },
   });
-  const adminEmails = adminsManagers.map(u => u.email).filter((e): e is string => !!e);
+  const adminEmails = adminsManagers.map((entry) => entry.email).filter((email): email is string => !!email);
   if (adminEmails.length > 0) {
     sendOrderCreatedEmail(adminEmails, {
       orderId: order.id,
@@ -1031,15 +1272,14 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
       description: order.description,
       status: order.status,
       dueDate: order.dueDate,
-      lineItems: order.lineItems.map(li => ({
-        itemNumber: String(li.itemNumber),
-        description: li.description,
-        quantity: li.quantity,
+      lineItems: order.lineItems.map((lineItem) => ({
+        itemNumber: String(lineItem.itemNumber),
+        description: lineItem.description,
+        quantity: lineItem.quantity,
       })),
-    }).catch(err => console.error('Failed to send order created email:', err));
+    }).catch((err) => console.error('Failed to send order created email:', err));
   }
 
-  // Trigger automated emails for ORDER_CREATED
   if (data.customerId) {
     const customer = await prisma.customer.findUnique({
       where: { id: data.customerId },
@@ -1060,7 +1300,7 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
           name: customer.name,
           email: customer.email,
         },
-      }).catch(err => console.error('Failed to trigger ORDER_CREATED email:', err));
+      }).catch((err) => console.error('Failed to trigger ORDER_CREATED email:', err));
     }
   }
 
@@ -1076,9 +1316,10 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     where: { id: req.params.id },
     include: { lineItems: true },
   });
-  if (!existing) throw NotFoundError('Order not found');
+  if (!existing) {
+    throw NotFoundError('Order not found');
+  }
 
-  // Collect events for this update
   const eventData: Array<{ eventType: string; description: string; userId: string; details?: object }> = [];
 
   if (data.status && data.status !== existing.status) {
@@ -1098,26 +1339,22 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     });
   }
 
-  // Extract lineItems and routing before spreading into workOrder update
   const { lineItems: incomingLineItems, routing: incomingRouting, ...orderData } = data;
 
   const order = await prisma.$transaction(async (tx) => {
-    // Build work order update data (without lineItems/routing initially)
     const updateData: Record<string, unknown> = { ...orderData };
 
-    // Handle routing changes - sync stationProgress
     if (incomingRouting !== undefined) {
-      // Apply routing defaults to any routing change
       const resolvedRouting = applyRoutingDefaults(incomingRouting, {
-        description: orderData.description ?? existing.description,
+        description: (orderData.description as string | undefined) ?? existing.description,
       });
       const existingRouting = (existing.routing as string[]) || [];
-      const routingChanged = JSON.stringify(existingRouting.sort()) !== JSON.stringify([...resolvedRouting].sort());
+      const routingChanged =
+        JSON.stringify(existingRouting.slice().sort()) !== JSON.stringify([...resolvedRouting].sort());
 
       if (routingChanged) {
         updateData.routing = resolvedRouting;
 
-        // Delete old station progress and recreate for the new routing
         await tx.stationProgress.deleteMany({ where: { orderId: req.params.id } });
 
         if (resolvedRouting.length > 0) {
@@ -1139,22 +1376,17 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Update the work order fields
     await tx.workOrder.update({
       where: { id: req.params.id },
       data: updateData,
     });
 
-    // Handle line items if provided
     if (incomingLineItems !== undefined) {
-      const oldDescriptions = existing.lineItems.map(li => li.description);
-      const newDescriptions = incomingLineItems.map(li => li.description);
+      const oldDescriptions = existing.lineItems.map((lineItem) => lineItem.description);
+      const newDescriptions = incomingLineItems.map((lineItem) => lineItem.description);
+      const added = newDescriptions.filter((description) => !oldDescriptions.includes(description));
+      const removed = oldDescriptions.filter((description) => !newDescriptions.includes(description));
 
-      // Track additions and removals for timeline
-      const added = newDescriptions.filter(d => !oldDescriptions.includes(d));
-      const removed = oldDescriptions.filter(d => !newDescriptions.includes(d));
-
-      // Delete all existing line items and recreate from the submitted list
       await tx.lineItem.deleteMany({ where: { orderId: req.params.id } });
 
       if (incomingLineItems.length > 0) {
@@ -1171,39 +1403,39 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
         });
       }
 
-      // Create events for line item changes
-      for (const desc of added) {
+      for (const description of added) {
         eventData.push({
           eventType: 'LINE_ADDED',
-          description: `Line item added: ${desc}`,
+          description: `Line item added: ${description}`,
           userId,
         });
       }
-      for (const desc of removed) {
+      for (const description of removed) {
         eventData.push({
           eventType: 'LINE_REMOVED',
-          description: `Line item removed: ${desc}`,
+          description: `Line item removed: ${description}`,
           userId,
         });
       }
 
-      // If items were updated (same description but different qty/price), log update
       if (added.length === 0 && removed.length === 0 && existing.lineItems.length > 0) {
-        const hasChanges = incomingLineItems.some((newLi, idx) => {
-          const oldLi = existing.lineItems.find(o => o.description === newLi.description);
-          return oldLi && (oldLi.quantity !== newLi.quantity || Number(oldLi.unitPrice) !== newLi.unitPrice);
+        const hasChanges = incomingLineItems.some((newLineItem) => {
+          const oldLineItem = existing.lineItems.find((entry) => entry.description === newLineItem.description);
+          return (
+            oldLineItem &&
+            (oldLineItem.quantity !== newLineItem.quantity || Number(oldLineItem.unitPrice) !== newLineItem.unitPrice)
+          );
         });
         if (hasChanges) {
           eventData.push({
             eventType: 'LINE_UPDATED',
-            description: `Line items updated`,
+            description: 'Line items updated',
             userId,
           });
         }
       }
     }
 
-    // Re-fetch with includes
     return tx.workOrder.findUniqueOrThrow({
       where: { id: req.params.id },
       include: {
@@ -1213,22 +1445,27 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     });
   });
 
-  // Create events separately
   if (eventData.length > 0) {
     await prisma.workEvent.createMany({
-      data: eventData.map(e => ({
+      data: eventData.map((event) => ({
         orderId: order.id,
-        eventType: e.eventType as 'STATUS_CHANGED' | 'ASSIGNED' | 'UNASSIGNED' | 'ROUTING_SET' | 'LINE_ADDED' | 'LINE_REMOVED' | 'LINE_UPDATED',
-        description: e.description,
-        userId: e.userId,
-        details: e.details,
+        eventType: event.eventType as
+          | 'STATUS_CHANGED'
+          | 'ASSIGNED'
+          | 'UNASSIGNED'
+          | 'ROUTING_SET'
+          | 'LINE_ADDED'
+          | 'LINE_REMOVED'
+          | 'LINE_UPDATED',
+        description: event.description,
+        userId: event.userId,
+        details: event.details,
       })),
     });
   }
 
   broadcast({ type: 'ORDER_UPDATED', payload: order, timestamp: new Date() });
 
-  // Log activity for status change
   if (data.status && data.status !== existing.status) {
     logActivity({
       action: ActivityAction.STATUS_CHANGE,
@@ -1242,23 +1479,19 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     });
   }
 
-  // Log activity for assignment change
   if (data.assignedToId !== undefined && data.assignedToId !== existing.assignedToId) {
     logActivity({
       action: data.assignedToId ? ActivityAction.ASSIGN : ActivityAction.UNASSIGN,
       entityType: EntityType.WORK_ORDER,
       entityId: order.id,
       entityName: order.orderNumber,
-      description: data.assignedToId 
-        ? `Assigned order #${order.orderNumber} to user`
-        : `Unassigned order #${order.orderNumber}`,
+      description: data.assignedToId ? `Assigned order #${order.orderNumber} to user` : `Unassigned order #${order.orderNumber}`,
       details: { previousAssignee: existing.assignedToId, newAssignee: data.assignedToId },
       userId,
       req,
     });
   }
 
-  // Send notifications for status changes
   if (data.status && data.status !== existing.status && order.assignedToId) {
     createNotification({
       userId: order.assignedToId,
@@ -1267,26 +1500,29 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
       message: `Order #${order.orderNumber} status changed to ${data.status}`,
       link: `/orders/${order.id}`,
       data: { orderId: order.id, fromStatus: existing.status, toStatus: data.status },
-    }).catch(err => console.error('Failed to create notification:', err));
+    }).catch((err) => console.error('Failed to create notification:', err));
 
-    // Send email to assigned user about status change
     const assignedUser = await prisma.user.findUnique({
       where: { id: order.assignedToId },
       select: { email: true },
     });
     if (assignedUser?.email) {
-      sendOrderStatusChangedEmail(assignedUser.email, {
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        customerName: order.customerName,
-        description: order.description,
-        status: order.status,
-        dueDate: order.dueDate,
-      }, existing.status, data.status).catch(err => console.error('Failed to send status change email:', err));
+      sendOrderStatusChangedEmail(
+        assignedUser.email,
+        {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          customerName: order.customerName,
+          description: order.description,
+          status: order.status,
+          dueDate: order.dueDate,
+        },
+        existing.status,
+        data.status,
+      ).catch((err) => console.error('Failed to send status change email:', err));
     }
   }
 
-  // Notify assigned user when order is assigned to them
   if (data.assignedToId && data.assignedToId !== existing.assignedToId) {
     createNotification({
       userId: data.assignedToId,
@@ -1295,9 +1531,8 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
       message: `Order #${order.orderNumber} has been assigned to you`,
       link: `/orders/${order.id}`,
       data: { orderId: order.id, orderNumber: order.orderNumber },
-    }).catch(err => console.error('Failed to create notification:', err));
+    }).catch((err) => console.error('Failed to create notification:', err));
 
-    // Send email to newly assigned user
     const assignedUser = await prisma.user.findUnique({
       where: { id: data.assignedToId },
       select: { email: true },
@@ -1310,11 +1545,10 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
         description: order.description,
         status: order.status,
         dueDate: order.dueDate,
-      }).catch(err => console.error('Failed to send order assigned email:', err));
+      }).catch((err) => console.error('Failed to send order assigned email:', err));
     }
   }
 
-  // Trigger automated emails for status changes
   if (data.status && data.status !== existing.status && order.customerId) {
     const customer = await prisma.customer.findUnique({
       where: { id: order.customerId },
@@ -1336,18 +1570,19 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
           email: customer.email,
         },
       };
-      
-      // Trigger general status change
-      triggerEmail(EmailTrigger.ORDER_STATUS_CHANGED, orderContext)
-        .catch(err => console.error('Failed to trigger ORDER_STATUS_CHANGED email:', err));
-      
-      // Trigger specific status events
+
+      triggerEmail(EmailTrigger.ORDER_STATUS_CHANGED, orderContext).catch((err) =>
+        console.error('Failed to trigger ORDER_STATUS_CHANGED email:', err),
+      );
+
       if (data.status === 'COMPLETED') {
-        triggerEmail(EmailTrigger.ORDER_COMPLETED, orderContext)
-          .catch(err => console.error('Failed to trigger ORDER_COMPLETED email:', err));
+        triggerEmail(EmailTrigger.ORDER_COMPLETED, orderContext).catch((err) =>
+          console.error('Failed to trigger ORDER_COMPLETED email:', err),
+        );
       } else if (data.status === 'SHIPPED') {
-        triggerEmail(EmailTrigger.ORDER_SHIPPED, orderContext)
-          .catch(err => console.error('Failed to trigger ORDER_SHIPPED email:', err));
+        triggerEmail(EmailTrigger.ORDER_SHIPPED, orderContext).catch((err) =>
+          console.error('Failed to trigger ORDER_SHIPPED email:', err),
+        );
       }
     }
   }
@@ -1367,11 +1602,12 @@ ordersRouter.post('/:id/routing', async (req: AuthRequest, res: Response) => {
   const { routing: rawRouting } = SetRoutingSchema.parse(req.body);
   const userId = req.userId!;
 
-  // Fetch existing order to get description for routing defaults
-  const existing = await prisma.workOrder.findUnique({ where: { id: req.params.id }, select: { description: true } });
+  const existing = await prisma.workOrder.findUnique({
+    where: { id: req.params.id },
+    select: { description: true },
+  });
   const routing = applyRoutingDefaults(rawRouting, { description: existing?.description ?? '' });
 
-  // Delete existing station progress and recreate
   await prisma.stationProgress.deleteMany({ where: { orderId: req.params.id } });
 
   const order = await prisma.workOrder.update({
@@ -1400,19 +1636,29 @@ ordersRouter.post('/:id/routing', async (req: AuthRequest, res: Response) => {
 // POST /orders/:id/stations/:station/start - Mark station as in-progress
 ordersRouter.post('/:id/stations/:station/start', async (req: AuthRequest, res: Response) => {
   const userId = req.userId!;
+  const orderId = req.params.id;
   const station = req.params.station;
+  const startedAt = new Date();
 
-  const progress = await prisma.stationProgress.update({
-    where: { orderId_station: { orderId: req.params.id, station: station as never } },
-    data: {
+  const progress = await prisma.stationProgress.upsert({
+    where: { orderId_station: { orderId, station: station as never } },
+    update: {
       status: 'IN_PROGRESS',
-      startedAt: new Date(),
+      startedAt,
+      completedAt: null,
+      completedById: null,
+    },
+    create: {
+      orderId,
+      station: station as never,
+      status: 'IN_PROGRESS',
+      startedAt,
     },
   });
 
   await prisma.workEvent.create({
     data: {
-      orderId: req.params.id,
+      orderId,
       eventType: 'STATION_STATUS_CHANGED',
       description: `Station ${station} started`,
       userId,
@@ -1420,7 +1666,7 @@ ordersRouter.post('/:id/stations/:station/start', async (req: AuthRequest, res: 
     },
   });
 
-  broadcast({ type: 'STATION_UPDATED', payload: { orderId: req.params.id, station, status: 'IN_PROGRESS' }, timestamp: new Date() });
+  broadcast({ type: 'STATION_UPDATED', payload: { orderId, station, status: 'IN_PROGRESS' }, timestamp: startedAt });
   res.json({ success: true, data: progress });
 });
 
@@ -1448,44 +1694,17 @@ ordersRouter.post('/:id/stations/:station/complete', async (req: AuthRequest, re
     },
   });
 
-  // Automatically deduct materials from inventory when production station completes
-  // Only do this for production stations (skip ORDER_ENTRY, SHIPPING, etc.)
-  const productionStations = ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT', 'CUT', 'FABRICATION', 'INSTALLATION'];
-  if (productionStations.includes(station)) {
-    try {
-      const deductResult = await bomAutomationService.deductMaterialsOnStationComplete(
-        req.params.id,
-        station,
-        userId
-      );
-      
-      if (deductResult.deducted > 0) {
-        await prisma.workEvent.create({
-          data: {
-            orderId: req.params.id,
-            eventType: 'MATERIAL_DEDUCTED',
-            description: `Auto-deducted ${deductResult.deducted} material(s) from inventory`,
-            userId,
-            details: { station, deducted: deductResult.deducted, errors: deductResult.errors },
-          },
-        });
-        
-        broadcast({ type: 'INVENTORY_UPDATED', payload: { orderId: req.params.id } });
-      }
-    } catch (err) {
-      // Non-blocking - log but don't fail the station completion
-      console.warn(`Material deduction warning for order ${req.params.id}:`, err);
-    }
-  }
+  await deductMaterialsOnStationCompleteIfNeeded(req.params.id, station, userId);
 
   broadcast({ type: 'STATION_UPDATED', payload: { orderId: req.params.id, station, status: 'COMPLETED' }, timestamp: new Date() });
+  const designOnlyCompleted =
+    station === 'DESIGN' ? await completeDesignOnlyOrderIfNeeded(req.params.id, userId) : false;
 
-  // ─── Sub-station auto-completion: if a sub-station completes, check if parent should auto-complete ───
+  // Sub-station auto-completion: if a sub-station completes, check if parent should auto-complete
   try {
     const parentStation = SUB_STATION_PARENTS[station];
     if (parentStation) {
       const siblingSubStations = PARENT_SUB_STATIONS[parentStation] || [];
-      // Check if all sibling sub-stations in the routing are COMPLETED
       const siblingProgress = await prisma.stationProgress.findMany({
         where: {
           orderId: req.params.id,
@@ -1494,7 +1713,6 @@ ordersRouter.post('/:id/stations/:station/complete', async (req: AuthRequest, re
       });
       const allComplete = siblingProgress.length > 0 && siblingProgress.every(sp => sp.status === 'COMPLETED');
       if (allComplete) {
-        // Auto-complete the parent station
         const parentExists = await prisma.stationProgress.findUnique({
           where: { orderId_station: { orderId: req.params.id, station: parentStation as never } },
         });
@@ -1520,7 +1738,6 @@ ordersRouter.post('/:id/stations/:station/complete', async (req: AuthRequest, re
     console.warn(`Sub-station auto-completion warning for order ${req.params.id}:`, err);
   }
 
-  // Gamification: update streak and check achievements
   try {
     await updateStreak(userId);
     await checkAchievements(userId);
@@ -1528,38 +1745,8 @@ ordersRouter.post('/:id/stations/:station/complete', async (req: AuthRequest, re
     console.warn('Gamification warning:', err);
   }
 
-  // ─── Auto-advance: when certain stations complete, move the next station to IN_PROGRESS ───
   try {
-    const order = await prisma.workOrder.findUnique({
-      where: { id: req.params.id },
-      select: { routing: true },
-    });
-    if (order) {
-      const routing = order.routing as string[];
-      const currentIdx = routing.indexOf(station);
-      const nextStation = currentIdx >= 0 && currentIdx < routing.length - 1 ? routing[currentIdx + 1] : null;
-
-      // Production completing → auto-start Shipping
-      // Any printing station completing → auto-start Production (if next)
-      if (nextStation) {
-        const autoAdvanceFrom = ['PRODUCTION', 'SCREEN_PRINT', 'FLATBED', 'ROLL_TO_ROLL', 'DESIGN',
-          'FLATBED_PRINTING', 'ROLL_TO_ROLL_PRINTING', 'PRODUCTION_ZUND', 'PRODUCTION_FINISHING', 'SHIPPING_QC'];
-        if (autoAdvanceFrom.includes(station)) {
-          await prisma.stationProgress.updateMany({
-            where: {
-              orderId: req.params.id,
-              station: nextStation as never,
-              status: 'NOT_STARTED',
-            },
-            data: {
-              status: 'IN_PROGRESS',
-              startedAt: new Date(),
-            },
-          });
-          broadcast({ type: 'STATION_UPDATED', payload: { orderId: req.params.id, station: nextStation, status: 'IN_PROGRESS' }, timestamp: new Date() });
-        }
-      }
-    }
+    await autoAdvanceNextStationIfNeeded(req.params.id, station, designOnlyCompleted);
   } catch (err) {
     console.warn(`Auto-advance warning for order ${req.params.id}:`, err);
   }
@@ -2256,6 +2443,7 @@ ordersRouter.put('/revision-requests/:revisionId/resolve', async (req: AuthReque
       where: { orderId: revision.orderId, station: 'DESIGN' },
       data: { status: 'COMPLETED', completedAt: new Date(), completedById: userId },
     });
+    await completeDesignOnlyOrderIfNeeded(revision.orderId, userId);
     broadcast({ type: 'STATION_UPDATED', payload: { orderId: revision.orderId, station: 'DESIGN', status: 'COMPLETED' }, timestamp: new Date() });
   }
 
@@ -2352,6 +2540,7 @@ ordersRouter.post('/:id/proof-status', async (req: AuthRequest, res: Response) =
       update: { status: 'COMPLETED', completedAt: new Date(), completedById: userId },
       create: { orderId: id, station: 'DESIGN', status: 'COMPLETED', completedAt: new Date(), completedById: userId },
     });
+    const designOnlyCompleted = await completeDesignOnlyOrderIfNeeded(id, userId);
 
     broadcast({
       type: 'STATION_COMPLETED',
@@ -2359,7 +2548,7 @@ ordersRouter.post('/:id/proof-status', async (req: AuthRequest, res: Response) =
       timestamp: new Date(),
     });
 
-    return res.json({ success: true, data: { status: 'COMPLETED' } });
+    return res.json({ success: true, data: { status: 'COMPLETED', designOnly: designOnlyCompleted } });
   }
 
   throw BadRequestError('Invalid proof status. Use SENT, APPROVED, or COMPLETED');
@@ -2509,3 +2698,100 @@ ordersRouter.post('/:id/shipping-qc', async (req: AuthRequest, res: Response) =>
 
   res.json({ success: true, data: { allPassed, checks } });
 });
+
+// ─── Fix Missing Printing Routes ───────────────────────
+ordersRouter.post('/batch/fix-printing-routing', async (req: AuthRequest, res: Response) => {
+  const { orderIds } = req.body;
+  const userId = req.userId!;
+
+  if (!Array.isArray(orderIds) || orderIds.length === 0) {
+    throw BadRequestError('orderIds array is required');
+  }
+
+  const orders = await prisma.workOrder.findMany({
+    where: { id: { in: orderIds } },
+    select: { id: true, orderNumber: true, routing: true },
+  });
+
+  if (orders.length === 0) {
+    throw BadRequestError('No orders found');
+  }
+
+  const PRINTING_STATIONS = new Set([
+    'ROLL_TO_ROLL',
+    'FLATBED',
+    'SCREEN_PRINT',
+  ]);
+
+  // Find orders missing printing stations
+  const ordersNeedingFix = orders.filter((o) =>
+    !o.routing.some((s: string) => PRINTING_STATIONS.has(s))
+  );
+
+  if (ordersNeedingFix.length === 0) {
+    return res.json({
+      success: true,
+      data: { fixed: 0, message: 'All selected orders already have printing stations' },
+    });
+  }
+
+  // Fix each order by adding ROLL_TO_ROLL and FLATBED to routing
+  const { applyRoutingDefaults } = await import('../lib/routing-defaults.js');
+
+  const updated = await Promise.all(
+    ordersNeedingFix.map(async (order) => {
+      const newRouting = applyRoutingDefaults([
+        ...(order.routing as PrintingMethod[]),
+        'ROLL_TO_ROLL' as PrintingMethod,
+        'FLATBED' as PrintingMethod,
+      ]);
+
+      // Update routing
+      await prisma.workOrder.update({
+        where: { id: order.id },
+        data: { routing: newRouting },
+      });
+
+      // Create missing stationProgress rows
+      const existingProgress = await prisma.stationProgress.findMany({
+        where: { orderId: order.id },
+        select: { station: true },
+      });
+
+      const existingStations = new Set(existingProgress.map((p) => p.station));
+      const newStations = newRouting.filter((s) => !existingStations.has(s));
+
+      if (newStations.length > 0) {
+        await prisma.stationProgress.createMany({
+          data: newStations.map((station) => ({
+            orderId: order.id,
+            station: station as PrintingMethod,
+            status: 'NOT_STARTED',
+          })),
+        });
+      }
+
+      // Log activity
+      await logActivity({
+        action: 'ROUTING_FIXED',
+        entityType: EntityType.WORK_ORDER,
+        entityId: order.id,
+        entityName: order.orderNumber,
+        description: `Added missing printing stations (${newRouting.join(', ')})`,
+        userId,
+      });
+
+      return { orderId: order.id, orderNumber: order.orderNumber, newRouting };
+    })
+  );
+
+  // Broadcast update
+  broadcast({
+    type: 'ORDERS_UPDATED',
+    payload: updated.map((u) => ({ id: u.orderId, routing: u.newRouting })),
+    timestamp: new Date(),
+  });
+
+  res.json({ success: true, data: { fixed: updated.length, orders: updated } });
+});
+
