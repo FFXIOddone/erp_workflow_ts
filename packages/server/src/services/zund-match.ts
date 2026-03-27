@@ -1,9 +1,9 @@
 /**
  * Zund Job Matching Service
- * 
+ *
  * Links ERP work orders to Zund cut jobs by matching print file names
  * to Zund job names (since Zund doesn't track WO numbers)
- * 
+ *
  * File naming patterns detected:
  * - PRINTCUT.pdf / PRINTANDCUT.pdf / PRINT_CUT.pdf
  * - PRINT-CUT / PRINT(CUT) / etc.
@@ -60,7 +60,11 @@ export function extractCutId(name: string): string | null {
   // Try Thrive/Zund CutID format: _0DGPMDD2632 or _1365JIN263K
   // 7+ alphanumeric chars containing both letters and digits (not pure numeric or pure alpha)
   const thriveMatch = clean.match(/[_-]([A-Z0-9]{7,})$/i);
-  if (thriveMatch && /\d/.test(thriveMatch[1]) && /[A-Za-z]/.test(thriveMatch[1])) return thriveMatch[1];
+  if (thriveMatch && /\d/.test(thriveMatch[1]) && /[A-Za-z]/.test(thriveMatch[1]))
+    return thriveMatch[1];
+
+  // Fallback: the entire name IS the CutID (no prefix) — e.g. bare ZCC filename "0DGPMDD2632.zcc"
+  if (/^[A-Z0-9]{7,}$/i.test(clean) && /\d/.test(clean) && /[A-Za-z]/.test(clean)) return clean;
 
   return null;
 }
@@ -70,20 +74,22 @@ export function extractCutId(name: string): string | null {
  * Removes common suffixes, extensions, and formatting
  */
 export function normalizeJobName(name: string): string {
-  return name
-    // Remove file extensions
-    .replace(/\.(pdf|ai|eps|svg|zcc|xml|xml_tmp)$/i, '')
-    // Remove ONYX-specific suffixes
-    .replace(/_P\d+_T\d+_\d+_\d+.*$/i, '') // _P1_T1_169_629_132221...
-    .replace(/_\d{10,}$/i, '') // Long numeric suffix
-    .replace(/[_-]copy\d*$/i, '') // -copy, _copy2, etc.
-    // Remove Thrive/Zund CutID suffixes (7+ alphanumeric with mixed letters+digits at end)
-    .replace(/_(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{7,}$/i, '') // _0RWRGPI2624, _1365JIN263K
-    .replace(/\([^)]+\)$/, '') // (S&R) at end
-    // Normalize separators
-    .replace(/[-_]+/g, '_')
-    .toLowerCase()
-    .trim();
+  return (
+    name
+      // Remove file extensions
+      .replace(/\.(pdf|ai|eps|svg|zcc|xml|xml_tmp)$/i, '')
+      // Remove ONYX-specific suffixes
+      .replace(/_P\d+_T\d+_\d+_\d+.*$/i, '') // _P1_T1_169_629_132221...
+      .replace(/_\d{10,}$/i, '') // Long numeric suffix
+      .replace(/[_-]copy\d*$/i, '') // -copy, _copy2, etc.
+      // Remove Thrive/Zund CutID suffixes (7+ alphanumeric with mixed letters+digits at end)
+      .replace(/_(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{7,}$/i, '') // _0RWRGPI2624, _1365JIN263K
+      .replace(/\([^)]+\)$/, '') // (S&R) at end
+      // Normalize separators
+      .replace(/[-_]+/g, '_')
+      .toLowerCase()
+      .trim()
+  );
 }
 
 /**
@@ -97,13 +103,13 @@ export function extractIdentifiers(name: string): {
   isNesting: boolean;
 } {
   const normalized = normalizeJobName(name);
-  const isPrintCut = PRINT_CUT_PATTERNS.some(p => p.test(name));
+  const isPrintCut = PRINT_CUT_PATTERNS.some((p) => p.test(name));
   const isNesting = NESTING_PATTERN.test(name);
-  
+
   // Extract dimensions like "5x13" or "6.37x33.07"
   const dimMatch = name.match(/(\d+\.?\d*)\s*x\s*(\d+\.?\d*)/i);
   const dimensions = dimMatch ? `${dimMatch[1]}x${dimMatch[2]}` : undefined;
-  
+
   // Extract product name (after dimensions, before PRINTCUT/etc)
   let productName: string | undefined;
   if (dimMatch) {
@@ -118,7 +124,7 @@ export function extractIdentifiers(name: string): {
       productName = cleanProduct;
     }
   }
-  
+
   return { normalized, dimensions, productName, isPrintCut, isNesting };
 }
 
@@ -126,16 +132,19 @@ export function extractIdentifiers(name: string): {
  * Get completed Zund jobs from statistics database (both Zund 1 and Zund 2).
  * Delegates to zund-stats.ts which handles SMB copy, caching, and timeouts.
  */
-export async function getZundCompletedJobs(daysBack = 30): Promise<Array<{
-  jobId: number;
-  jobName: string;
-  productionStart: Date;
-  productionEnd: Date;
-  copyDone: number;
-  copyTotal: number;
-  cutter: string;
-}>> {
-  const { getAvailableZunds, getRecentJobs, isZundStatsAccessible } = await import('./zund-stats.js');
+export async function getZundCompletedJobs(daysBack = 30): Promise<
+  Array<{
+    jobId: number;
+    jobName: string;
+    productionStart: Date;
+    productionEnd: Date;
+    copyDone: number;
+    copyTotal: number;
+    cutter: string;
+  }>
+> {
+  const { getAvailableZunds, getRecentJobs, isZundStatsAccessible } =
+    await import('./zund-stats.js');
   const allJobs: Array<{
     jobId: number;
     jobName: string;
@@ -155,8 +164,8 @@ export async function getZundCompletedJobs(daysBack = 30): Promise<Array<{
       const jobs = await getRecentJobs(zundId, 500);
       const cutoff = Date.now() - daysBack * 24 * 60 * 60 * 1000;
       return jobs
-        .filter(j => new Date(j.productionStart).getTime() > cutoff)
-        .map(j => ({
+        .filter((j) => new Date(j.productionStart).getTime() > cutoff)
+        .map((j) => ({
           jobId: j.jobId,
           jobName: j.jobName,
           productionStart: new Date(j.productionStart),
@@ -180,17 +189,19 @@ export async function getZundCompletedJobs(daysBack = 30): Promise<Array<{
 /**
  * Get print job file names from Thrive that have PRINTCUT patterns
  */
-export async function getPrintCutJobsFromThrive(): Promise<Array<{
-  workOrderNumber: string;
-  orderId?: string;
-  fileName: string;
-  normalizedName: string;
-  printer: string;
-}>> {
+export async function getPrintCutJobsFromThrive(): Promise<
+  Array<{
+    workOrderNumber: string;
+    orderId?: string;
+    fileName: string;
+    normalizedName: string;
+    printer: string;
+  }>
+> {
   // Import from thrive service
   const { thriveService } = await import('./thrive.js');
   const { printJobs } = await thriveService.getAllJobs();
-  
+
   const results: Array<{
     workOrderNumber: string;
     orderId?: string;
@@ -198,13 +209,13 @@ export async function getPrintCutJobsFromThrive(): Promise<Array<{
     normalizedName: string;
     printer: string;
   }> = [];
-  
+
   // Link to orders
   const linked = await thriveService.linkJobsToWorkOrders(printJobs);
-  
+
   for (const { job, workOrder } of linked) {
     const info = extractIdentifiers(job.jobName);
-    
+
     if (info.isPrintCut && job.workOrderNumber) {
       results.push({
         workOrderNumber: job.workOrderNumber,
@@ -215,7 +226,7 @@ export async function getPrintCutJobsFromThrive(): Promise<Array<{
       });
     }
   }
-  
+
   return results;
 }
 
@@ -224,30 +235,30 @@ export async function getPrintCutJobsFromThrive(): Promise<Array<{
  */
 export async function matchZundJobsToOrders(daysBack = 30): Promise<ZundJobMatch[]> {
   console.log(`Matching Zund jobs from last ${daysBack} days...`);
-  
+
   // Get Zund completed jobs
   const zundJobs = await getZundCompletedJobs(daysBack);
   console.log(`Found ${zundJobs.length} completed Zund jobs`);
-  
+
   // Get Thrive print jobs with PRINTCUT patterns
   const printCutJobs = await getPrintCutJobsFromThrive();
   console.log(`Found ${printCutJobs.length} print jobs with PRINTCUT patterns`);
-  
+
   // Build lookup maps: normalized name → WO and cutId → WO
-  const printJobMap = new Map<string, typeof printCutJobs[0]>();
-  const cutIdMap = new Map<string, typeof printCutJobs[0]>();
+  const printJobMap = new Map<string, (typeof printCutJobs)[0]>();
+  const cutIdMap = new Map<string, (typeof printCutJobs)[0]>();
   for (const pj of printCutJobs) {
     printJobMap.set(pj.normalizedName, pj);
     // Index by CutID for highest-confidence matching
     const cutId = extractCutId(pj.fileName);
     if (cutId) cutIdMap.set(cutId.toLowerCase(), pj);
   }
-  
+
   const results: ZundJobMatch[] = [];
-  
+
   for (const zj of zundJobs) {
     const info = extractIdentifiers(zj.jobName);
-    
+
     const match: ZundJobMatch = {
       zundJobName: zj.jobName,
       zundJobId: zj.jobId,
@@ -256,7 +267,7 @@ export async function matchZundJobsToOrders(daysBack = 30): Promise<ZundJobMatch
       isNesting: info.isNesting,
       matchConfidence: 'possible',
     };
-    
+
     if (info.isNesting) {
       // Nesting jobs may contain multiple orders
       match.matchConfidence = 'nesting';
@@ -283,7 +294,10 @@ export async function matchZundJobsToOrders(daysBack = 30): Promise<ZundJobMatch
         } else {
           // Priority 3: Partial match - substring containment
           for (const [normalizedPrint, printJob] of printJobMap) {
-            if (info.normalized.includes(normalizedPrint) || normalizedPrint.includes(info.normalized)) {
+            if (
+              info.normalized.includes(normalizedPrint) ||
+              normalizedPrint.includes(info.normalized)
+            ) {
               match.matchedOrderNumber = printJob.workOrderNumber;
               match.matchedOrderId = printJob.orderId;
               match.matchConfidence = 'partial';
@@ -293,19 +307,19 @@ export async function matchZundJobsToOrders(daysBack = 30): Promise<ZundJobMatch
         }
       }
     }
-    
+
     // If we have an order ID, get customer name
     if (match.matchedOrderId) {
       const order = await prisma.workOrder.findUnique({
         where: { id: match.matchedOrderId },
-        select: { customerName: true }
+        select: { customerName: true },
       });
       match.matchedCustomerName = order?.customerName;
     }
-    
+
     results.push(match);
   }
-  
+
   return results;
 }
 
@@ -314,22 +328,24 @@ export async function matchZundJobsToOrders(daysBack = 30): Promise<ZundJobMatch
  */
 export async function getZundMatchingSummary(daysBack = 30) {
   const matches = await matchZundJobsToOrders(daysBack);
-  
+
   const summary = {
     total: matches.length,
-    exact: matches.filter(m => m.matchConfidence === 'exact').length,
-    partial: matches.filter(m => m.matchConfidence === 'partial').length,
-    possible: matches.filter(m => m.matchConfidence === 'possible').length,
-    nesting: matches.filter(m => m.matchConfidence === 'nesting').length,
+    exact: matches.filter((m) => m.matchConfidence === 'exact').length,
+    partial: matches.filter((m) => m.matchConfidence === 'partial').length,
+    possible: matches.filter((m) => m.matchConfidence === 'possible').length,
+    nesting: matches.filter((m) => m.matchConfidence === 'nesting').length,
     matchRate: 0,
     topMatches: [] as ZundJobMatch[],
     nestingJobs: [] as ZundJobMatch[],
   };
-  
+
   summary.matchRate = ((summary.exact + summary.partial) / summary.total) * 100;
-  summary.topMatches = matches.filter(m => m.matchConfidence === 'exact' || m.matchConfidence === 'partial').slice(0, 10);
-  summary.nestingJobs = matches.filter(m => m.isNesting).slice(0, 10);
-  
+  summary.topMatches = matches
+    .filter((m) => m.matchConfidence === 'exact' || m.matchConfidence === 'partial')
+    .slice(0, 10);
+  summary.nestingJobs = matches.filter((m) => m.isNesting).slice(0, 10);
+
   return { summary, matches };
 }
 
