@@ -1,14 +1,14 @@
 /**
  * Thrive Integration Service
- * 
+ *
  * Monitors Onyx Thrive RIP queue files to track print jobs
  * and correlate them with ERP work orders.
- * 
+ *
  * Discovery:
  * - Thrive stores job data in QueueXML.Info files on network shares
  * - Work order numbers are embedded in file paths (pattern: WO#####)
  * - Multiple printers have separate queue folders
- * 
+ *
  * Folder Structures:
  * - Port City Signs (4-digit): \\wildesigns-fs1\Company Files\Safari\CustomerName\WO####_description\
  * - Wilde Signs (5-digit):     \\wildesigns-fs1\Company Files\CustomerName\YEAR\WO#####_...\
@@ -18,14 +18,15 @@ import { promises as fs } from 'fs';
 import { XMLParser } from 'fast-xml-parser';
 import path from 'path';
 import { prisma } from '../db/client.js';
+import { normalizeJobName } from './zund-match.js';
 
 // Track last known file sizes to detect truncated/partial reads
 const lastKnownSizes = new Map<string, number>();
 
 // File server base paths
 const FILE_PATHS = {
-  safari: '\\\\wildesigns-fs1\\Company Files\\Safari',       // Port City Signs (4-digit WO#)
-  wilde: '\\\\wildesigns-fs1\\Company Files',                // Wilde Signs (5-digit WO#)
+  safari: '\\\\wildesigns-fs1\\Company Files\\Safari', // Port City Signs (4-digit WO#)
+  wilde: '\\\\wildesigns-fs1\\Company Files', // Wilde Signs (5-digit WO#)
 };
 
 // Equipment configuration - discovered via network scan
@@ -37,14 +38,16 @@ export const THRIVE_CONFIG = {
       ip: '192.168.254.53',
       share: '\\\\192.168.254.53\\Thrive22Input_WILDE-FLATBEDPC',
       printers: [
-        { 
+        {
           name: 'HP Scitex FB700',
-          queuePath: '\\\\192.168.254.53\\Thrive22Input_WILDE-FLATBEDPC\\HP Scitex FB700\\Info\\QueueXML.Info',
+          queuePath:
+            '\\\\192.168.254.53\\Thrive22Input_WILDE-FLATBEDPC\\HP Scitex FB700\\Info\\QueueXML.Info',
           printingMethod: 'FLATBED',
         },
         {
           name: 'HP Scitex FB700-2',
-          queuePath: '\\\\192.168.254.53\\Thrive22Input_WILDE-FLATBEDPC\\HP Scitex FB700-2\\Info\\QueueXML.Info',
+          queuePath:
+            '\\\\192.168.254.53\\Thrive22Input_WILDE-FLATBEDPC\\HP Scitex FB700-2\\Info\\QueueXML.Info',
           printingMethod: 'FLATBED',
         },
       ],
@@ -63,32 +66,38 @@ export const THRIVE_CONFIG = {
         },
         {
           name: 'HP Latex 570-2',
-          queuePath: '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\HP Latex 570-2\\Info\\QueueXML.Info',
+          queuePath:
+            '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\HP Latex 570-2\\Info\\QueueXML.Info',
           printingMethod: 'ROLL_TO_ROLL',
         },
         {
           name: 'HP Latex 800 W',
-          queuePath: '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\HP Latex 800 W\\Info\\QueueXML.Info',
+          queuePath:
+            '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\HP Latex 800 W\\Info\\QueueXML.Info',
           printingMethod: 'ROLL_TO_ROLL',
         },
         {
           name: 'HP Scitex FB700 (RIP2)',
-          queuePath: '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\HP Scitex FB700\\Info\\QueueXML.Info',
+          queuePath:
+            '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\HP Scitex FB700\\Info\\QueueXML.Info',
           printingMethod: 'FLATBED',
         },
         {
           name: 'HP Scitex FB700-2 (RIP2)',
-          queuePath: '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\HP Scitex FB700-2\\Info\\QueueXML.Info',
+          queuePath:
+            '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\HP Scitex FB700-2\\Info\\QueueXML.Info',
           printingMethod: 'FLATBED',
         },
         {
           name: 'Mimaki JV33-160 A',
-          queuePath: '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\Mimaki JV33-160 A\\Info\\QueueXML.Info',
+          queuePath:
+            '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\Mimaki JV33-160 A\\Info\\QueueXML.Info',
           printingMethod: 'ROLL_TO_ROLL',
         },
         {
           name: 'Mimaki JV33-160 B',
-          queuePath: '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\Mimaki JV33-160 B\\Info\\QueueXML.Info',
+          queuePath:
+            '\\\\192.168.254.77\\Thrive22Input_WS-RIP2\\Mimaki JV33-160 B\\Info\\QueueXML.Info',
           printingMethod: 'ROLL_TO_ROLL',
         },
       ],
@@ -96,12 +105,26 @@ export const THRIVE_CONFIG = {
     },
   ],
   zundMachines: [
-    { id: 'zund-1', ip: '192.168.254.38', name: 'Zund 1', statisticsPath: '\\\\192.168.254.38\\Statistics' },
-    { id: 'zund-2', ip: '192.168.254.28', name: 'Zund 2', statisticsPath: '\\\\192.168.254.28\\Statistics' },
+    {
+      id: 'zund-1',
+      ip: '192.168.254.38',
+      name: 'Zund 1',
+      statisticsPath: '\\\\192.168.254.38\\Statistics',
+    },
+    {
+      id: 'zund-2',
+      ip: '192.168.254.28',
+      name: 'Zund 2',
+      statisticsPath: '\\\\192.168.254.28\\Statistics',
+    },
   ],
   fiery: {
     ip: '192.168.254.57',
+    // exportPath = OUTPUT folder where Fiery writes processed files (RTL, JDF, ZCC) — READ ONLY
     exportPath: '\\\\192.168.254.57\\EFI Export Folder',
+    // hotfolderPath = INPUT folder where ERP drops PDFs for Fiery to process — must be writable
+    // Fiery machine needs a Hot Folder configured to monitor: C:\Users\Public\Documents\VUTEk Jobs
+    hotfolderPath: '\\\\192.168.254.57\\Users\\Public\\Documents\\VUTEk Jobs',
   },
   filePaths: FILE_PATHS,
 };
@@ -123,6 +146,7 @@ export interface ThriveJob {
   jobGuid: string;
   jobName: string;
   fileName: string;
+  cutId?: string | null;
   workOrderNumber?: string;
   status: string;
   statusCode: number;
@@ -143,6 +167,7 @@ export interface ThriveJob {
 export interface ThriveCutJob {
   jobName: string;
   fileName: string;
+  filePath?: string;
   workOrderNumber?: string;
   device: string;
   printer: string;
@@ -164,7 +189,7 @@ export interface ParsedJobInfo {
 
 /**
  * Extract work order info from file path or job name
- * 
+ *
  * Port City Signs (Safari): \\wildesigns-fs1\Company Files\Safari\CustomerName\WO####_description\PRINT\file.pdf
  * Wilde Signs:              \\wildesigns-fs1\Company Files\CustomerName\2026\WO#####_description\PRINT\file.pdf
  */
@@ -176,14 +201,14 @@ export function parseJobInfo(text: string): ParsedJobInfo {
     jobDescription: null,
     isSafariPath: false,
   };
-  
+
   // Normalize path separators
   const normalized = text.replace(/\//g, '\\');
-  
+
   // Check if it's a Safari path (Port City Signs)
   const isSafari = normalized.toLowerCase().includes('\\safari\\');
   result.isSafariPath = isSafari;
-  
+
   // Extract WO number
   const woMatch = normalized.match(/WO(\d{4,6})/i);
   if (woMatch) {
@@ -198,12 +223,12 @@ export function parseJobInfo(text: string): ParsedJobInfo {
       result.companyBrand = numMatch[1].length === 4 ? 'PORT_CITY_SIGNS' : 'WILDE_SIGNS';
     }
   }
-  
+
   // Override brand detection based on folder structure
   if (isSafari) {
     result.companyBrand = 'PORT_CITY_SIGNS';
   }
-  
+
   // Extract customer name from path
   if (isSafari) {
     // Safari path: \Safari\CustomerName\WO####_description\
@@ -218,16 +243,13 @@ export function parseJobInfo(text: string): ParsedJobInfo {
       result.customerName = wildeMatch[1].replace(/_/g, ' ').trim();
     }
   }
-  
+
   // Extract job description from WO folder name
   const descMatch = normalized.match(/WO\d{4,6}[-_]([^\\]+)/i);
   if (descMatch) {
-    result.jobDescription = descMatch[1]
-      .replace(/[-_]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    result.jobDescription = descMatch[1].replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
   }
-  
+
   return result;
 }
 
@@ -251,16 +273,16 @@ export async function parseQueueFile(queuePath: string): Promise<ThriveJob[]> {
     };
 
     let content = await readAndClean();
-    
+
     // File-size sanity check: if the file shrank dramatically vs last read,
     // it may be mid-write — wait briefly and re-read
     const lastSize = lastKnownSizes.get(queuePath) ?? 0;
     if (content.length < 100 && lastSize > 500) {
-      await new Promise(r => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, 250));
       content = await readAndClean();
     }
     lastKnownSizes.set(queuePath, content.length);
-    
+
     // Guard against empty or whitespace-only files
     if (!content || !content.trim()) {
       return [];
@@ -271,21 +293,21 @@ export async function parseQueueFile(queuePath: string): Promise<ThriveJob[]> {
     if (!trimmed.startsWith('<')) {
       return [];
     }
-    
+
     const parser = new XMLParser({
       ignoreAttributes: false,
       attributeNamePrefix: '',
       allowBooleanAttributes: true,
       parseAttributeValue: false, // Keep as strings to avoid parsing issues
     });
-    
+
     let result: any;
     try {
       result = parser.parse(content);
     } catch (parseError) {
       // Thrive queue files can be temporarily invalid while being written —
       // retry once after a short delay before giving up
-      await new Promise(r => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, 250));
       content = await readAndClean();
       lastKnownSizes.set(queuePath, content.length);
       if (!content.trim() || !content.trim().startsWith('<')) return [];
@@ -298,13 +320,13 @@ export async function parseQueueFile(queuePath: string): Promise<ThriveJob[]> {
       }
     }
     const jobs: ThriveJob[] = [];
-    
+
     const jobList = result.queue_info?.jobs?.job;
     if (!jobList) return jobs;
-    
+
     // Ensure it's an array
     const jobArray = Array.isArray(jobList) ? jobList : [jobList];
-    
+
     for (const job of jobArray) {
       const id = job.id || {};
       const time = job.time || {};
@@ -312,7 +334,7 @@ export async function parseQueueFile(queuePath: string): Promise<ThriveJob[]> {
       const print = job.print || {};
       const size = job.size || {};
       const metadata = job.metadata || {};
-      
+
       const thriveJob: ThriveJob = {
         jobGuid: id.job_guid || '',
         jobName: id.job_name || '',
@@ -327,29 +349,28 @@ export async function parseQueueFile(queuePath: string): Promise<ThriveJob[]> {
         numCopies: parseInt(print.numcopies) || 1,
         inkTotal: job.ink_total || undefined,
         inkCoverage: job.ink_coverage?.replace('%', '') || undefined,
-        jobSize: size.crop_size
-          ? size.crop_size.replace(/(\d+\.\d{3})\d*/g, '$1')
-          : undefined,
+        jobSize: size.crop_size ? size.crop_size.replace(/(\d+\.\d{3})\d*/g, '$1') : undefined,
       };
-      
+
       // Parse work order info from file path (preferred) or job name
       const fileInfo = parseJobInfo(thriveJob.fileName);
       const nameInfo = parseJobInfo(thriveJob.jobName);
-      
+
       // Prefer info from file path, fall back to job name
       thriveJob.workOrderNumber = fileInfo.workOrderNumber ?? nameInfo.workOrderNumber ?? undefined;
-      thriveJob.customerName = fileInfo.customerName ?? nameInfo.customerName ?? (metadata.customer_name || undefined);
+      thriveJob.customerName =
+        fileInfo.customerName ?? nameInfo.customerName ?? (metadata.customer_name || undefined);
       thriveJob.companyBrand = fileInfo.companyBrand ?? nameInfo.companyBrand ?? undefined;
       thriveJob.jobDescription = fileInfo.jobDescription ?? nameInfo.jobDescription ?? undefined;
-      
+
       // If customer provided in metadata, use it
       if (metadata.customer_name) {
         thriveJob.customerName = metadata.customer_name;
       }
-      
+
       jobs.push(thriveJob);
     }
-    
+
     return jobs;
   } catch (error) {
     console.error(`Error parsing queue file ${queuePath}:`, error);
@@ -363,20 +384,21 @@ export async function parseQueueFile(queuePath: string): Promise<ThriveJob[]> {
 export async function parseCutFile(filePath: string): Promise<ThriveCutJob | null> {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
-    
+
     const parser = new XMLParser({
       ignoreAttributes: false,
       attributeNamePrefix: '',
     });
-    
+
     const result = parser.parse(content);
     const cutList = result['cut-list'];
-    
+
     if (!cutList) return null;
-    
+
     const cutJob: ThriveCutJob = {
       jobName: cutList.job || '',
       fileName: cutList.filename || '',
+      filePath,
       device: cutList.device || '',
       printer: cutList.printer || '',
       media: cutList.media || '',
@@ -384,13 +406,13 @@ export async function parseCutFile(filePath: string): Promise<ThriveCutJob | nul
       height: parseFloat(cutList.height) || 0,
       guid: cutList.GUID || '',
     };
-    
+
     // Parse work order info from job name
     const jobInfo = parseJobInfo(cutJob.jobName);
     cutJob.workOrderNumber = jobInfo.workOrderNumber ?? undefined;
     cutJob.customerName = jobInfo.customerName ?? undefined;
     cutJob.companyBrand = jobInfo.companyBrand ?? undefined;
-    
+
     return cutJob;
   } catch (error) {
     console.error(`Error parsing cut file ${filePath}:`, error);
@@ -404,8 +426,8 @@ export async function parseCutFile(filePath: string): Promise<ThriveCutJob | nul
 export async function scanCutFolder(cutterPath: string): Promise<ThriveCutJob[]> {
   try {
     const files = await fs.readdir(cutterPath);
-    const xmlFiles = files.filter(f => f.endsWith('.xml_tmp') || f.endsWith('.xml'));
-    
+    const xmlFiles = files.filter((f) => f.endsWith('.xml_tmp') || f.endsWith('.xml'));
+
     const jobs: ThriveCutJob[] = [];
     for (const file of xmlFiles) {
       const job = await parseCutFile(path.join(cutterPath, file));
@@ -413,7 +435,7 @@ export async function scanCutFolder(cutterPath: string): Promise<ThriveCutJob[]>
         jobs.push(job);
       }
     }
-    
+
     return jobs;
   } catch (error) {
     console.error(`Error scanning cut folder ${cutterPath}:`, error);
@@ -436,8 +458,8 @@ export async function getAllThriveJobs(): Promise<{
     for (const printer of machine.printers) {
       printTasks.push(
         parseQueueFile(printer.queuePath)
-          .then(jobs => ({ jobs }))
-          .catch(err => {
+          .then((jobs) => ({ jobs }))
+          .catch((err) => {
             console.warn(`Could not read queue for ${printer.name}:`, err);
             return { jobs: [] as ThriveJob[] };
           })
@@ -446,8 +468,8 @@ export async function getAllThriveJobs(): Promise<{
     if (machine.cutterPath) {
       cutTasks.push(
         scanCutFolder(machine.cutterPath)
-          .then(jobs => ({ jobs }))
-          .catch(err => {
+          .then((jobs) => ({ jobs }))
+          .catch((err) => {
             console.warn(`Could not read cutter folder for ${machine.name}:`, err);
             return { jobs: [] as ThriveCutJob[] };
           })
@@ -460,8 +482,21 @@ export async function getAllThriveJobs(): Promise<{
     Promise.all(cutTasks),
   ]);
 
-  const printJobs = printResults.flatMap(r => r.jobs);
-  const cutJobs = cutResults.flatMap(r => r.jobs);
+  const printJobs = printResults.flatMap((r) => r.jobs);
+  const cutJobs = cutResults.flatMap((r) => r.jobs);
+
+  try {
+    const jobLogEntries = await getAllThriveJobLogEntries();
+    for (const entry of jobLogEntries) {
+      if (!entry.cutId) continue;
+      const matchedJob = matchThriveQueueJobToLogEntry(entry, printJobs);
+      if (matchedJob && !matchedJob.cutId) {
+        matchedJob.cutId = entry.cutId;
+      }
+    }
+  } catch {
+    // JobLog enrichment is best-effort. Live queue data should still return without it.
+  }
 
   return { printJobs, cutJobs };
 }
@@ -470,18 +505,20 @@ export async function getAllThriveJobs(): Promise<{
  * Link Thrive jobs to ERP work orders
  * Enhanced to match by order number and optionally customer name
  */
-export async function linkJobsToWorkOrders(jobs: ThriveJob[]): Promise<{
-  job: ThriveJob;
-  workOrder: { 
-    id: string; 
-    orderNumber: string; 
-    customerName: string;
-    companyBrand: string;
-    status: string;
-    dueDate: Date | null;
-    description: string | null;
-  } | null;
-}[]> {
+export async function linkJobsToWorkOrders(jobs: ThriveJob[]): Promise<
+  {
+    job: ThriveJob;
+    workOrder: {
+      id: string;
+      orderNumber: string;
+      customerName: string;
+      companyBrand: string;
+      status: string;
+      dueDate: Date | null;
+      description: string | null;
+    } | null;
+  }[]
+> {
   // Collect all unique WO numbers from jobs
   const woNumbers = new Set<string>();
   for (const job of jobs) {
@@ -491,7 +528,7 @@ export async function linkJobsToWorkOrders(jobs: ThriveJob[]): Promise<{
   }
 
   if (woNumbers.size === 0) {
-    return jobs.map(job => ({ job, workOrder: null }));
+    return jobs.map((job) => ({ job, workOrder: null }));
   }
 
   // Build OR conditions for all WO numbers in a single query
@@ -501,13 +538,13 @@ export async function linkJobsToWorkOrders(jobs: ThriveJob[]): Promise<{
       orConditions.push(
         { orderNumber: num },
         { orderNumber: `WO${num}` },
-        { orderNumber: { endsWith: num } },
+        { orderNumber: { endsWith: num } }
       );
     } else {
       orConditions.push(
         { orderNumber: num },
         { orderNumber: `WO${num}` },
-        { orderNumber: { contains: num } },
+        { orderNumber: { contains: num } }
       );
     }
   }
@@ -543,7 +580,7 @@ export async function linkJobsToWorkOrders(jobs: ThriveJob[]): Promise<{
   }
 
   // Map jobs to results
-  return jobs.map(job => {
+  return jobs.map((job) => {
     const workOrder = job.workOrderNumber ? (woCache.get(job.workOrderNumber) ?? null) : null;
     return { job, workOrder };
   });
@@ -552,29 +589,31 @@ export async function linkJobsToWorkOrders(jobs: ThriveJob[]): Promise<{
 /**
  * Link cut jobs to ERP work orders
  */
-export async function linkCutJobsToWorkOrders(jobs: ThriveCutJob[]): Promise<{
-  job: ThriveCutJob;
-  workOrder: { 
-    id: string; 
-    orderNumber: string; 
-    customerName: string;
-    companyBrand: string;
-    status: string;
-  } | null;
-}[]> {
+export async function linkCutJobsToWorkOrders(jobs: ThriveCutJob[]): Promise<
+  {
+    job: ThriveCutJob;
+    workOrder: {
+      id: string;
+      orderNumber: string;
+      customerName: string;
+      companyBrand: string;
+      status: string;
+    } | null;
+  }[]
+> {
   const results = [];
   const woCache = new Map<string, any>();
-  
+
   for (const job of jobs) {
     let workOrder = null;
-    
+
     if (job.workOrderNumber) {
       const cacheKey = job.workOrderNumber;
       if (woCache.has(cacheKey)) {
         workOrder = woCache.get(cacheKey);
       } else {
         const where: any = {};
-        
+
         if (job.workOrderNumber.length === 4) {
           where.OR = [
             { orderNumber: job.workOrderNumber },
@@ -591,7 +630,7 @@ export async function linkCutJobsToWorkOrders(jobs: ThriveCutJob[]): Promise<{
             { orderNumber: { contains: job.workOrderNumber } },
           ];
         }
-        
+
         const found = await prisma.workOrder.findFirst({
           where,
           select: {
@@ -605,17 +644,17 @@ export async function linkCutJobsToWorkOrders(jobs: ThriveCutJob[]): Promise<{
             createdAt: 'desc',
           },
         });
-        
+
         if (found) {
           workOrder = found;
           woCache.set(cacheKey, found);
         }
       }
     }
-    
+
     results.push({ job, workOrder });
   }
-  
+
   return results;
 }
 
@@ -628,7 +667,7 @@ export async function syncJobStatus(
   jobGuid: string,
   workOrderId: string,
   status: number,
-  printerName?: string,
+  printerName?: string
 ): Promise<{ updated: boolean; station?: string }> {
   // Status 32 = Printed means the job completed on the RIP
   if (status < 32) {
@@ -640,7 +679,7 @@ export async function syncJobStatus(
   if (printerName) {
     for (const machine of THRIVE_CONFIG.machines) {
       const printer = machine.printers.find(
-        (p) => p.name.toLowerCase() === printerName.toLowerCase(),
+        (p) => p.name.toLowerCase() === printerName.toLowerCase()
       );
       if (printer) {
         station = printer.printingMethod;
@@ -657,12 +696,15 @@ export async function syncJobStatus(
     });
     if (order) {
       const routing = order.routing as string[];
-      station = routing.find((s) => ['FLATBED', 'ROLL_TO_ROLL', 'SCREEN_PRINT'].includes(s)) || null;
+      station =
+        routing.find((s) => ['FLATBED', 'ROLL_TO_ROLL', 'SCREEN_PRINT'].includes(s)) || null;
     }
   }
 
   if (!station) {
-    console.warn(`syncJobStatus: Could not determine station for job ${jobGuid} on order ${workOrderId}`);
+    console.warn(
+      `syncJobStatus: Could not determine station for job ${jobGuid} on order ${workOrderId}`
+    );
     return { updated: false };
   }
 
@@ -681,7 +723,9 @@ export async function syncJobStatus(
     });
 
     if (result.count > 0) {
-      console.log(`syncJobStatus: Marked ${station} COMPLETED for order ${workOrderId} (job ${jobGuid})`);
+      console.log(
+        `syncJobStatus: Marked ${station} COMPLETED for order ${workOrderId} (job ${jobGuid})`
+      );
 
       // Auto-advance next station
       const order = await prisma.workOrder.findUnique({
@@ -691,7 +735,8 @@ export async function syncJobStatus(
       if (order) {
         const routing = order.routing as string[];
         const currentIdx = routing.indexOf(station);
-        const nextStation = currentIdx >= 0 && currentIdx < routing.length - 1 ? routing[currentIdx + 1] : null;
+        const nextStation =
+          currentIdx >= 0 && currentIdx < routing.length - 1 ? routing[currentIdx + 1] : null;
         if (nextStation) {
           await prisma.stationProgress.updateMany({
             where: {
@@ -756,6 +801,7 @@ export interface ThriveJobLogEntry {
   totalInk: string;
   cutId: string | null;
   machineId: string;
+  sourceFilePath?: string | null;
 }
 
 // ─── Cache for parsed JobLog entries ───────────────────
@@ -767,6 +813,166 @@ interface JobLogCache {
 }
 
 const jobLogCaches = new Map<string, JobLogCache>();
+const THRIVE_PRINT_QUEUE_CACHE_TTL_MS = 30_000;
+let thrivePrintQueueCache: { expiresAt: number; printJobs: ThriveJob[] } | null = null;
+
+function parseThrivePrintedTimestamp(printedTime: string): number | null {
+  const match = printedTime.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})$/);
+  if (!match) return null;
+
+  const [, month, day, year, hour, minute] = match;
+  const parsed = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    0,
+    0
+  );
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function parseThriveQueueTimestamp(
+  job: Pick<ThriveJob, 'createDate' | 'createTime'>
+): number | null {
+  if (!job.createDate || !job.createTime) return null;
+
+  const dateMatch = job.createDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const timeMatch = job.createTime.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!dateMatch || !timeMatch) return null;
+
+  const [, year, month, day] = dateMatch;
+  const [, hour, minute, second = '0'] = timeMatch;
+  const parsed = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+    0
+  );
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function getNormalizedThriveLogNames(
+  entry: Pick<ThriveJobLogEntry, 'fileName' | 'customizedName'>
+): string[] {
+  return Array.from(
+    new Set(
+      [entry.fileName, entry.customizedName]
+        .map((name) => normalizeJobName(name || ''))
+        .filter((name): name is string => Boolean(name))
+    )
+  );
+}
+
+function getNormalizedThriveQueueNames(job: Pick<ThriveJob, 'jobName' | 'fileName'>): string[] {
+  return Array.from(
+    new Set(
+      [job.jobName, path.basename(job.fileName || '')]
+        .map((name) => normalizeJobName(name || ''))
+        .filter((name): name is string => Boolean(name))
+    )
+  );
+}
+
+export function matchThriveQueueJobToLogEntry(
+  entry: Pick<ThriveJobLogEntry, 'fileName' | 'customizedName' | 'printer' | 'printedTime'>,
+  printJobs: ThriveJob[]
+): ThriveJob | null {
+  const targetNames = getNormalizedThriveLogNames(entry);
+  if (targetNames.length === 0 || printJobs.length === 0) return null;
+
+  const printedAt = parseThrivePrintedTimestamp(entry.printedTime);
+  const ranked = printJobs
+    .map((job) => {
+      const queueNames = getNormalizedThriveQueueNames(job);
+      const hasExactNameMatch = queueNames.some((name) => targetNames.includes(name));
+      const hasPartialNameMatch =
+        !hasExactNameMatch &&
+        queueNames.some((name) =>
+          targetNames.some((target) => name.includes(target) || target.includes(name))
+        );
+
+      let score = 0;
+      if (hasExactNameMatch) score += 100;
+      else if (hasPartialNameMatch) score += 60;
+
+      if (
+        entry.printer &&
+        job.printer &&
+        entry.printer.toLowerCase() === job.printer.toLowerCase()
+      ) {
+        score += 25;
+      }
+
+      const createdAt = parseThriveQueueTimestamp(job);
+      if (printedAt !== null && createdAt !== null) {
+        const diffMinutes = Math.abs(printedAt - createdAt) / 60_000;
+        if (diffMinutes <= 60) score += 15;
+        else if (diffMinutes <= 24 * 60) score += 10;
+        else if (diffMinutes <= 7 * 24 * 60) score += 5;
+      }
+
+      return {
+        job,
+        score,
+        createdAt,
+      };
+    })
+    .filter((candidate) => candidate.score >= 60)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+
+      if (printedAt !== null) {
+        const aDiff =
+          a.createdAt === null ? Number.POSITIVE_INFINITY : Math.abs(a.createdAt - printedAt);
+        const bDiff =
+          b.createdAt === null ? Number.POSITIVE_INFINITY : Math.abs(b.createdAt - printedAt);
+        if (aDiff !== bDiff) return aDiff - bDiff;
+      }
+
+      const aCreated = a.createdAt ?? 0;
+      const bCreated = b.createdAt ?? 0;
+      return bCreated - aCreated;
+    });
+
+  return ranked[0]?.job ?? null;
+}
+
+async function getCachedThrivePrintJobs(): Promise<ThriveJob[]> {
+  if (thrivePrintQueueCache && Date.now() < thrivePrintQueueCache.expiresAt) {
+    return thrivePrintQueueCache.printJobs;
+  }
+
+  const { printJobs } = await getAllThriveJobs();
+  thrivePrintQueueCache = {
+    expiresAt: Date.now() + THRIVE_PRINT_QUEUE_CACHE_TTL_MS,
+    printJobs,
+  };
+
+  return printJobs;
+}
+
+async function resolveThriveJobLogSourcePath(entry: ThriveJobLogEntry): Promise<string | null> {
+  if (entry.sourceFilePath !== undefined) {
+    return entry.sourceFilePath;
+  }
+
+  try {
+    const printJobs = await getCachedThrivePrintJobs();
+    const matchedQueueJob = matchThriveQueueJobToLogEntry(entry, printJobs);
+    entry.sourceFilePath = matchedQueueJob?.fileName || null;
+  } catch {
+    entry.sourceFilePath = null;
+  }
+
+  return entry.sourceFilePath;
+}
 
 /**
  * Parse a single ONYX JobLog.xml file into structured entries.
@@ -804,7 +1010,7 @@ async function parseJobLogXml(xmlPath: string, machineId: string): Promise<Thriv
       resolution: job.Resolution || '',
       ripTime: job.Rip_Time || '',
       printTime: job.Print_Time || '',
-      inkUsed: typeof job.Ink_Used === 'object' ? (job.Ink_Used['#text'] || '') : (job.Ink_Used || ''),
+      inkUsed: typeof job.Ink_Used === 'object' ? job.Ink_Used['#text'] || '' : job.Ink_Used || '',
       totalInk: job.Total_Ink || '',
       cutId: job.CutID || null,
       machineId,
@@ -821,34 +1027,36 @@ async function parseJobLogXml(xmlPath: string, machineId: string): Promise<Thriv
 export async function getAllThriveJobLogEntries(): Promise<ThriveJobLogEntry[]> {
   const allEntries: ThriveJobLogEntry[] = [];
 
-  await Promise.all(JOB_LOG_PATHS.map(async (log) => {
-    try {
-      const stat = await fs.stat(log.xmlPath);
-      const cached = jobLogCaches.get(log.id);
+  await Promise.all(
+    JOB_LOG_PATHS.map(async (log) => {
+      try {
+        const stat = await fs.stat(log.xmlPath);
+        const cached = jobLogCaches.get(log.id);
 
-      if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) {
-        allEntries.push(...cached.entries);
-        return;
+        if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) {
+          allEntries.push(...cached.entries);
+          return;
+        }
+
+        const entries = await parseJobLogXml(log.xmlPath, log.id);
+        const cutIdIndex = new Map<string, ThriveJobLogEntry>();
+        for (const e of entries) {
+          if (e.cutId) cutIdIndex.set(e.cutId, e);
+        }
+
+        jobLogCaches.set(log.id, {
+          mtime: stat.mtimeMs,
+          size: stat.size,
+          entries,
+          cutIdIndex,
+        });
+
+        allEntries.push(...entries);
+      } catch (err) {
+        console.warn(`Could not read job log ${log.xmlPath}:`, (err as Error).message);
       }
-
-      const entries = await parseJobLogXml(log.xmlPath, log.id);
-      const cutIdIndex = new Map<string, ThriveJobLogEntry>();
-      for (const e of entries) {
-        if (e.cutId) cutIdIndex.set(e.cutId, e);
-      }
-
-      jobLogCaches.set(log.id, {
-        mtime: stat.mtimeMs,
-        size: stat.size,
-        entries,
-        cutIdIndex,
-      });
-
-      allEntries.push(...entries);
-    } catch (err) {
-      console.warn(`Could not read job log ${log.xmlPath}:`, (err as Error).message);
-    }
-  }));
+    })
+  );
 
   return allEntries;
 }
@@ -863,7 +1071,10 @@ export async function findThriveJobByCutId(cutId: string): Promise<ThriveJobLogE
 
   for (const cache of jobLogCaches.values()) {
     const entry = cache.cutIdIndex.get(cutId);
-    if (entry) return entry;
+    if (entry) {
+      await resolveThriveJobLogSourcePath(entry);
+      return entry;
+    }
   }
 
   return null;

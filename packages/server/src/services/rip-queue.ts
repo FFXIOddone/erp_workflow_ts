@@ -1,15 +1,15 @@
 /**
  * RIP Queue Service
- * 
+ *
  * Manages the flow of print files from the ERP into RIP software hotfolders,
  * then monitors the RIP queue to track status changes through to completion.
- * 
+ *
  * Flow:
  *   1. User selects a print file from the WO folder → configures print settings
  *   2. ERP copies the file into the target Thrive/Fiery hotfolder
  *   3. Service monitors QueueXML.Info to detect status transitions
  *   4. RipJob record is updated with timestamps for KPI tracking
- * 
+ *
  * The ERP COPIES files — it never moves or deletes the originals.
  */
 
@@ -17,6 +17,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { prisma } from '../db/client.js';
 import { THRIVE_CONFIG, parseQueueFile, type ThriveJob } from './thrive.js';
+import { extractCutId } from './zund-match.js';
 import { broadcast } from '../ws/server.js';
 
 // ─── Types ────────────────────────────────────────────────────
@@ -46,6 +47,8 @@ export interface RipStatusUpdate {
   thriveJob?: ThriveJob;
 }
 
+let ripStatusSyncPromise: Promise<RipStatusUpdate[]> | null = null;
+
 // ─── Hotfolder Discovery ──────────────────────────────────────
 
 /**
@@ -74,12 +77,13 @@ export function getAvailableHotfolders(): HotfolderTarget[] {
     }
   }
 
-  // Add Fiery/VUTEk hotfolder if configured
-  if (THRIVE_CONFIG.fiery?.exportPath) {
+  // Add Fiery/VUTEk hotfolder only when a writable input path is configured
+  // (exportPath is the Fiery OUTPUT folder — read-only; hotfolderPath is the INPUT drop folder)
+  if (THRIVE_CONFIG.fiery?.hotfolderPath) {
     hotfolders.push({
       id: 'fiery-vutek',
       name: 'EFI VUTEk GS3250LX Pro',
-      path: THRIVE_CONFIG.fiery.exportPath,
+      path: THRIVE_CONFIG.fiery.hotfolderPath,
       ripType: 'Fiery',
       station: 'FLATBED',
       machineId: 'fiery',
@@ -103,7 +107,7 @@ export async function getHotfoldersWithEquipment(): Promise<HotfolderTarget[]> {
 
   // Try to match equipment by name similarity
   for (const hf of hotfolders) {
-    const match = equipment.find(eq => {
+    const match = equipment.find((eq) => {
       const eqName = eq.name.toLowerCase();
       const hfName = hf.name.toLowerCase();
       return eqName === hfName || eqName.includes(hfName) || hfName.includes(eqName);
@@ -140,12 +144,12 @@ export async function validateSourceFile(filePath: string): Promise<{
 /**
  * Copy a print file to a RIP hotfolder.
  * Returns the destination path on success.
- * 
+ *
  * IMPORTANT: This COPIES the file — the original is never modified or deleted.
  */
 export async function copyToHotfolder(
   sourceFilePath: string,
-  hotfolderPath: string,
+  hotfolderPath: string
 ): Promise<{ success: boolean; destinationPath?: string; error?: string }> {
   try {
     // Validate source exists
@@ -212,7 +216,8 @@ export async function sendToRip(params: {
   priority?: number;
   userId: string;
 }): Promise<SendToRipResult> {
-  const { workOrderId, sourceFilePath, hotfolderTarget, printSettings, notes, priority, userId } = params;
+  const { workOrderId, sourceFilePath, hotfolderTarget, printSettings, notes, priority, userId } =
+    params;
 
   // Validate source file
   const fileValidation = await validateSourceFile(sourceFilePath);
@@ -250,7 +255,9 @@ export async function sendToRip(params: {
       mirror: printSettings?.mirror ?? false,
       nestingEnabled: printSettings?.nestingEnabled ?? false,
       printSettingsJson: printSettings?.additionalSettings
-        ? (printSettings.additionalSettings as Parameters<typeof prisma.ripJob.create>[0]['data']['printSettingsJson'])
+        ? (printSettings.additionalSettings as Parameters<
+            typeof prisma.ripJob.create
+          >[0]['data']['printSettingsJson'])
         : undefined,
       notes: notes ?? null,
       priority: priority ?? 3,
@@ -272,8 +279,10 @@ export async function sendToRip(params: {
 
   // Auto-create PrintCutLink for file chain tracking
   try {
+    const printFileName = path.basename(sourceFilePath);
+    const cutId = extractCutId(printFileName);
     const existing = await prisma.printCutLink.findFirst({
-      where: { workOrderId, printFileName: path.basename(sourceFilePath) },
+      where: { workOrderId, printFileName },
     });
     if (existing) {
       // Link existing chain record to this RIP job and advance status
@@ -283,18 +292,20 @@ export async function sendToRip(params: {
           ripJobId: ripJob.id,
           status: 'SENT_TO_RIP',
           ripMachine: hotfolderTarget.name,
+          cutId: existing.cutId ?? cutId ?? undefined,
         },
       });
     } else {
       await prisma.printCutLink.create({
         data: {
           workOrderId,
-          printFileName: path.basename(sourceFilePath),
+          printFileName,
           printFilePath: sourceFilePath,
           printFileSize: fileValidation.size ?? null,
           ripJobId: ripJob.id,
           status: 'SENT_TO_RIP',
           ripMachine: hotfolderTarget.name,
+          cutId,
         },
       });
     }
@@ -317,26 +328,33 @@ export async function sendToRip(params: {
  */
 function thriveStatusToRipStatus(statusCode: number): string | null {
   switch (statusCode) {
-    case 0: return 'QUEUED';        // Pending
-    case 4: return 'PROCESSING';    // Processing (RIPping)
-    case 8: return 'READY';         // Ready to Print
-    case 16: return 'PRINTING';     // Printing
-    case 32: return 'PRINTED';      // Printed
-    case 64: return 'FAILED';       // Error
-    default: return null;
+    case 0:
+      return 'QUEUED'; // Pending
+    case 4:
+      return 'PROCESSING'; // Processing (RIPping)
+    case 8:
+      return 'READY'; // Ready to Print
+    case 16:
+      return 'PRINTING'; // Printing
+    case 32:
+      return 'PRINTED'; // Printed
+    case 64:
+      return 'FAILED'; // Error
+    default:
+      return null;
   }
 }
 
 /**
  * Scan all Thrive queues and update RipJob records based on what we find.
- * 
+ *
  * Matching strategy:
  *   1. If RipJob has a ripJobGuid, match by GUID
  *   2. Otherwise, match by source file name in the queue
- * 
+ *
  * Returns list of status changes detected.
  */
-export async function syncRipJobStatuses(): Promise<RipStatusUpdate[]> {
+async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
   const updates: RipStatusUpdate[] = [];
 
   // Get all active (non-terminal) RipJobs
@@ -367,15 +385,19 @@ export async function syncRipJobStatuses(): Promise<RipStatusUpdate[]> {
 
     // Strategy 1: Match by GUID
     if (ripJob.ripJobGuid) {
-      thriveJob = allThriveJobs.find(tj => tj.jobGuid === ripJob.ripJobGuid);
+      thriveJob = allThriveJobs.find((tj) => tj.jobGuid === ripJob.ripJobGuid);
     }
 
     // Strategy 2: Match by file name
     if (!thriveJob) {
-      thriveJob = allThriveJobs.find(tj => {
+      thriveJob = allThriveJobs.find((tj) => {
         const tjFileName = path.basename(tj.fileName).toLowerCase();
         const ripFileName = ripJob.sourceFileName.toLowerCase();
-        return tjFileName === ripFileName || tjFileName.includes(ripFileName) || ripFileName.includes(tjFileName);
+        return (
+          tjFileName === ripFileName ||
+          tjFileName.includes(ripFileName) ||
+          ripFileName.includes(tjFileName)
+        );
       });
     }
 
@@ -438,6 +460,18 @@ export async function syncRipJobStatuses(): Promise<RipStatusUpdate[]> {
   return updates;
 }
 
+export async function syncRipJobStatuses(): Promise<RipStatusUpdate[]> {
+  if (ripStatusSyncPromise) {
+    return ripStatusSyncPromise;
+  }
+
+  ripStatusSyncPromise = syncRipJobStatusesInternal().finally(() => {
+    ripStatusSyncPromise = null;
+  });
+
+  return ripStatusSyncPromise;
+}
+
 // ─── KPI Calculations ─────────────────────────────────────────
 
 /**
@@ -466,15 +500,10 @@ export async function calculateKPIs(options?: {
   if (options?.equipmentId) baseWhere.equipmentId = options.equipmentId;
   if (options?.fromDate) baseWhere.queuedAt = { gte: options.fromDate };
   if (options?.toDate) {
-    baseWhere.queuedAt = { ...(baseWhere.queuedAt as object || {}), lte: options.toDate };
+    baseWhere.queuedAt = { ...((baseWhere.queuedAt as object) || {}), lte: options.toDate };
   }
 
-  const [
-    statusCounts,
-    completedToday,
-    failedToday,
-    completedJobs,
-  ] = await Promise.all([
+  const [statusCounts, completedToday, failedToday, completedJobs] = await Promise.all([
     prisma.ripJob.groupBy({
       by: ['status'],
       where: baseWhere,
@@ -491,7 +520,9 @@ export async function calculateKPIs(options?: {
       where: {
         ...baseWhere,
         status: { in: ['PRINTED', 'COMPLETED'] },
-        queuedAt: { gte: options?.fromDate ?? new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000) },
+        queuedAt: {
+          gte: options?.fromDate ?? new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000),
+        },
       },
       select: {
         queuedAt: true,
@@ -504,14 +535,16 @@ export async function calculateKPIs(options?: {
   ]);
 
   // Calculate averages
-  const timings = completedJobs.map(j => ({
+  const timings = completedJobs.map((j) => ({
     queueToRip: j.rippedAt ? (j.rippedAt.getTime() - j.queuedAt.getTime()) / 60000 : null,
-    ripToPrint: j.printStartedAt && j.rippedAt
-      ? (j.printStartedAt.getTime() - j.rippedAt.getTime()) / 60000
-      : null,
-    printDuration: j.printCompletedAt && j.printStartedAt
-      ? (j.printCompletedAt.getTime() - j.printStartedAt.getTime()) / 60000
-      : null,
+    ripToPrint:
+      j.printStartedAt && j.rippedAt
+        ? (j.printStartedAt.getTime() - j.rippedAt.getTime()) / 60000
+        : null,
+    printDuration:
+      j.printCompletedAt && j.printStartedAt
+        ? (j.printCompletedAt.getTime() - j.printStartedAt.getTime()) / 60000
+        : null,
     total: j.printCompletedAt
       ? (j.printCompletedAt.getTime() - j.queuedAt.getTime()) / 60000
       : null,
@@ -523,7 +556,7 @@ export async function calculateKPIs(options?: {
   };
 
   const total = Object.values(statusCounts).reduce((sum, s) => sum + s._count, 0);
-  const countFor = (status: string) => statusCounts.find(s => s.status === status)?._count ?? 0;
+  const countFor = (status: string) => statusCounts.find((s) => s.status === status)?._count ?? 0;
 
   return {
     totalJobs: total,
@@ -532,10 +565,10 @@ export async function calculateKPIs(options?: {
     printing: countFor('PRINTING') + countFor('SENDING'),
     completedToday,
     failedToday,
-    avgQueueToRipMinutes: avg(timings.map(t => t.queueToRip)),
-    avgRipToPrintMinutes: avg(timings.map(t => t.ripToPrint)),
-    avgPrintMinutes: avg(timings.map(t => t.printDuration)),
-    avgTotalMinutes: avg(timings.map(t => t.total)),
+    avgQueueToRipMinutes: avg(timings.map((t) => t.queueToRip)),
+    avgRipToPrintMinutes: avg(timings.map((t) => t.ripToPrint)),
+    avgPrintMinutes: avg(timings.map((t) => t.printDuration)),
+    avgTotalMinutes: avg(timings.map((t) => t.total)),
   };
 }
 
