@@ -231,12 +231,13 @@ export async function sendToRip(params: {
   // rather than just dropping a raw file into a folder.
   let destinationPath: string | undefined;
   if (hotfolderTarget.ripType === 'Fiery') {
-    const vutekSettings: Partial<VutekPrintSettings> = {
-      media: printSettings?.mediaProfile ?? undefined,
-      whiteInk: printSettings?.whiteInk ? printSettings.whiteInk !== 'none' : undefined,
-      mirror: printSettings?.mirror,
-      copies: printSettings?.copies,
-    };
+    // Only pass settings that are explicitly set — undefined values would override blade sign defaults
+    const vutekSettings: Partial<VutekPrintSettings> = {};
+    if (printSettings?.mediaProfile) vutekSettings.media = printSettings.mediaProfile;
+    if (printSettings?.whiteInk !== undefined)
+      vutekSettings.whiteInk = printSettings.whiteInk !== 'none';
+    if (printSettings?.mirror !== undefined) vutekSettings.mirror = printSettings.mirror;
+    if (printSettings?.copies !== undefined) vutekSettings.copies = printSettings.copies;
     const jmfResult = await submitVutekJob({
       jobId: workOrderId,
       sourceFilePath,

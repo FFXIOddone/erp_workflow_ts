@@ -82,7 +82,11 @@ function buildJdf(params: {
   settings: VutekPrintSettings;
 }): string {
   const { jobId, pdfLocalPath, settings } = params;
-  const s = { ...BLADE_SIGN_DEFAULTS, ...settings };
+  // Filter undefined values so they don't override blade sign defaults
+  const definedSettings = Object.fromEntries(
+    Object.entries(settings).filter(([, v]) => v !== undefined)
+  ) as Partial<VutekPrintSettings>;
+  const s = { ...BLADE_SIGN_DEFAULTS, ...definedSettings };
   const copies = s.copies ?? 1;
 
   // Convert Windows path to file:// URL with percent-encoded spaces
