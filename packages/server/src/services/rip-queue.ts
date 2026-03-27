@@ -19,6 +19,7 @@ import { prisma } from '../db/client.js';
 import { THRIVE_CONFIG, parseQueueFile, type ThriveJob } from './thrive.js';
 import { extractCutId } from './zund-match.js';
 import { broadcast } from '../ws/server.js';
+import { submitVutekJob, type VutekPrintSettings } from './fiery-jmf.js';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -225,10 +226,33 @@ export async function sendToRip(params: {
     return { success: false, error: fileValidation.error };
   }
 
-  // Copy to hotfolder
-  const copyResult = await copyToHotfolder(sourceFilePath, hotfolderTarget.path);
-  if (!copyResult.success) {
-    return { success: false, error: copyResult.error };
+  // For Fiery/VUTEk targets, use JMF SubmitQueueEntry instead of plain file copy.
+  // This ensures Fiery XF applies the correct print settings (media profile, curing, etc.)
+  // rather than just dropping a raw file into a folder.
+  let destinationPath: string | undefined;
+  if (hotfolderTarget.ripType === 'Fiery') {
+    const vutekSettings: Partial<VutekPrintSettings> = {
+      media: printSettings?.mediaProfile ?? undefined,
+      whiteInk: printSettings?.whiteInk ? printSettings.whiteInk !== 'none' : undefined,
+      mirror: printSettings?.mirror,
+      copies: printSettings?.copies,
+    };
+    const jmfResult = await submitVutekJob({
+      jobId: workOrderId,
+      sourceFilePath,
+      settings: vutekSettings,
+    });
+    if (!jmfResult.success) {
+      return { success: false, error: jmfResult.error };
+    }
+    destinationPath = jmfResult.pdfDestPath;
+  } else {
+    // Standard Onyx Thrive hotfolder — plain file copy
+    const copyResult = await copyToHotfolder(sourceFilePath, hotfolderTarget.path);
+    if (!copyResult.success) {
+      return { success: false, error: copyResult.error };
+    }
+    destinationPath = copyResult.destinationPath;
   }
 
   // Create tracking record
@@ -317,7 +341,7 @@ export async function sendToRip(params: {
   return {
     success: true,
     ripJobId: ripJob.id,
-    destinationPath: copyResult.destinationPath,
+    destinationPath,
   };
 }
 
