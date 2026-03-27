@@ -7,6 +7,8 @@
     "packages/*"
   ],
   "scripts": {
+    "autonomy:next-task": "node --experimental-strip-types scripts/autonomy/select-next-task.ts",
+    "autonomy:log": "node --experimental-strip-types scripts/autonomy/record-autonomy-event.ts",
     "dev": "concurrently -k -p \"[{name}]\" -c \"red,blue\" -n \"API,Web\" \"npm run dev:server\" \"npm run dev:web\"",
     "dev:all": "concurrently -k -p \"[{name}]\" -c \"red,blue,magenta,cyan,yellow\" -n \"API,Web,Portal,ShopFloor,SlipSort\" \"npm run dev:server\" \"npm run dev:web\" \"npm run dev:portal\" \"npm run dev:shop-floor\" \"npm run dev:slip-sort\"",
     "dev:server": "npm run dev -w @erp/server",
@@ -21,6 +23,7 @@
     "build:web": "npm run build -w @erp/web",
     "build:portal": "npm run build -w @erp/portal",
     "build:shop-floor": "npm run build -w @erp/shop-floor",
+    "build:shop-floor:hosted": "npm run build:dev -w @erp/shop-floor",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
@@ -31,12 +34,19 @@
     "clean": "rimraf node_modules packages/*/node_modules"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
     "@types/node": "^20.11.0",
     "concurrently": "^9.2.1",
     "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "loupe": "^3.1.2",
     "prettier": "^3.2.0",
     "rimraf": "^5.0.5",
+    "std-env": "^3.8.0",
     "typescript": "^5.3.3",
+    "vite-node": "^2.1.9",
+    "vitest": "^2.1.9",
     "xlsx": "^0.18.5"
   },
   "engines": {

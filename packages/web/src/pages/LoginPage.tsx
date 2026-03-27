@@ -19,9 +19,9 @@ export function LoginPage() {
     try {
       const user = await login(username, password);
       toast.success('Welcome back!');
-      // Route operators/viewers directly to shop floor
+      // Route operators/viewers directly to shop floor (separate SPA — requires full page reload)
       if (user?.role === 'OPERATOR' || user?.role === 'VIEWER') {
-        navigate('/shop-floor');
+        window.location.href = '/shop-floor/';
       } else {
         navigate('/');
       }
@@ -37,9 +37,12 @@ export function LoginPage() {
       {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute -top-1/2 -left-1/2 w-full h-full bg-gradient-to-br from-primary-500/20 to-transparent rounded-full blur-3xl animate-pulse-soft" />
-        <div className="absolute -bottom-1/2 -right-1/2 w-full h-full bg-gradient-to-tl from-cyan-500/20 to-transparent rounded-full blur-3xl animate-pulse-soft" style={{ animationDelay: '1s' }} />
+        <div
+          className="absolute -bottom-1/2 -right-1/2 w-full h-full bg-gradient-to-tl from-cyan-500/20 to-transparent rounded-full blur-3xl animate-pulse-soft"
+          style={{ animationDelay: '1s' }}
+        />
       </div>
-      
+
       <div className="max-w-md w-full relative z-10 animate-fade-in">
         <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl p-8 sm:p-10 border border-white/20">
           <div className="text-center mb-8">
@@ -125,11 +128,13 @@ export function LoginPage() {
           <div className="mt-6 pt-6 border-t border-gray-100">
             <div className="flex items-center justify-center gap-2 text-xs text-gray-400">
               <span>Demo:</span>
-              <code className="px-2 py-0.5 bg-gray-100 rounded text-gray-600">admin / admin123</code>
+              <code className="px-2 py-0.5 bg-gray-100 rounded text-gray-600">
+                admin / admin123
+              </code>
             </div>
           </div>
         </div>
-        
+
         <div className="mt-8 text-center">
           <p className="text-xs text-gray-400/60">
             © {new Date().getFullYear()} Wilde Group. All rights reserved.
