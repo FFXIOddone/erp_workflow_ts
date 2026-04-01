@@ -9,6 +9,7 @@ import {
   type PredictionFeedbackInput,
 } from '@erp/shared';
 import { prisma } from '../db/client.js';
+import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import {
@@ -18,6 +19,7 @@ import {
   type RoutingOptimizationRule,
   type RoutingStationIntelligence,
 } from '../services/routing-optimization.js';
+import { broadcastToUser } from '../ws/server.js';
 
 export const routingRouter = Router();
 
@@ -66,6 +68,8 @@ interface OptimizationRuleRow {
 
 interface RoutingPredictionRow {
   id: string;
+  workOrderId: string | null;
+  workOrder: { orderNumber: string } | null;
   predictedRoute: PrintingMethod[];
   actualRoute: PrintingMethod[];
   actualDuration: number | null;
@@ -132,6 +136,32 @@ function mapOptimizationRules(rows: OptimizationRuleRow[]): RoutingOptimizationR
     isActive: rule.isActive,
     appliesTo: rule.appliesTo as RoutingOptimizationRule['appliesTo'],
   } as RoutingOptimizationRule));
+}
+
+async function recordRoutingActivity(params: {
+  userId: string;
+  workOrderId: string;
+  orderNumber: string;
+  description: string;
+  details: Record<string, unknown>;
+  broadcastType: string;
+  broadcastPayload: Record<string, unknown>;
+}): Promise<void> {
+  await logActivity({
+    action: ActivityAction.UPDATE,
+    entityType: EntityType.WORK_ORDER,
+    entityId: params.workOrderId,
+    entityName: params.orderNumber,
+    description: params.description,
+    details: params.details,
+    userId: params.userId,
+  });
+
+  broadcastToUser(params.userId, {
+    type: params.broadcastType,
+    payload: params.broadcastPayload,
+    timestamp: new Date(),
+  });
 }
 
 async function loadRoutingOptimizationContext(
@@ -221,6 +251,21 @@ async function updateRoutingPredictionFeedback(input: PredictionFeedbackInput): 
 }> {
   const prediction = await prisma.routingPrediction.findUnique({
     where: { id: input.predictionId },
+    select: {
+      id: true,
+      workOrderId: true,
+      workOrder: {
+        select: {
+          orderNumber: true,
+        },
+      },
+      predictedRoute: true,
+      actualRoute: true,
+      actualDuration: true,
+      wasAccepted: true,
+      feedbackScore: true,
+      feedbackNotes: true,
+    },
   });
 
   if (!prediction) {
@@ -235,6 +280,21 @@ async function updateRoutingPredictionFeedback(input: PredictionFeedbackInput): 
 
   const updatedPrediction = await prisma.routingPrediction.update({
     where: { id: prediction.id },
+    select: {
+      id: true,
+      workOrderId: true,
+      workOrder: {
+        select: {
+          orderNumber: true,
+        },
+      },
+      predictedRoute: true,
+      actualRoute: true,
+      actualDuration: true,
+      wasAccepted: true,
+      feedbackScore: true,
+      feedbackNotes: true,
+    },
     data: {
       actualRoute,
       actualDuration: input.actualDuration ?? prediction.actualDuration,
@@ -293,6 +353,29 @@ routingRouter.post('/optimize', async (req: AuthRequest, res: Response) => {
   const context = await loadRoutingOptimizationContext(input);
   const persisted = await persistRoutingRecommendation(prisma, context);
 
+  await recordRoutingActivity({
+    userId: req.userId!,
+    workOrderId: context.workOrder.id,
+    orderNumber: context.workOrder.orderNumber,
+    description: `Generated routing recommendation for order #${context.workOrder.orderNumber}`,
+    details: {
+      predictionId: persisted.prediction.id,
+      decisionId: persisted.decision.id,
+      confidence: persisted.recommendation.suggestion.confidence,
+      suggestedRoute: persisted.recommendation.suggestion.suggestedRoute,
+      trigger: persisted.decision.trigger,
+    },
+    broadcastType: 'ROUTING_RECOMMENDATION_CREATED',
+    broadcastPayload: {
+      workOrderId: context.workOrder.id,
+      orderNumber: context.workOrder.orderNumber,
+      predictionId: persisted.prediction.id,
+      decisionId: persisted.decision.id,
+      confidence: persisted.recommendation.suggestion.confidence,
+      suggestedRoute: persisted.recommendation.suggestion.suggestedRoute,
+    },
+  });
+
   res.json({
     success: true,
     data: persisted,
@@ -308,6 +391,36 @@ routingRouter.post('/predictions/:predictionId/feedback', async (req: AuthReques
   }
 
   const result = await updateRoutingPredictionFeedback(feedback);
+
+  if (result.prediction.workOrderId) {
+    const orderNumber = result.prediction.workOrder?.orderNumber ?? result.prediction.workOrderId;
+
+    await recordRoutingActivity({
+      userId: req.userId!,
+      workOrderId: result.prediction.workOrderId,
+      orderNumber,
+      description: `Recorded routing feedback for order #${orderNumber}`,
+      details: {
+        predictionId: result.prediction.id,
+        decisionId: result.decision?.id ?? null,
+        wasAccepted: result.prediction.wasAccepted,
+        actualRoute: result.prediction.actualRoute,
+        actualDuration: result.prediction.actualDuration,
+        feedbackScore: result.prediction.feedbackScore,
+      },
+      broadcastType: 'ROUTING_FEEDBACK_RECORDED',
+      broadcastPayload: {
+        workOrderId: result.prediction.workOrderId,
+        orderNumber,
+        predictionId: result.prediction.id,
+        decisionId: result.decision?.id ?? null,
+        wasAccepted: result.prediction.wasAccepted,
+        actualRoute: result.prediction.actualRoute,
+        actualDuration: result.prediction.actualDuration,
+        feedbackScore: result.prediction.feedbackScore,
+      },
+    });
+  }
 
   res.json({
     success: true,
