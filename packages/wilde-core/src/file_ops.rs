@@ -88,6 +88,100 @@ pub fn open_file_with(path: &Path, app: &str) -> Result<()> {
     Ok(())
 }
 
+/// Open the Zund Cut Queue and search for a CutID
+pub fn open_zund_cut_queue(cut_id: &str) -> Result<()> {
+    log::info!("Opening Zund Cut Queue for CutID: {}", cut_id);
+
+    #[cfg(target_os = "windows")]
+    {
+        let script = r#"
+$cutId = $env:ERP_ZUND_CUTID
+if (-not $cutId) {
+    throw 'CutID not provided.'
+}
+
+function Activate-CutQueueWindow {
+    param([object]$Shell)
+
+    foreach ($title in @('Cut Queue', 'Zund Cut Center', 'CutServer')) {
+        if ($Shell.AppActivate($title)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+$shell = New-Object -ComObject WScript.Shell
+
+if (-not (Activate-CutQueueWindow -Shell $shell)) {
+    $shortcutPath = 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Zund Cut Center\Cut Queue.lnk'
+    $targetPath = $null
+    $targetArgs = '-queue'
+    $workingDir = $null
+
+    if (Test-Path $shortcutPath) {
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        if ($shortcut.TargetPath) { $targetPath = $shortcut.TargetPath }
+        if ($shortcut.Arguments) { $targetArgs = $shortcut.Arguments }
+        if ($shortcut.WorkingDirectory) { $workingDir = $shortcut.WorkingDirectory }
+    }
+
+    if (-not $targetPath) {
+        $candidateTargets = @(
+            'C:\Program Files (x86)\Zund Systemtechnik\Zund Cut Center\CutServer.exe',
+            'C:\Program Files\Zund Systemtechnik\Zund Cut Center\CutServer.exe'
+        )
+        $targetPath = $candidateTargets | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+
+    if (-not $targetPath) {
+        throw 'Zund Cut Queue executable not found.'
+    }
+
+    if (-not $workingDir) {
+        $workingDir = Split-Path -Parent $targetPath
+    }
+
+    Start-Process -FilePath $targetPath -ArgumentList $targetArgs -WorkingDirectory $workingDir | Out-Null
+    Start-Sleep -Milliseconds 1500
+
+    if (-not (Activate-CutQueueWindow -Shell $shell)) {
+        throw 'Could not activate the Zund Cut Queue window.'
+    }
+}
+
+Set-Clipboard -Value $cutId
+Start-Sleep -Milliseconds 150
+$shell.SendKeys('^f')
+Start-Sleep -Milliseconds 200
+$shell.SendKeys('^a')
+Start-Sleep -Milliseconds 100
+$shell.SendKeys('^v')
+Start-Sleep -Milliseconds 100
+$shell.SendKeys('{ENTER}')
+"#;
+
+        let status = Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-Command", script])
+            .env("ERP_ZUND_CUTID", cut_id)
+            .status()?;
+
+        if !status.success() {
+            return Err(CoreError::Config("Failed to open Zund Cut Queue".to_string()));
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        return Err(CoreError::Config(
+            "Zund Cut Queue automation is only available on Windows".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 /// Copy a file to a destination folder
 pub fn copy_file(src: &Path, dest_folder: &Path) -> Result<PathBuf> {
     let file_name = src.file_name()

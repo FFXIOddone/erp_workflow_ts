@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "scripts": {
     "dev": "node dev-server.mjs",
-    "dev:raw": "tsx watch src/index.ts",
+    "dev:raw": "node scripts/ensure-better-sqlite3.mjs && tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "clean": "rimraf dist",

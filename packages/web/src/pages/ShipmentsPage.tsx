@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ChangeEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { formatDate } from '../lib/date';
+import { FedExShipmentsPanel } from '../components/FedExShipmentsPanel';
 import { PageHeader, Badge, Pagination, Spinner, EmptyState } from '../components';
 import {
   Carrier,
@@ -30,11 +31,14 @@ interface Shipment {
   workOrder: {
     id: string;
     orderNumber: string;
+    customerName: string;
     customer: {
-      companyName: string | null;
-      firstName: string;
-      lastName: string;
-    };
+      id: string;
+      name?: string | null;
+      companyName?: string | null;
+      firstName?: string | null;
+      lastName?: string | null;
+    } | null;
   };
   carrier: Carrier;
   trackingNumber: string | null;
@@ -46,20 +50,18 @@ interface Shipment {
   packages: { id: string }[];
 }
 
-interface ShipmentsResponse {
-  data: Shipment[];
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  };
+interface ShipmentsPageData {
+  items: Shipment[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 const carrierOptions = Object.values(Carrier);
 const statusOptions = Object.values(ShipmentStatus);
 
-export function ShipmentsPage() {
+export function ShipmentsPage(): JSX.Element {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<ShipmentStatus | ''>('');
   const [carrier, setCarrier] = useState<Carrier | ''>('');
@@ -67,21 +69,32 @@ export function ShipmentsPage() {
   const [showFilters, setShowFilters] = useState(false);
   const limit = 20;
 
-  const { data, isLoading, isError } = useQuery<ShipmentsResponse>({
+  const { data, isLoading, isError } = useQuery<ShipmentsPageData>({
     queryKey: ['shipments', { search, status, carrier, page, limit }],
-    queryFn: () =>
-      api
-        .get('/shipments', {
-          params: {
-            search: search || undefined,
-            status: status || undefined,
-            carrier: carrier || undefined,
-            page,
-            limit,
-          },
-        })
-        .then((r) => r.data),
+    queryFn: async (): Promise<ShipmentsPageData> => {
+      const response = await api.get<{ success: boolean; data: ShipmentsPageData }>('/shipments', {
+        params: {
+          search: search || undefined,
+          status: status || undefined,
+          carrier: carrier || undefined,
+          page,
+          limit,
+        },
+      });
+
+      return response.data.data;
+    },
   });
+
+  const shipments = data?.items ?? [];
+  const pagination = data
+    ? data
+    : {
+        total: shipments.length,
+        page,
+        pageSize: limit,
+        totalPages: 1,
+      };
 
   const getStatusVariant = (
     shipmentStatus: ShipmentStatus
@@ -96,10 +109,10 @@ export function ShipmentsPage() {
       green: 'success',
       red: 'danger',
     };
-    return colorMap[SHIPMENT_STATUS_COLORS[shipmentStatus]] || 'default';
+    return colorMap[SHIPMENT_STATUS_COLORS[shipmentStatus]] ?? 'default';
   };
 
-  const getStatusIcon = (shipmentStatus: ShipmentStatus) => {
+  const getStatusIcon = (shipmentStatus: ShipmentStatus): JSX.Element => {
     switch (shipmentStatus) {
       case ShipmentStatus.DELIVERED:
         return <CheckCircle className="h-4 w-4 text-green-500" />;
@@ -121,29 +134,56 @@ export function ShipmentsPage() {
       [Carrier.USPS]: `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`,
       [Carrier.DHL]: `https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id=${trackingNumber}`,
     };
-    return urls[shipmentCarrier] || null;
+    return urls[shipmentCarrier] ?? null;
   };
 
-  const getCustomerName = (customer: Shipment['workOrder']['customer']) => {
-    return customer.companyName || `${customer.firstName} ${customer.lastName}`;
+  const getCustomerName = (workOrder: Shipment['workOrder']): string => {
+    const customer = workOrder.customer;
+    if (customer) {
+      const customerLabel = customer.companyName ?? customer.name;
+      if (typeof customerLabel === 'string' && customerLabel.trim().length > 0) {
+        return customerLabel;
+      }
+
+      const nameParts = [customer.firstName, customer.lastName].filter(
+        (part): part is string => typeof part === 'string' && part.trim().length > 0
+      );
+
+      if (nameParts.length > 0) {
+        return nameParts.join(' ');
+      }
+    }
+
+    if (workOrder.customerName.trim().length > 0) {
+      return workOrder.customerName;
+    }
+
+    const customerLabel = customer?.companyName ?? customer?.name;
+    if (typeof customerLabel === 'string' && customerLabel.trim().length > 0) {
+      return customerLabel;
+    }
+
+    return 'Customer not recorded';
   };
 
-  const clearFilters = () => {
+  const clearFilters = (): void => {
     setSearch('');
     setStatus('');
     setCarrier('');
     setPage(1);
   };
 
-  const hasActiveFilters = search || status || carrier;
+  const hasActiveFilters = Boolean(search || status || carrier);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Shipments"
-        description="Track and manage outbound shipments"
+        description="Track outbound shipments and their linked work orders"
         icon={Truck}
       />
+
+      <FedExShipmentsPanel />
 
       {/* Search and Filters */}
       <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-4">
@@ -155,8 +195,8 @@ export function ShipmentsPage() {
               type="text"
               placeholder="Search by tracking number or order..."
               value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
+              onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                setSearch((event.currentTarget as HTMLInputElement).value);
                 setPage(1);
               }}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
@@ -176,7 +216,7 @@ export function ShipmentsPage() {
             Filters
             {hasActiveFilters && (
               <span className="px-1.5 py-0.5 text-xs bg-primary-600 text-white rounded-full">
-                {[search, status, carrier].filter(Boolean).length}
+                {[search, status, carrier].filter((value): value is string => value !== '').length}
               </span>
             )}
             <ChevronDown
@@ -194,8 +234,8 @@ export function ShipmentsPage() {
               </label>
               <select
                 value={status}
-                onChange={(e) => {
-                  setStatus(e.target.value as ShipmentStatus | '');
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                  setStatus((event.currentTarget as HTMLSelectElement).value as ShipmentStatus | '');
                   setPage(1);
                 }}
                 className="w-full border border-gray-300 rounded-lg py-2 px-3 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
@@ -215,8 +255,8 @@ export function ShipmentsPage() {
               </label>
               <select
                 value={carrier}
-                onChange={(e) => {
-                  setCarrier(e.target.value as Carrier | '');
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                  setCarrier((event.currentTarget as HTMLSelectElement).value as Carrier | '');
                   setPage(1);
                 }}
                 className="w-full border border-gray-300 rounded-lg py-2 px-3 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
@@ -251,14 +291,14 @@ export function ShipmentsPage() {
         <div className="text-center py-12 text-red-600">
           Failed to load shipments. Please try again.
         </div>
-      ) : !data?.data.length ? (
+      ) : shipments.length === 0 ? (
         <EmptyState
           icon={<Truck className="h-12 w-12 text-gray-400" />}
           title="No shipments found"
           description={
             hasActiveFilters
               ? 'Try adjusting your filters to find what you\'re looking for.'
-              : 'Shipments will appear here once created.'
+              : 'Shipments linked to work orders will appear here once created.'
           }
           action={
             hasActiveFilters
@@ -292,7 +332,7 @@ export function ShipmentsPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {data.data.map((shipment) => {
+                {shipments.map((shipment) => {
                   const trackingUrl = shipment.trackingNumber
                     ? getTrackingUrl(shipment.carrier, shipment.trackingNumber)
                     : null;
@@ -324,7 +364,7 @@ export function ShipmentsPage() {
                               )
                             ) : (
                               <span className="text-sm text-gray-400 italic">
-                                No tracking
+                                Tracking not recorded
                               </span>
                             )}
                           </div>
@@ -335,10 +375,10 @@ export function ShipmentsPage() {
                           to={`/orders/${shipment.workOrderId}`}
                           className="text-primary-600 hover:text-primary-800 font-medium"
                         >
-                          {shipment.workOrder.orderNumber}
+                          #{shipment.workOrder.orderNumber}
                         </Link>
                         <div className="text-sm text-gray-500">
-                          {getCustomerName(shipment.workOrder.customer)}
+                          {getCustomerName(shipment.workOrder)}
                         </div>
                       </td>
                       <td className="px-6 py-4">
@@ -358,7 +398,7 @@ export function ShipmentsPage() {
                             {formatDate(shipment.shipDate)}
                           </div>
                         ) : (
-                          <span className="text-sm text-gray-400">—</span>
+                          <span className="text-sm text-gray-400">Not shipped</span>
                         )}
                       </td>
                       <td className="px-6 py-4">
@@ -374,7 +414,7 @@ export function ShipmentsPage() {
                             Est: {formatDate(shipment.estimatedDelivery)}
                           </div>
                         ) : (
-                          <span className="text-sm text-gray-400">—</span>
+                          <span className="text-sm text-gray-400">Not delivered</span>
                         )}
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -382,7 +422,7 @@ export function ShipmentsPage() {
                           to={`/orders/${shipment.workOrderId}`}
                           className="text-sm text-primary-600 hover:text-primary-800 font-medium"
                         >
-                          View Order →
+                          Open order
                         </Link>
                       </td>
                     </tr>
@@ -393,10 +433,10 @@ export function ShipmentsPage() {
           </div>
 
           {/* Pagination */}
-          {data.pagination.totalPages > 1 && (
+          {pagination.totalPages > 1 && (
             <Pagination
-              currentPage={data.pagination.page}
-              totalPages={data.pagination.totalPages}
+              currentPage={pagination.page}
+              totalPages={pagination.totalPages}
               onPageChange={setPage}
             />
           )}

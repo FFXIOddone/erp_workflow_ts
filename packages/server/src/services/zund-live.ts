@@ -32,6 +32,7 @@ import {
 import { normalizeJobName, extractIdentifiers, extractCutId } from './zund-match.js';
 import { prisma } from '../db/client.js';
 import { TtlCache } from '../lib/ttl-cache.js';
+import { loadBetterSqlite3 } from '../lib/better-sqlite3.js';
 
 // Cache Zund live data and queue scans to avoid redundant network I/O
 const zundLiveCache = new TtlCache<ZundLiveData>(60_000);   // 60s TTL
@@ -478,6 +479,10 @@ async function fetchZundLiveData(
       // Check accessibility inside parallel block to avoid blocking Sources 2 & 3
       const statsAccessible = getAvailableZunds().includes(zundId) && await isZundStatsAccessible(zundId);
       if (!statsAccessible) return { jobs: srcJobs, normalizedNames: srcNames };
+      const Database = await loadBetterSqlite3('ZundLive');
+      if (!Database) {
+        return { jobs: srcJobs, normalizedNames: srcNames };
+      }
       hasStatsDb = true;
 
       cutter = await getZundCutterInfo(zundId);
@@ -485,7 +490,6 @@ async function fetchZundLiveData(
       toolWear = await getToolWear(zundId);
 
       // Get DB version
-      const { default: Database } = await import('better-sqlite3');
       const localPath = path.join(
         (await import('os')).tmpdir(),
         'erp-zund-stats',
@@ -811,6 +815,27 @@ async function fetchZundLiveData(
 // ─── Background Cache Warmer ──────────────────────────
 
 let warmerInterval: ReturnType<typeof setInterval> | null = null;
+let warmerRunPromise: Promise<void> | null = null;
+
+async function warmZundLiveCache(zundIds: string[]): Promise<void> {
+  if (warmerRunPromise) {
+    return warmerRunPromise;
+  }
+
+  warmerRunPromise = (async () => {
+    await Promise.allSettled(
+      zundIds.map((id) =>
+        fetchZundLiveData(id, {}, `${id}-{}`).catch((err) => {
+          console.warn(`[ZundLive] Cache warmer failed for ${id}:`, err.message);
+        }),
+      ),
+    );
+  })().finally(() => {
+    warmerRunPromise = null;
+  });
+
+  return warmerRunPromise;
+}
 
 /**
  * Start a background interval that pre-warms the Zund live data cache.
@@ -823,18 +848,10 @@ export function startZundLiveCacheWarmer(intervalMs = 45_000): void {
   const zundIds = getAvailableZunds();
 
   // Warm immediately on start
-  for (const id of zundIds) {
-    fetchZundLiveData(id, {}, `${id}-{}`).catch(
-      err => console.warn(`[ZundLive] Initial cache warm failed for ${id}:`, err.message)
-    );
-  }
+  void warmZundLiveCache(zundIds);
 
   warmerInterval = setInterval(() => {
-    for (const id of zundIds) {
-      fetchZundLiveData(id, {}, `${id}-{}`).catch(
-        err => console.warn(`[ZundLive] Cache warmer failed for ${id}:`, err.message)
-      );
-    }
+    void warmZundLiveCache(zundIds);
   }, intervalMs);
 
   // Don't block process exit

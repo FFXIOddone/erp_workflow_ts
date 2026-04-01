@@ -36,7 +36,14 @@ interface FieryJobData {
   hasZccCutFile: boolean;
   zccFileName: string | null;
   dimensions: { width: number; height: number; depth: number } | null;
-  media: { brand: string | null; description: string | null; type: string | null } | null;
+  media:
+    | {
+        brand: string | null;
+        description: string | null;
+        type: string | null;
+        vutekMedia?: string | null;
+      }
+    | null;
   inks: string[];
   workOrderNumber: string | null;
   customerName: string | null;
@@ -367,8 +374,8 @@ export function PrinterInfoCard({ orderNumber }: PrinterInfoCardProps) {
                         {Math.round(fj.dimensions.width / 72)}" x {Math.round(fj.dimensions.height / 72)}"
                       </span>
                     )}
-                    {fj.media?.description && (
-                      <span>{fj.media.description}</span>
+                    {(fj.media?.vutekMedia || fj.media?.description) && (
+                      <span>{fj.media.vutekMedia || fj.media.description}</span>
                     )}
                     {fj.inks.length > 0 && (
                       <span>{fj.inks.join(', ')}</span>
@@ -600,7 +607,9 @@ export function PrinterInfoCard({ orderNumber }: PrinterInfoCardProps) {
                     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-xs text-gray-500">
                       <span className="px-1.5 py-0.5 bg-orange-100 text-orange-600 rounded text-[10px] font-medium">Fiery RIP</span>
                       {fj.hasZccCutFile && <span className="text-green-600">Has cut file</span>}
-                      {fj.media?.description && <span>{fj.media.description}</span>}
+                    {(fj.media?.vutekMedia || fj.media?.description) && (
+                      <span>{fj.media.vutekMedia || fj.media.description}</span>
+                    )}
                       {fj.timestamp && <span>{formatDateTime(fj.timestamp)}</span>}
                     </div>
                   </button>

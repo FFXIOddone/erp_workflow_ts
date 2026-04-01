@@ -150,7 +150,8 @@ export function UsersPage() {
     }
   };
 
-  const users = data?.items ?? [];
+  const users = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+  const totalUsers = typeof data?.total === 'number' ? data.total : users.length;
 
   if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'MANAGER') {
     return (
@@ -173,7 +174,7 @@ export function UsersPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Team Members</h1>
-              <p className="text-gray-500">{data?.total ?? 0} users in the system</p>
+              <p className="text-gray-500">{totalUsers} users in the system</p>
             </div>
           </div>
         </div>

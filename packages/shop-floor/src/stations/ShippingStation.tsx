@@ -43,6 +43,15 @@ interface ShippingOrder {
   stationProgress?: Array<{ station: string; status: string }>;
 }
 
+async function ensureOk(response: Response): Promise<void> {
+  if (response.ok) {
+    return;
+  }
+
+  const body = await response.text().catch(() => '');
+  throw new Error(body || `API ${response.status}`);
+}
+
 export function ShippingStation() {
   const { config } = useConfigStore();
   const { token } = useAuthStore();
@@ -58,11 +67,12 @@ export function ShippingStation() {
   const scanInputRef = useRef<HTMLInputElement>(null);
 
   const { subscribe } = useWebSocket();
+  const fetchOrdersRef = useRef<() => void | Promise<void>>(() => {});
 
   useEffect(() => {
     const unsub = subscribe((msg) => {
       if (['STATION_COMPLETED', 'ORDER_CREATED', 'REPRINT_REQUESTED'].includes(msg.type)) {
-        fetchOrders();
+        void fetchOrdersRef.current();
       }
     });
     return unsub;
@@ -86,6 +96,7 @@ export function ShippingStation() {
       setLoading(false);
     }
   }, [config.apiUrl, token]);
+  fetchOrdersRef.current = fetchOrders;
 
   useEffect(() => {
     fetchOrders();
@@ -134,25 +145,32 @@ export function ShippingStation() {
     }
     try {
       // Create shipment
-      await fetch(`${config.apiUrl}/shipments`, {
+      const shipmentResponse = await fetch(`${config.apiUrl}/shipments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ workOrderId: orderId, carrier: 'FEDEX', status: 'PENDING' }),
       });
+      await ensureOk(shipmentResponse);
+
       // Complete shipping station
-      await fetch(`${config.apiUrl}/orders/${orderId}/station-progress`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ station: 'SHIPPING_RECEIVING', status: 'COMPLETED' }),
-      });
+      const completeShippingResponse = await fetch(
+        `${config.apiUrl}/orders/${orderId}/stations/SHIPPING_RECEIVING/complete`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      await ensureOk(completeShippingResponse);
+
       // Save QC results
-      await fetch(`${config.apiUrl}/orders/${orderId}/shipping-qc`, {
+      const qcResponse = await fetch(`${config.apiUrl}/orders/${orderId}/shipping-qc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ checks: QC_CHECKLIST.map(c => ({ label: c.label, passed: qcChecks[orderId]?.[c.key] || false })) }),
       });
+      await ensureOk(qcResponse);
+
       toast.success(`${orderNumber} shipped`);
-      fetchOrders();
     } catch {
       toast.error('Failed to process shipment');
     }
@@ -165,19 +183,26 @@ export function ShippingStation() {
     }
     try {
       // Complete SHIPPING station
-      await fetch(`${config.apiUrl}/orders/${orderId}/station-progress`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ station: 'SHIPPING_RECEIVING', status: 'COMPLETED' }),
-      });
+      const completeShippingResponse = await fetch(
+        `${config.apiUrl}/orders/${orderId}/stations/SHIPPING_RECEIVING/complete`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      await ensureOk(completeShippingResponse);
+
       // Set INSTALLATION to IN_PROGRESS
-      await fetch(`${config.apiUrl}/orders/${orderId}/station-progress`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ station: 'INSTALLATION', status: 'IN_PROGRESS' }),
-      });
+      const startInstallationResponse = await fetch(
+        `${config.apiUrl}/orders/${orderId}/stations/INSTALLATION/start`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      await ensureOk(startInstallationResponse);
+
       toast.success(`${orderNumber} ready for installation`);
-      fetchOrders();
     } catch {
       toast.error('Failed to update');
     }
@@ -189,17 +214,20 @@ export function ShippingStation() {
       return;
     }
     try {
-      await fetch(`${config.apiUrl}/shipments`, {
+      const shipmentResponse = await fetch(`${config.apiUrl}/shipments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ workOrderId: orderId, carrier: 'CUSTOMER_PICKUP', status: 'DELIVERED' }),
       });
-      await fetch(`${config.apiUrl}/orders/${orderId}/complete`, {
+      await ensureOk(shipmentResponse);
+
+      const completeOrderResponse = await fetch(`${config.apiUrl}/orders/${orderId}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       });
+      await ensureOk(completeOrderResponse);
+
       toast.success(`${orderNumber} ready for customer pickup`);
-      fetchOrders();
     } catch {
       toast.error('Failed to update');
     }
@@ -215,7 +243,6 @@ export function ShippingStation() {
       });
       if (!res.ok) throw new Error(`API ${res.status}`);
       toast.success(`${orderNumber} sent back to Production`);
-      fetchOrders();
     } catch {
       toast.error('Failed to send back');
     }

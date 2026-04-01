@@ -107,7 +107,14 @@ export function ProductionCalendarPage() {
       if (stationFilter) params.station = stationFilter;
       
       const response = await api.get('/scheduling/calendar', { params });
-      return response.data.data as { slots: ProductionSlot[]; groupedByDate: Record<string, ProductionSlot[]> };
+      const payload = response.data?.data;
+      return {
+        slots: Array.isArray(payload?.slots) ? payload.slots : [],
+        groupedByDate:
+          payload?.groupedByDate && typeof payload.groupedByDate === 'object'
+            ? payload.groupedByDate
+            : {},
+      } as { slots: ProductionSlot[]; groupedByDate: Record<string, ProductionSlot[]> };
     },
   });
 
@@ -116,7 +123,12 @@ export function ProductionCalendarPage() {
     queryKey: ['scheduling', 'unscheduled'],
     queryFn: async () => {
       const response = await api.get('/scheduling/unscheduled');
-      return response.data.data as UnscheduledOrder[];
+      const payload = response.data?.data;
+      const orders = Array.isArray(payload) ? payload : [];
+      return orders.map((order) => ({
+        ...order,
+        routing: Array.isArray(order?.routing) ? order.routing : [],
+      })) as UnscheduledOrder[];
     },
   });
 
@@ -130,7 +142,8 @@ export function ProductionCalendarPage() {
           endDate: dateRange.end.toISOString(),
         },
       });
-      return response.data.data as Array<{
+      const payload = response.data?.data;
+      return (Array.isArray(payload) ? payload : []) as Array<{
         station: PrintingMethod;
         date: string;
         scheduledHours: number;

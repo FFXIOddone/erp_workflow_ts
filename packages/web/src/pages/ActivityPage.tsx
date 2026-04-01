@@ -120,7 +120,26 @@ export function ActivityPage() {
     queryKey: ['activity', page, filters],
     queryFn: async () => {
       const response = await api.get(`/activity?${queryParams.toString()}`);
-      return response.data.data as {
+      const payload = response.data?.data;
+      const items = Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload)
+          ? payload
+          : [];
+      const pagination =
+        payload?.pagination && typeof payload.pagination === 'object'
+          ? payload.pagination
+          : {
+              page,
+              pageSize,
+              total: items.length,
+              totalPages: 1,
+            };
+
+      return {
+        items,
+        pagination,
+      } as {
         items: ActivityLog[];
         pagination: { page: number; pageSize: number; total: number; totalPages: number };
       };
@@ -132,16 +151,28 @@ export function ActivityPage() {
     queryKey: ['activity', 'stats'],
     queryFn: async () => {
       const response = await api.get('/activity/stats');
-      return response.data.data as ActivityStats;
+      const payload = response.data?.data;
+      return {
+        totalCount: typeof payload?.totalCount === 'number' ? payload.totalCount : 0,
+        byAction: Array.isArray(payload?.byAction) ? payload.byAction : [],
+        byEntity: Array.isArray(payload?.byEntity) ? payload.byEntity : [],
+        byUser: Array.isArray(payload?.byUser) ? payload.byUser : [],
+        byDay: Array.isArray(payload?.byDay) ? payload.byDay : [],
+      } as ActivityStats;
     },
   });
 
   // Fetch users for filter dropdown
-  const { data: usersData } = useQuery({
+  const { data: usersData = [] } = useQuery<Array<{ id: string; displayName: string }>>({
     queryKey: ['users', 'list'],
     queryFn: async () => {
       const response = await api.get('/users?pageSize=100');
-      return response.data.data.items as { id: string; displayName: string }[];
+      const payload = response.data?.data;
+      return Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload)
+          ? payload
+          : [];
     },
   });
 
@@ -193,7 +224,9 @@ export function ActivityPage() {
           <div>
             <h1 className="text-2xl lg:text-3xl font-bold text-gray-900">Activity Log</h1>
             <p className="text-gray-500 mt-1">
-              {statsData?.totalCount.toLocaleString() ?? '—'} total activities
+              {statsData
+                ? `${statsData.totalCount.toLocaleString()} total activities`
+                : 'Loading activity totals...'}
             </p>
           </div>
         </div>
@@ -294,7 +327,7 @@ export function ActivityPage() {
                 className="input-field"
               >
                 <option value="">All Users</option>
-                {usersData?.map((user) => (
+                {usersData.map((user) => (
                   <option key={user.id} value={user.id}>
                     {user.displayName}
                   </option>

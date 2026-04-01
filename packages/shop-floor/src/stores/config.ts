@@ -34,23 +34,54 @@ interface ConfigState {
   setApiUrl: (url: string) => void;
   setNetworkDrivePath: (path: string) => void;
   setMacNetworkDrivePath: (path: string) => void;
-  setActiveStation: (s: StationId) => void;
+  setActiveStation: (s: StationId | null) => void;
   addHotfolder: (h: HotfolderConfig) => void;
   removeHotfolder: (name: string) => void;
   setDevMode: (enabled: boolean) => void;
   setDevFrontendUrl: (url: string) => void;
 }
 
+function getBrowserHostname(): string {
+  if (typeof window === 'undefined') return 'localhost';
+  return window.location.hostname || 'localhost';
+}
+
+function isLocalHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function getDevApiUrl(): string {
+  const hostname = getBrowserHostname();
+  const apiHost = isLocalHostname(hostname) ? 'localhost' : hostname;
+  return `http://${apiHost}:8001/api/v1`;
+}
+
+function shouldResetApiUrl(apiUrl: string): boolean {
+  return (
+    !apiUrl ||
+    apiUrl.includes('tauri.localhost') ||
+    apiUrl.includes('tauri://') ||
+    apiUrl.includes('192.168.1.100') ||
+    apiUrl.includes('localhost') ||
+    apiUrl.includes('127.0.0.1') ||
+    apiUrl.includes('[::1]')
+  );
+}
+
 function getDefaultApiUrl(): string {
-  // In dev mode, use localhost
+  // In browser dev mode, use the same host as the page so LAN clients
+  // can reach the API on the ERP machine instead of their own localhost.
   if (!(import.meta as any).env?.PROD) {
-    return 'http://localhost:8001/api/v1';
+    return getDevApiUrl();
   }
   // In Tauri (desktop app), point to the ERP server on the LAN
-  if ((window as any).__TAURI_INTERNALS__) {
+  if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
     return 'http://192.168.254.75:8001/api/v1';
   }
   // Browser production (served by the ERP server itself)
+  if (typeof window === 'undefined') {
+    return 'http://192.168.254.75:8001/api/v1';
+  }
   return `${window.location.origin}/api/v1`;
 }
 
@@ -95,17 +126,12 @@ export const useConfigStore = create<ConfigState>()(
     }),
     {
       name: 'shop-floor-config',
-      version: 4,
+      version: 6,
       migrate: (persisted: any, version: number) => {
         const state = persisted?.state ?? persisted;
         const apiUrl = state?.config?.apiUrl || '';
         // Fix bad API URLs from earlier versions
-        if (
-          apiUrl.includes('tauri.localhost') ||
-          apiUrl.includes('tauri://') ||
-          apiUrl.includes('192.168.1.100') ||
-          (apiUrl.includes('localhost') && version < 3)
-        ) {
+        if (version < 6 && shouldResetApiUrl(apiUrl)) {
           return {
             ...state,
             config: {

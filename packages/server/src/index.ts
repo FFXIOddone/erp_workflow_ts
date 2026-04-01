@@ -36,6 +36,7 @@ import { quickbooksRouter } from './routes/quickbooks.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { emailRouter } from './routes/email.js';
 import { uploadsRouter } from './routes/uploads.js';
+import { documentsRouter } from './routes/documents.js';
 import { reportsRouter } from './routes/reports.js';
 import { settingsRouter } from './routes/settings.js';
 import { activityRouter } from './routes/activity.js';
@@ -56,6 +57,7 @@ import { auditLogRouter } from './routes/audit-log.js';
 import { batchImportRouter } from './routes/batch-import.js';
 import { dashboardStatsRouter } from './routes/dashboard-stats.js';
 import { exportsRouter } from './routes/exports.js';
+import { fedexRouter } from './routes/fedex.js';
 import { searchRouter } from './routes/search.js';
 import { importRouter } from './routes/import.js';
 import { ripQueueRouter } from './routes/rip-queue.js';
@@ -70,6 +72,7 @@ import { handleAuthCallback } from './services/microsoft-oauth.js';
 import { syncRipJobStatuses } from './services/rip-queue.js';
 import { processEquipmentWatchRules } from './services/equipment-watch.js';
 import { runAutoLinkingCycle } from './services/file-chain.js';
+import { syncFedExShipmentRecords } from './services/fedex.js';
 import { initEmailService } from './services/email.js';
 import { processEmailQueue } from './services/email-automation.js';
 import { setupWebSocket } from './ws/server.js';
@@ -81,6 +84,23 @@ const isProduction = process.env.NODE_ENV === 'production';
 const app: Express = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
+
+function getOriginHostname(origin: string): string {
+  try {
+    return new URL(origin).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function isAllowedLanOrigin(origin: string): boolean {
+  const hostname = getOriginHostname(origin);
+
+  return (
+    /^192\.168\.254\.\d{1,3}$/.test(hostname) ||
+    /^[a-z0-9-]+(\.local)?$/i.test(hostname)
+  );
+}
 
 // Middleware
 app.use(helmet({
@@ -104,14 +124,18 @@ app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true); // non-browser clients
     const allowedOrigins = env.CORS_ORIGIN.split(',').map(o => o.trim());
-    if (allowedOrigins.includes(origin) || /^https?:\/\/192\.168\.254\.\d{1,3}(:\d+)?$/.test(origin)) {
+    if (allowedOrigins.includes(origin) || isAllowedLanOrigin(origin)) {
       return callback(null, true);
     }
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
 }));
-app.use(morgan('dev'));
+if (isProduction || process.env.ENABLE_HTTP_REQUEST_LOGS === 'true') {
+  app.use(morgan('dev'));
+} else {
+  console.log('🪵 HTTP request logging is disabled in development. Set ENABLE_HTTP_REQUEST_LOGS=true to re-enable morgan.');
+}
 app.use(express.json());
 
 // Apply global API rate limiter to all API routes
@@ -209,6 +233,7 @@ app.use(`${API_BASE_PATH}/quickbooks`, quickbooksRouter);
 app.use(`${API_BASE_PATH}/notifications`, notificationsRouter);
 app.use(`${API_BASE_PATH}/email`, emailRouter);
 app.use(`${API_BASE_PATH}/uploads`, uploadsRouter);
+app.use(`${API_BASE_PATH}/documents`, documentsRouter);
 app.use(`${API_BASE_PATH}/reports`, reportsRouter);
 app.use(`${API_BASE_PATH}/settings`, settingsRouter);
 app.use(`${API_BASE_PATH}/activity`, activityRouter);
@@ -229,6 +254,7 @@ app.use(`${API_BASE_PATH}/audit-log`, auditLogRouter);
 app.use(`${API_BASE_PATH}/batch-import`, batchImportRouter);
 app.use(`${API_BASE_PATH}/dashboard-stats`, dashboardStatsRouter);
 app.use(`${API_BASE_PATH}/exports`, exportsRouter);
+app.use(`${API_BASE_PATH}/fedex`, fedexRouter);
 app.use(`${API_BASE_PATH}/search`, searchRouter);
 app.use(`${API_BASE_PATH}/import`, importRouter);
 app.use(`${API_BASE_PATH}/rip-queue`, ripQueueRouter);
@@ -313,6 +339,33 @@ setupWebSocket(wss);
 // Start server
 const PORT = parseInt(process.env.SERVER_PORT ?? '8001', 10);
 const HOST = process.env.SERVER_HOST ?? '0.0.0.0';
+const enableDevBackgroundJobs = process.env.ENABLE_DEV_BACKGROUND_JOBS === 'true';
+const enableHeavyBackgroundJobs = isProduction || enableDevBackgroundJobs;
+const ALERT_RULES_INTERVAL_MS = 5 * 60 * 1000;
+const RIP_QUEUE_SYNC_INTERVAL_MS = isProduction ? 60 * 1000 : 3 * 60 * 1000;
+const FILE_CHAIN_SYNC_INTERVAL_MS = isProduction ? 2 * 60 * 1000 : 5 * 60 * 1000;
+const EQUIPMENT_WATCH_INTERVAL_MS = isProduction ? 60 * 1000 : 3 * 60 * 1000;
+const FEDEX_SYNC_INTERVAL_MS = isProduction ? 60 * 1000 : 5 * 60 * 1000;
+const ZUND_CACHE_WARMER_INTERVAL_MS = isProduction ? 45_000 : 3 * 60 * 1000;
+const ZUND_WATCHER_INTERVAL_MS = isProduction ? 20_000 : 90_000;
+const ZUND_BACKGROUND_START_DELAY_MS = isProduction ? 0 : 30_000;
+
+function createSingleFlightTask(task: () => Promise<void>) {
+  let inFlight = false;
+
+  return async () => {
+    if (inFlight) {
+      return;
+    }
+
+    inFlight = true;
+    try {
+      await task();
+    } finally {
+      inFlight = false;
+    }
+  };
+}
 
 async function start(): Promise<void> {
   try {
@@ -338,69 +391,115 @@ async function start(): Promise<void> {
     // console.log(`📧 Email queue processor started (interval: ${EMAIL_QUEUE_INTERVAL / 1000}s)`);
 
     // Process alert rules every 5 minutes
-    setInterval(async () => {
+    const runAlertRules = createSingleFlightTask(async () => {
       try {
         await processAlertRules();
       } catch (error) {
         console.error('❌ Alert rules error:', error);
       }
-    }, 5 * 60 * 1000);
-    console.log('🔔 Alert rules processor started (interval: 5 minutes)');
+    });
+    setInterval(() => {
+      void runAlertRules();
+    }, ALERT_RULES_INTERVAL_MS);
+    console.log(`🔔 Alert rules processor started (interval: ${ALERT_RULES_INTERVAL_MS / 1000}s)`);
 
-    // RIP Queue — auto-sync Thrive statuses every 60 seconds
-    setInterval(async () => {
-      try {
-        const updates = await syncRipJobStatuses();
-        if (updates.length > 0) {
-          console.log(`🖨️ RIP sync: ${updates.length} job(s) updated`);
+    if (enableHeavyBackgroundJobs) {
+      // RIP Queue — auto-sync Thrive statuses every 60 seconds
+      const runRipQueueSync = createSingleFlightTask(async () => {
+        try {
+          const updates = await syncRipJobStatuses();
+          if (updates.length > 0) {
+            console.log(`🖨️ RIP sync: ${updates.length} job(s) updated`);
+          }
+        } catch (error) {
+          // Thrive shares may be offline — don't spam logs
+          if (String(error).includes('ENOENT') || String(error).includes('ECONNREFUSED')) return;
+          console.error('❌ RIP sync error:', error);
         }
-      } catch (error) {
-        // Thrive shares may be offline — don't spam logs
-        if (String(error).includes('ENOENT') || String(error).includes('ECONNREFUSED')) return;
-        console.error('❌ RIP sync error:', error);
-      }
-    }, 60 * 1000);
-    console.log('🖨️ RIP queue Thrive sync started (interval: 60s)');
+      });
+      setInterval(() => {
+        void runRipQueueSync();
+      }, RIP_QUEUE_SYNC_INTERVAL_MS);
+      console.log(`🖨️ RIP queue Thrive sync started (interval: ${RIP_QUEUE_SYNC_INTERVAL_MS / 1000}s)`);
 
-    // File Chain — auto-link print files to cut files every 2 minutes
-    setInterval(async () => {
-      try {
-        const result = await runAutoLinkingCycle();
-        const total = result.linksCreated + result.linksUpdated;
-        if (total > 0) {
-          console.log(`🔗 File chain sync: ${result.linksCreated} created, ${result.linksUpdated} updated${result.errors.length ? `, ${result.errors.length} errors` : ''}`);
+      // File Chain — auto-link print files to cut files every 2 minutes
+      const runFileChainSync = createSingleFlightTask(async () => {
+        try {
+          const result = await runAutoLinkingCycle();
+          const total = result.linksCreated + result.linksUpdated;
+          if (total > 0) {
+            console.log(`🔗 File chain sync: ${result.linksCreated} created, ${result.linksUpdated} updated${result.errors.length ? `, ${result.errors.length} errors` : ''}`);
+          }
+        } catch (error) {
+          if (String(error).includes('ENOENT') || String(error).includes('ECONNREFUSED')) return;
+          console.error('❌ File chain sync error:', error);
         }
-      } catch (error) {
-        if (String(error).includes('ENOENT') || String(error).includes('ECONNREFUSED')) return;
-        console.error('❌ File chain sync error:', error);
-      }
-    }, 2 * 60 * 1000);
-    console.log('🔗 File chain auto-linking started (interval: 2 min)');
+      });
+      setInterval(() => {
+        void runFileChainSync();
+      }, FILE_CHAIN_SYNC_INTERVAL_MS);
+      console.log(`🔗 File chain auto-linking started (interval: ${FILE_CHAIN_SYNC_INTERVAL_MS / 1000}s)`);
 
-    // Equipment watch rules — check every 60 seconds for scheduled alerts
-    setInterval(async () => {
-      try {
-        const result = await processEquipmentWatchRules();
-        if (result.sent > 0) {
-          console.log(`⚡ Equipment watch: ${result.evaluated} evaluated, ${result.sent} emails sent`);
+      // Equipment watch rules — check every 60 seconds for scheduled alerts
+      const runEquipmentWatchRules = createSingleFlightTask(async () => {
+        try {
+          const result = await processEquipmentWatchRules();
+          if (result.sent > 0) {
+            console.log(`⚡ Equipment watch: ${result.evaluated} evaluated, ${result.sent} emails sent`);
+          }
+        } catch (error) {
+          console.error('❌ Equipment watch rules error:', error);
         }
-      } catch (error) {
-        console.error('❌ Equipment watch rules error:', error);
+      });
+      setInterval(() => {
+        void runEquipmentWatchRules();
+      }, EQUIPMENT_WATCH_INTERVAL_MS);
+      console.log(`⚡ Equipment watch rules processor started (interval: ${EQUIPMENT_WATCH_INTERVAL_MS / 1000}s)`);
+
+      const runFedExSync = createSingleFlightTask(async () => {
+        try {
+          const result = await syncFedExShipmentRecords();
+          if (result.status === 'synced' && (result.imported > 0 || result.updated > 0)) {
+            console.log(
+              `📦 FedEx sync: ${result.imported} imported, ${result.updated} updated from ${result.sourceFileName}`
+            );
+          }
+        } catch (error) {
+          if (
+            String(error).includes('ENOENT') ||
+            String(error).includes('EACCES') ||
+            String(error).includes('EPERM') ||
+            String(error).includes('ECONNREFUSED')
+          ) {
+            return;
+          }
+          console.error('❌ FedEx sync error:', error);
+        }
+      });
+      setInterval(() => {
+        void runFedExSync();
+      }, FEDEX_SYNC_INTERVAL_MS);
+      console.log(`📦 FedEx sync started (interval: ${FEDEX_SYNC_INTERVAL_MS / 1000}s)`);
+
+      const startZundBackgroundServices = async () => {
+        const { startZundLiveCacheWarmer } = await import('./services/zund-live.js');
+        startZundLiveCacheWarmer(ZUND_CACHE_WARMER_INTERVAL_MS);
+
+        const { startZundWatcher } = await import('./services/zund-watcher.js');
+        startZundWatcher(ZUND_WATCHER_INTERVAL_MS);
+      };
+
+      if (ZUND_BACKGROUND_START_DELAY_MS > 0) {
+        setTimeout(() => {
+          void startZundBackgroundServices();
+        }, ZUND_BACKGROUND_START_DELAY_MS);
+        console.log(`👁️ Zund background services will start after ${ZUND_BACKGROUND_START_DELAY_MS / 1000}s`);
+      } else {
+        await startZundBackgroundServices();
       }
-    }, 60 * 1000);
-    console.log('⚡ Equipment watch rules processor started (interval: 1 minute)');
-
-    // QuickBooks auto-poll — creates WorkOrders from new QB invoices/sales orders
-    // const QB_POLL_INTERVAL = parseInt(process.env.QB_POLL_INTERVAL ?? '300000', 10);
-    // startQBAutoPoll(QB_POLL_INTERVAL);
-
-    // Pre-warm Zund live data cache in background
-    const { startZundLiveCacheWarmer } = await import('./services/zund-live.js');
-    startZundLiveCacheWarmer(45_000);
-
-    // Zund queue watcher — detect new .zcc files and auto-link to print jobs / work orders
-    const { startZundWatcher } = await import('./services/zund-watcher.js');
-    startZundWatcher();
+    } else {
+      console.log('⏸️ Heavy background sync is disabled in development. Set ENABLE_DEV_BACKGROUND_JOBS=true to re-enable RIP, file-chain, equipment-watch, and Zund polling.');
+    }
 
     server.listen(PORT, HOST, () => {
       console.log(`🚀 Server running at http://${HOST}:${PORT}`);

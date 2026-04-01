@@ -128,7 +128,7 @@ export function QuotesPage() {
     return new Date(date).toLocaleDateString();
   };
 
-  const quotes = data?.items ?? [];
+  const quotes = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
 
   return (
     <div className="space-y-6">

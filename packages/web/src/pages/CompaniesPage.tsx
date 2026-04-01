@@ -115,7 +115,11 @@ export function CompaniesPage() {
     },
   });
 
-  const companies = data?.items || [];
+  const companies = Array.isArray(data?.items) ? data.items : [];
+  const totalPages = typeof data?.totalPages === 'number' && data.totalPages > 0
+    ? data.totalPages
+    : 1;
+  const totalCompanies = typeof data?.total === 'number' ? data.total : companies.length;
 
   const handleSearchChange = (value: string) => {
     setSearch(value);
@@ -389,12 +393,12 @@ export function CompaniesPage() {
       )}
 
       {/* Pagination */}
-      {data && data.totalPages > 1 && (
+      {totalPages > 1 && (
         <div className="mt-6">
           <Pagination
             currentPage={page}
-            totalPages={data.totalPages}
-            totalItems={data.total}
+            totalPages={totalPages}
+            totalItems={totalCompanies}
             pageSize={PAGE_SIZE}
             onPageChange={setPage}
           />

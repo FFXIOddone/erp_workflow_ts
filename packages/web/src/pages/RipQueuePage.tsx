@@ -117,6 +117,19 @@ interface DashboardData {
   kpis: KPIs;
 }
 
+const EMPTY_KPIS: KPIs = {
+  totalJobs: 0,
+  inQueue: 0,
+  processing: 0,
+  printing: 0,
+  completedToday: 0,
+  failedToday: 0,
+  avgQueueToRipMinutes: null,
+  avgRipToPrintMinutes: null,
+  avgPrintMinutes: null,
+  avgTotalMinutes: null,
+};
+
 // ─── Helpers ──────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
@@ -203,7 +216,7 @@ export function RipQueuePage() {
       {/* Tabs */}
       <div className="border-b border-gray-200 mb-6">
         <nav className="flex gap-4">
-          {tabs.map(tab => (
+          {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
@@ -234,7 +247,16 @@ function DashboardView() {
 
   const { data: dashboard, isLoading } = useQuery<DashboardData>({
     queryKey: ['rip-queue', 'dashboard'],
-    queryFn: () => api.get('/rip-queue/dashboard').then(r => r.data.data),
+    queryFn: () =>
+      api.get('/rip-queue/dashboard').then((r) => {
+        const raw = r.data?.data ?? {};
+        return {
+          hotfolders: Array.isArray(raw.hotfolders) ? raw.hotfolders : [],
+          activeJobs: Array.isArray(raw.activeJobs) ? raw.activeJobs : [],
+          recentCompleted: Array.isArray(raw.recentCompleted) ? raw.recentCompleted : [],
+          kpis: raw.kpis && typeof raw.kpis === 'object' ? raw.kpis : EMPTY_KPIS,
+        };
+      }),
   });
 
   const syncMutation = useMutation({
@@ -250,17 +272,43 @@ function DashboardView() {
     );
   }
 
-  const kpis = dashboard?.kpis;
+  const kpis = dashboard?.kpis ?? EMPTY_KPIS;
+  const activeJobs = Array.isArray(dashboard?.activeJobs) ? dashboard.activeJobs : [];
+  const hotfolders = Array.isArray(dashboard?.hotfolders) ? dashboard.hotfolders : [];
+  const recentCompleted = Array.isArray(dashboard?.recentCompleted)
+    ? dashboard.recentCompleted
+    : [];
 
   return (
     <div className="space-y-6">
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        <KPICard label="In Queue" value={kpis?.inQueue ?? 0} icon={<Clock className="w-5 h-5 text-gray-500" />} />
-        <KPICard label="Processing" value={kpis?.processing ?? 0} icon={<Cpu className="w-5 h-5 text-cyan-500" />} />
-        <KPICard label="Printing" value={kpis?.printing ?? 0} icon={<Printer className="w-5 h-5 text-purple-500" />} />
-        <KPICard label="Completed Today" value={kpis?.completedToday ?? 0} icon={<CheckCircle className="w-5 h-5 text-green-500" />} />
-        <KPICard label="Failed Today" value={kpis?.failedToday ?? 0} icon={<XCircle className="w-5 h-5 text-red-500" />} alert={!!kpis?.failedToday} />
+        <KPICard
+          label="In Queue"
+          value={kpis?.inQueue ?? 0}
+          icon={<Clock className="w-5 h-5 text-gray-500" />}
+        />
+        <KPICard
+          label="Processing"
+          value={kpis?.processing ?? 0}
+          icon={<Cpu className="w-5 h-5 text-cyan-500" />}
+        />
+        <KPICard
+          label="Printing"
+          value={kpis?.printing ?? 0}
+          icon={<Printer className="w-5 h-5 text-purple-500" />}
+        />
+        <KPICard
+          label="Completed Today"
+          value={kpis?.completedToday ?? 0}
+          icon={<CheckCircle className="w-5 h-5 text-green-500" />}
+        />
+        <KPICard
+          label="Failed Today"
+          value={kpis?.failedToday ?? 0}
+          icon={<XCircle className="w-5 h-5 text-red-500" />}
+          alert={!!kpis?.failedToday}
+        />
       </div>
 
       {/* Timing KPIs */}
@@ -290,13 +338,11 @@ function DashboardView() {
       {/* Active Jobs */}
       <div className="bg-white rounded-lg border border-gray-200">
         <div className="px-4 py-3 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-700">
-            Active Jobs ({dashboard?.activeJobs?.length ?? 0})
-          </h3>
+          <h3 className="text-sm font-semibold text-gray-700">Active Jobs ({activeJobs.length})</h3>
         </div>
-        {dashboard?.activeJobs && dashboard.activeJobs.length > 0 ? (
+        {activeJobs.length > 0 ? (
           <div className="divide-y divide-gray-100">
-            {dashboard.activeJobs.map(job => (
+            {activeJobs.map((job) => (
               <JobRow key={job.id} job={job} compact />
             ))}
           </div>
@@ -311,12 +357,15 @@ function DashboardView() {
       <div className="bg-white rounded-lg border border-gray-200">
         <div className="px-4 py-3 border-b border-gray-100">
           <h3 className="text-sm font-semibold text-gray-700">
-            Available Hotfolders ({dashboard?.hotfolders?.length ?? 0})
+            Available Hotfolders ({hotfolders.length})
           </h3>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
-          {dashboard?.hotfolders?.map(hf => (
-            <div key={hf.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
+          {hotfolders.map((hf) => (
+            <div
+              key={hf.id}
+              className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100"
+            >
               <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
                 <Printer className="w-4 h-4 text-purple-600" />
               </div>
@@ -327,7 +376,9 @@ function DashboardView() {
                 </p>
               </div>
               {hf.equipmentId && (
-                <span className="ml-auto text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">Linked</span>
+                <span className="ml-auto text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                  Linked
+                </span>
               )}
             </div>
           ))}
@@ -335,27 +386,263 @@ function DashboardView() {
       </div>
 
       {/* Recently Completed */}
-      {dashboard?.recentCompleted && dashboard.recentCompleted.length > 0 && (
+      {recentCompleted.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200">
           <div className="px-4 py-3 border-b border-gray-100">
             <h3 className="text-sm font-semibold text-gray-700">
-              Completed Today ({dashboard.recentCompleted.length})
+              Completed Today ({recentCompleted.length})
             </h3>
           </div>
           <div className="divide-y divide-gray-100">
-            {dashboard.recentCompleted.slice(0, 10).map(job => (
+            {recentCompleted.slice(0, 10).map((job) => (
               <JobRow key={job.id} job={job} compact />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Fiery / VUTEk Diagnostics */}
+      <FieryDiagnosticsPanel />
+    </div>
+  );
+}
+
+// ─── Fiery Diagnostics Panel ──────────────────────────────────
+
+interface FieryDiagnosticsData {
+  share: { path: string; accessible: boolean; writable: boolean; error: string | null };
+  jmf: {
+    host: string;
+    port: number;
+    discoveredUrl: string;
+    autoDiscovered: boolean;
+    discoveryRaw: string | null;
+  };
+  workflow?: {
+    outputChannelName: string | null;
+    discoveredWorkflows: string[];
+    discoverySource: string;
+    discoveryError: string | null;
+    hint: string;
+  };
+  queue: { status: string; queueSize: number; raw: string | null };
+}
+
+function FieryDiagnosticsPanel() {
+  const [expanded, setExpanded] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
+
+  const { data, isLoading, isFetching, refetch } = useQuery<FieryDiagnosticsData>({
+    queryKey: ['rip-queue', 'fiery-diagnostics'],
+    queryFn: () => api.get('/rip-queue/fiery/diagnostics').then((r) => r.data?.data),
+    enabled: expanded,
+    refetchInterval: expanded ? 30_000 : false,
+    staleTime: 15_000,
+  });
+
+  const allGood = data && data.share.writable && data.queue.status !== 'Unreachable';
+  const hasIssue = data && (!data.share.writable || data.queue.status === 'Unreachable');
+
+  return (
+    <div
+      className={`bg-white rounded-lg border ${hasIssue ? 'border-red-200' : allGood ? 'border-green-200' : 'border-gray-200'}`}
+    >
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3"
+      >
+        <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-purple-600" />
+          VUTEk / Fiery Connectivity
+          {data && (
+            <span
+              className={`ml-2 text-xs px-2 py-0.5 rounded-full ${allGood ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
+            >
+              {allGood ? 'Connected' : 'Issue Detected'}
+            </span>
+          )}
+        </h3>
+        <div className="flex items-center gap-2">
+          {isFetching && <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin" />}
+          {expanded ? (
+            <ChevronDown className="w-4 h-4 text-gray-400" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-gray-400" />
+          )}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-gray-100 p-4 space-y-4">
+          {isLoading ? (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin" /> Running diagnostics…
+            </div>
+          ) : data ? (
+            <>
+              {/* Share Status */}
+              <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-50">
+                {data.share.writable ? (
+                  <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+                ) : data.share.accessible ? (
+                  <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+                ) : (
+                  <XCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-800">File Share (PDF drop)</p>
+                  <p className="text-xs text-gray-500 font-mono">{data.share.path}</p>
+                  {data.share.error && (
+                    <p className="text-xs text-red-600 mt-0.5">{data.share.error}</p>
+                  )}
+                  {data.share.writable && (
+                    <p className="text-xs text-green-600 mt-0.5">Accessible and writable</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Controller endpoint */}
+              <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-50">
+                {data.jmf.autoDiscovered ? (
+                  <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Controller endpoint (port {data.jmf.port})</p>
+                  <p className="text-xs text-gray-500 font-mono">{data.jmf.discoveredUrl}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {data.jmf.autoDiscovered
+                      ? 'Device URL auto-discovered'
+                      : 'Using fallback URL — port 8010 did not return a device GUID'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Queue Status */}
+              <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-50">
+                {data.queue.status === 'Unreachable' ? (
+                  <XCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                ) : (
+                  <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-800">VUTEk Queue</p>
+                  <p className="text-xs text-gray-500">
+                    Status: <span className="font-semibold">{data.queue.status}</span>
+                    {data.queue.queueSize > 0 && (
+                      <>
+                        {' '}
+                        &middot; {data.queue.queueSize} job
+                        {data.queue.queueSize !== 1 ? 's' : ''} queued
+                      </>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              {/* Workflow Status */}
+              <div
+                className={`flex items-start gap-3 p-3 rounded-lg ${data.workflow?.outputChannelName ? 'bg-green-50 border border-green-100' : 'bg-yellow-50 border border-yellow-100'}`}
+              >
+                {data.workflow?.outputChannelName ? (
+                  <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">Fiery defaults</p>
+                  {data.workflow?.outputChannelName ? (
+                    <p className="text-xs text-green-700">
+                      Optional workflow hint:{' '}
+                      <span className="font-mono font-semibold">
+                        {data.workflow.outputChannelName}
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-yellow-700">
+                      Plain hotfolder imports still work with controller defaults.
+                    </p>
+                  )}
+                  {/* Auto-discovered workflows from ProgramData share */}
+                  {data.workflow?.discoveredWorkflows &&
+                    data.workflow.discoveredWorkflows.length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-xs font-medium text-gray-700 mb-1">
+                          Discovered workflows from Fiery ({data.workflow.discoverySource}):
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {data.workflow.discoveredWorkflows.map((wf) => (
+                            <span
+                              key={wf}
+                              className="font-mono text-xs bg-white border border-gray-300 rounded px-2 py-0.5 text-gray-800"
+                            >
+                              {wf}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Add <span className="font-mono">VUTEK_OUTPUT_CHANNEL=&lt;name&gt;</span>{' '}
+                          only if you want the server to surface a specific workflow hint.
+                        </p>
+                      </div>
+                    )}
+                  {data.workflow?.discoveryError && !data.workflow.discoveredWorkflows?.length && (
+                    <p className="text-xs text-gray-500 mt-1">{data.workflow.discoveryError}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => refetch()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 rounded-md hover:bg-purple-100"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Re-run Diagnostics
+                </button>
+                {data.queue.raw && (
+                  <button
+                    onClick={() => setShowRaw((v) => !v)}
+                    className="text-xs text-gray-400 hover:text-gray-600 underline"
+                  >
+                    {showRaw ? 'Hide' : 'Show'} raw controller response
+                  </button>
+                )}
+              </div>
+
+              {showRaw && data.queue.raw && (
+                <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded overflow-auto max-h-48 whitespace-pre-wrap">
+                  {data.queue.raw}
+                </pre>
+              )}
+            </>
+          ) : (
+            <button onClick={() => refetch()} className="text-sm text-purple-600 hover:underline">
+              Run diagnostics
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function KPICard({ label, value, icon, alert }: { label: string; value: number; icon: React.ReactNode; alert?: boolean }) {
+function KPICard({
+  label,
+  value,
+  icon,
+  alert,
+}: {
+  label: string;
+  value: number;
+  icon: React.ReactNode;
+  alert?: boolean;
+}) {
   return (
-    <div className={`bg-white rounded-lg border p-4 ${alert ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
+    <div
+      className={`bg-white rounded-lg border p-4 ${alert ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}
+    >
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs text-gray-500">{label}</span>
         {icon}
@@ -389,9 +676,15 @@ function JobsListView() {
       const params: Record<string, string> = { limit: '100' };
       if (statusFilter) params.status = statusFilter;
       if (searchQuery) params.search = searchQuery;
-      return api.get('/rip-queue/jobs', { params }).then(r => ({ data: r.data.data, total: r.data.total }));
+      return api.get('/rip-queue/jobs', { params }).then((r) => {
+        const jobs = Array.isArray(r.data?.data) ? r.data.data : [];
+        const total = typeof r.data?.total === 'number' ? r.data.total : jobs.length;
+        return { data: jobs, total };
+      });
     },
   });
+
+  const jobs = Array.isArray(data?.data) ? data.data : [];
 
   const statusMutation = useMutation({
     mutationFn: ({ id, status, notes }: { id: string; status: string; notes?: string }) =>
@@ -425,7 +718,7 @@ function JobsListView() {
             type="text"
             placeholder="Search files, WOs, customers..."
             value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
+            onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-purple-500 focus:border-purple-500"
           />
         </div>
@@ -433,17 +726,17 @@ function JobsListView() {
           <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <select
             value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
+            onChange={(e) => setStatusFilter(e.target.value)}
             className="pl-9 pr-8 py-2 border border-gray-300 rounded-md text-sm focus:ring-purple-500 focus:border-purple-500 appearance-none bg-white"
           >
-            {statusOptions.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            {statusOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
           </select>
         </div>
-        <span className="text-sm text-gray-500 ml-auto">
-          {data?.total ?? 0} jobs
-        </span>
+        <span className="text-sm text-gray-500 ml-auto">{data?.total ?? 0} jobs</span>
       </div>
 
       {/* Job list */}
@@ -451,9 +744,9 @@ function JobsListView() {
         <div className="flex items-center justify-center h-40">
           <Loader2 className="w-6 h-6 text-purple-500 animate-spin" />
         </div>
-      ) : data?.data && data.data.length > 0 ? (
+      ) : jobs.length > 0 ? (
         <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
-          {data.data.map(job => (
+          {jobs.map((job) => (
             <div key={job.id}>
               <JobRow
                 job={job}
@@ -504,15 +797,11 @@ function JobRow({
         <StatusIcon status={job.status} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-900 truncate">
-              {job.sourceFileName}
-            </span>
+            <span className="text-sm font-medium text-gray-900 truncate">{job.sourceFileName}</span>
             <StatusBadge status={job.status} />
           </div>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-xs text-gray-500">
-              WO {job.workOrder.orderNumber}
-            </span>
+            <span className="text-xs text-gray-500">WO {job.workOrder.orderNumber}</span>
             <span className="text-xs text-gray-300">&middot;</span>
             <span className="text-xs text-gray-500">{job.workOrder.customerName}</span>
             <span className="text-xs text-gray-300">&middot;</span>
@@ -541,15 +830,14 @@ function JobRow({
           </div>
         )}
 
-        <span className="text-xs text-gray-400 flex-shrink-0">
-          {timeAgo(job.queuedAt)}
-        </span>
+        <span className="text-xs text-gray-400 flex-shrink-0">{timeAgo(job.queuedAt)}</span>
 
-        {onToggle && (
-          expanded ?
-            <ChevronDown className="w-4 h-4 text-gray-400" /> :
+        {onToggle &&
+          (expanded ? (
+            <ChevronDown className="w-4 h-4 text-gray-400" />
+          ) : (
             <ChevronRight className="w-4 h-4 text-gray-400" />
-        )}
+          ))}
       </div>
 
       {/* Expanded detail */}
@@ -573,11 +861,23 @@ function JobRow({
               <span className="text-gray-500">Timeline:</span>
               <TimelineStep label="Queued" time={job.queuedAt} />
               <ArrowRight className="w-3 h-3 text-gray-300" />
-              <TimelineStep label="RIP Done" time={job.rippedAt} duration={job.timing?.queueToRipMinutes} />
+              <TimelineStep
+                label="RIP Done"
+                time={job.rippedAt}
+                duration={job.timing?.queueToRipMinutes}
+              />
               <ArrowRight className="w-3 h-3 text-gray-300" />
-              <TimelineStep label="Print Start" time={job.printStartedAt} duration={job.timing?.ripToPrintMinutes} />
+              <TimelineStep
+                label="Print Start"
+                time={job.printStartedAt}
+                duration={job.timing?.ripToPrintMinutes}
+              />
               <ArrowRight className="w-3 h-3 text-gray-300" />
-              <TimelineStep label="Print Done" time={job.printCompletedAt} duration={job.timing?.printMinutes} />
+              <TimelineStep
+                label="Print Done"
+                time={job.printCompletedAt}
+                duration={job.timing?.printMinutes}
+              />
             </div>
           )}
 
@@ -586,7 +886,9 @@ function JobRow({
             <div className="flex items-center gap-4 text-xs text-gray-500">
               {job.ripInkUsage && <span>Ink: {job.ripInkUsage}</span>}
               {job.ripInkCoverage && <span>Coverage: {job.ripInkCoverage}%</span>}
-              {job.ripJobGuid && <span className="text-gray-400">GUID: {job.ripJobGuid.slice(0, 8)}...</span>}
+              {job.ripJobGuid && (
+                <span className="text-gray-400">GUID: {job.ripJobGuid.slice(0, 8)}...</span>
+              )}
             </div>
           )}
 
@@ -604,21 +906,45 @@ function JobRow({
               {isActive && onStatusChange && (
                 <>
                   {job.status === 'QUEUED' && (
-                    <ActionButton label="Mark Processing" onClick={() => onStatusChange('PROCESSING')} color="cyan" />
+                    <ActionButton
+                      label="Mark Processing"
+                      onClick={() => onStatusChange('PROCESSING')}
+                      color="cyan"
+                    />
                   )}
                   {job.status === 'PROCESSING' && (
-                    <ActionButton label="Mark Ready" onClick={() => onStatusChange('READY')} color="blue" />
+                    <ActionButton
+                      label="Mark Ready"
+                      onClick={() => onStatusChange('READY')}
+                      color="blue"
+                    />
                   )}
                   {['READY', 'SENDING'].includes(job.status) && (
-                    <ActionButton label="Mark Printing" onClick={() => onStatusChange('PRINTING')} color="purple" />
+                    <ActionButton
+                      label="Mark Printing"
+                      onClick={() => onStatusChange('PRINTING')}
+                      color="purple"
+                    />
                   )}
                   {job.status === 'PRINTING' && (
-                    <ActionButton label="Mark Printed" onClick={() => onStatusChange('PRINTED')} color="green" />
+                    <ActionButton
+                      label="Mark Printed"
+                      onClick={() => onStatusChange('PRINTED')}
+                      color="green"
+                    />
                   )}
                   {job.status === 'PRINTED' && (
-                    <ActionButton label="Complete" onClick={() => onStatusChange('COMPLETED')} color="emerald" />
+                    <ActionButton
+                      label="Complete"
+                      onClick={() => onStatusChange('COMPLETED')}
+                      color="emerald"
+                    />
                   )}
-                  <ActionButton label="Mark Failed" onClick={() => onStatusChange('FAILED')} color="red" />
+                  <ActionButton
+                    label="Mark Failed"
+                    onClick={() => onStatusChange('FAILED')}
+                    color="red"
+                  />
                 </>
               )}
               {isActive && onDelete && (
@@ -641,17 +967,35 @@ function DetailField({ label, value }: { label: string; value?: string | null })
   );
 }
 
-function TimelineStep({ label, time, duration }: { label: string; time?: string | null; duration?: number | null }) {
+function TimelineStep({
+  label,
+  time,
+  duration,
+}: {
+  label: string;
+  time?: string | null;
+  duration?: number | null;
+}) {
   return (
     <span className={time ? 'text-gray-700' : 'text-gray-300'}>
       {label}
       {time && <span className="text-gray-400 ml-1">({timeAgo(time)})</span>}
-      {duration != null && <span className="text-purple-500 ml-1">[{formatDuration(duration)}]</span>}
+      {duration != null && (
+        <span className="text-purple-500 ml-1">[{formatDuration(duration)}]</span>
+      )}
     </span>
   );
 }
 
-function ActionButton({ label, onClick, color }: { label: string; onClick: () => void; color: string }) {
+function ActionButton({
+  label,
+  onClick,
+  color,
+}: {
+  label: string;
+  onClick: () => void;
+  color: string;
+}) {
   const colorMap: Record<string, string> = {
     cyan: 'bg-cyan-50 text-cyan-700 hover:bg-cyan-100',
     blue: 'bg-blue-50 text-blue-700 hover:bg-blue-100',
@@ -663,7 +1007,10 @@ function ActionButton({ label, onClick, color }: { label: string; onClick: () =>
   };
   return (
     <button
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
       className={`px-3 py-1.5 text-xs font-medium rounded-md ${colorMap[color] || colorMap.gray}`}
     >
       {label}
@@ -698,20 +1045,27 @@ function SendToRipView() {
   // Queries
   const { data: hotfolders } = useQuery<HotfolderTarget[]>({
     queryKey: ['rip-queue', 'hotfolders'],
-    queryFn: () => api.get('/rip-queue/hotfolders').then(r => r.data.data),
+    queryFn: () =>
+      api
+        .get('/rip-queue/hotfolders')
+        .then((r) => (Array.isArray(r.data?.data) ? r.data.data : [])),
   });
 
   // Work order search
   const { data: woResults } = useQuery({
     queryKey: ['orders', 'search', woSearch],
-    queryFn: () => api.get('/orders', { params: { search: woSearch, pageSize: 10 } }).then(r => r.data.data.items),
+    queryFn: () =>
+      api
+        .get('/orders', { params: { search: woSearch, pageSize: 10 } })
+        .then((r) => (Array.isArray(r.data?.data?.items) ? r.data.data.items : [])),
     enabled: woSearch.length >= 2,
   });
 
   // File validation
   const { data: fileValidation } = useQuery({
     queryKey: ['rip-queue', 'validate-file', sourceFilePath],
-    queryFn: () => api.post('/rip-queue/validate-file', { filePath: sourceFilePath }).then(r => r.data.data),
+    queryFn: () =>
+      api.post('/rip-queue/validate-file', { filePath: sourceFilePath }).then((r) => r.data.data),
     enabled: sourceFilePath.length > 5,
   });
 
@@ -724,7 +1078,7 @@ function SendToRipView() {
       setSourceFilePath('');
       setSelectedHotfolder('');
       setNotes('');
-      alert('File sent to RIP successfully!');
+      alert('File submitted to RIP successfully!');
     },
     onError: (err: any) => {
       alert(err.response?.data?.message || 'Failed to send file to RIP');
@@ -768,7 +1122,10 @@ function SendToRipView() {
             type="text"
             placeholder="Search by WO#, customer, or description..."
             value={woSearch}
-            onChange={e => { setWoSearch(e.target.value); setWorkOrderId(''); }}
+            onChange={(e) => {
+              setWoSearch(e.target.value);
+              setWorkOrderId('');
+            }}
             className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-purple-500 focus:border-purple-500"
           />
         </div>
@@ -778,7 +1135,10 @@ function SendToRipView() {
               <button
                 key={wo.id}
                 type="button"
-                onClick={() => { setWorkOrderId(wo.id); setWoSearch(wo.orderNumber); }}
+                onClick={() => {
+                  setWorkOrderId(wo.id);
+                  setWoSearch(wo.orderNumber);
+                }}
                 className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-purple-50 text-sm"
               >
                 <span className="font-medium text-gray-900">{wo.orderNumber}</span>
@@ -807,11 +1167,13 @@ function SendToRipView() {
           type="text"
           placeholder="\\\\wildesigns-fs1\\Company Files\\Customer\\WO#####\\PRINT\\file.tif"
           value={sourceFilePath}
-          onChange={e => setSourceFilePath(e.target.value)}
+          onChange={(e) => setSourceFilePath(e.target.value)}
           className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:ring-purple-500 focus:border-purple-500"
         />
         {fileValidation && (
-          <div className={`flex items-center gap-2 text-sm ${fileValidation.valid ? 'text-green-600' : 'text-red-600'}`}>
+          <div
+            className={`flex items-center gap-2 text-sm ${fileValidation.valid ? 'text-green-600' : 'text-red-600'}`}
+          >
             {fileValidation.valid ? (
               <>
                 <CheckCircle className="w-4 h-4" />
@@ -826,7 +1188,8 @@ function SendToRipView() {
           </div>
         )}
         <p className="text-xs text-gray-400">
-          Full UNC path to the print file on the network drive. The file will be COPIED (not moved) to the hotfolder.
+          Full UNC path to the print file on the network drive. The file will be COPIED (not moved)
+          to the hotfolder.
         </p>
       </div>
 
@@ -837,7 +1200,7 @@ function SendToRipView() {
           3. Select Printer / Hotfolder
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {hotfolders?.map(hf => (
+          {hotfolders?.map((hf) => (
             <button
               key={hf.id}
               type="button"
@@ -848,9 +1211,13 @@ function SendToRipView() {
                   : 'border-gray-200 hover:border-purple-300 hover:bg-purple-50/50'
               }`}
             >
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                selectedHotfolder === hf.id ? 'bg-purple-500 text-white' : 'bg-gray-100 text-gray-500'
-              }`}>
+              <div
+                className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  selectedHotfolder === hf.id
+                    ? 'bg-purple-500 text-white'
+                    : 'bg-gray-100 text-gray-500'
+                }`}
+              >
                 <Printer className="w-4 h-4" />
               </div>
               <div className="min-w-0">
@@ -875,7 +1242,11 @@ function SendToRipView() {
             <Settings2 className="w-4 h-4" />
             4. Print Settings (Optional)
           </span>
-          {showSettings ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          {showSettings ? (
+            <ChevronDown className="w-4 h-4" />
+          ) : (
+            <ChevronRight className="w-4 h-4" />
+          )}
         </button>
         {showSettings && (
           <div className="px-4 pb-4 space-y-4 border-t border-gray-100 pt-4">
@@ -886,7 +1257,7 @@ function SendToRipView() {
                   type="text"
                   placeholder="e.g., sRGB, AdobeRGB"
                   value={colorProfile}
-                  onChange={e => setColorProfile(e.target.value)}
+                  onChange={(e) => setColorProfile(e.target.value)}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm"
                 />
               </div>
@@ -894,22 +1265,30 @@ function SendToRipView() {
                 <label className="block text-xs text-gray-500 mb-1">Resolution</label>
                 <select
                   value={printResolution}
-                  onChange={e => setPrintResolution(e.target.value)}
+                  onChange={(e) => setPrintResolution(e.target.value)}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm"
                 >
                   <option value="">Auto</option>
-                  {PRINT_RESOLUTION_OPTIONS.map(r => <option key={r} value={r}>{r} DPI</option>)}
+                  {PRINT_RESOLUTION_OPTIONS.map((r) => (
+                    <option key={r} value={r}>
+                      {r} DPI
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Print Mode</label>
                 <select
                   value={printMode}
-                  onChange={e => setPrintMode(e.target.value)}
+                  onChange={(e) => setPrintMode(e.target.value)}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm"
                 >
                   <option value="">Default</option>
-                  {PRINT_MODE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+                  {PRINT_MODE_OPTIONS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -918,7 +1297,7 @@ function SendToRipView() {
                   type="text"
                   placeholder="e.g., 3M 8518, ORAFOL 451"
                   value={mediaType}
-                  onChange={e => setMediaType(e.target.value)}
+                  onChange={(e) => setMediaType(e.target.value)}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm"
                 />
               </div>
@@ -926,10 +1305,14 @@ function SendToRipView() {
                 <label className="block text-xs text-gray-500 mb-1">White Ink</label>
                 <select
                   value={whiteInk}
-                  onChange={e => setWhiteInk(e.target.value)}
+                  onChange={(e) => setWhiteInk(e.target.value)}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm"
                 >
-                  {WHITE_INK_OPTIONS.map(w => <option key={w} value={w}>{w}</option>)}
+                  {WHITE_INK_OPTIONS.map((w) => (
+                    <option key={w} value={w}>
+                      {w}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -938,7 +1321,7 @@ function SendToRipView() {
                   type="number"
                   min={1}
                   value={copies}
-                  onChange={e => setCopies(Math.max(1, parseInt(e.target.value) || 1))}
+                  onChange={(e) => setCopies(Math.max(1, parseInt(e.target.value) || 1))}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm"
                 />
               </div>
@@ -946,7 +1329,7 @@ function SendToRipView() {
                 <label className="block text-xs text-gray-500 mb-1">Priority</label>
                 <select
                   value={priority}
-                  onChange={e => setPriority(parseInt(e.target.value))}
+                  onChange={(e) => setPriority(parseInt(e.target.value))}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm"
                 >
                   <option value={1}>1 — Urgent</option>
@@ -962,7 +1345,7 @@ function SendToRipView() {
                 <input
                   type="checkbox"
                   checked={mirror}
-                  onChange={e => setMirror(e.target.checked)}
+                  onChange={(e) => setMirror(e.target.checked)}
                   className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                 />
                 Mirror
@@ -971,7 +1354,7 @@ function SendToRipView() {
                 <input
                   type="checkbox"
                   checked={nestingEnabled}
-                  onChange={e => setNestingEnabled(e.target.checked)}
+                  onChange={(e) => setNestingEnabled(e.target.checked)}
                   className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                 />
                 Enable Nesting
@@ -981,7 +1364,7 @@ function SendToRipView() {
               <label className="block text-xs text-gray-500 mb-1">Notes</label>
               <textarea
                 value={notes}
-                onChange={e => setNotes(e.target.value)}
+                onChange={(e) => setNotes(e.target.value)}
                 placeholder="Special instructions for the operator..."
                 rows={2}
                 className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm"

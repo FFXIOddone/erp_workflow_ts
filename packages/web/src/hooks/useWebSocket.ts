@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import type { WsMessage, WsMessageType } from '@erp/shared';
+import { getWebSocketUrl } from '../lib/runtime-url';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -19,10 +20,10 @@ class WebSocketManager {
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private pingInterval: NodeJS.Timeout | null = null;
   private messageHandler: ((data: WsMessage<OrderPayload>) => void) | null = null;
+  private shouldReconnect = true;
   
   // Exponential backoff for reconnection
   private reconnectAttempts = 0;
-  private readonly maxReconnectAttempts = 10;
   private readonly baseReconnectDelay = 1000; // 1 second
   private readonly maxReconnectDelay = 30000; // 30 seconds
   
@@ -67,11 +68,9 @@ class WebSocketManager {
       return;
     }
 
+    this.shouldReconnect = true;
     this.setStatus('connecting');
-    // In production, WS is on the same host:port as the page.
-    // In dev, Vite proxies /ws to the API server (see vite.config.ts).
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = import.meta.env.VITE_WS_URL ?? `${wsProtocol}//${window.location.hostname}:${window.location.port || '8001'}/ws`;
+    const wsUrl = getWebSocketUrl();
     
     try {
       this.ws = new WebSocket(wsUrl);
@@ -94,8 +93,11 @@ class WebSocketManager {
 
       this.ws.onclose = () => {
         console.log('WebSocket disconnected, reconnecting...');
+        this.ws = null;
         this.setStatus('disconnected');
-        this.scheduleReconnect();
+        if (this.shouldReconnect) {
+          this.scheduleReconnect();
+        }
       };
 
       this.ws.onerror = (error) => {
@@ -116,13 +118,7 @@ class WebSocketManager {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
     }
-    
-    // Give up after max attempts
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.warn('WebSocket: Max reconnection attempts reached');
-      return;
-    }
-    
+
     // Exponential backoff with jitter
     const delay = Math.min(
       this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts) + Math.random() * 1000,
@@ -187,6 +183,7 @@ class WebSocketManager {
   }
 
   disconnect() {
+    this.shouldReconnect = false;
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -216,6 +213,20 @@ export function useWebSocket() {
 
   useEffect(() => {
     const manager = managerRef.current;
+    const pendingInvalidations = new Set<string>();
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleInvalidation = (...keys: string[]) => {
+      for (const key of keys) pendingInvalidations.add(key);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        for (const key of pendingInvalidations) {
+          queryClient.invalidateQueries({ queryKey: [key] });
+        }
+        pendingInvalidations.clear();
+        debounceTimer = null;
+      }, 300); // Batch invalidations within 300ms window
+    };
     
     // Set up message handler
     manager.setMessageHandler((message) => {
@@ -224,20 +235,7 @@ export function useWebSocket() {
       
       // Debounced invalidation — avoids stampeding multiple WS events
       // into dozens of simultaneous refetches
-      const pendingInvalidations = new Set<string>();
-      let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-      
-      const scheduleInvalidation = (...keys: string[]) => {
-        for (const key of keys) pendingInvalidations.add(key);
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-          for (const key of pendingInvalidations) {
-            queryClient.invalidateQueries({ queryKey: [key] });
-          }
-          pendingInvalidations.clear();
-          debounceTimer = null;
-        }, 300); // Batch invalidations within 300ms window
-      };
+
       
       // Targeted order invalidation — only invalidates the specific order
       // if possible, falling back to list invalidation
@@ -477,6 +475,11 @@ export function useWebSocket() {
     }
 
     // Don't disconnect on unmount - we want persistent connection
+    return () => {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
+    };
   }, [queryClient]);
 
   return { status, lastMessage };

@@ -30,12 +30,19 @@ export function useWebSocket(onMessage?: MessageHandler) {
   const attemptsRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const closingSocketsRef = useRef(new WeakSet<WebSocket>());
   const onMessageRef = useRef(onMessage);
   const subscribersRef = useRef<Set<MessageHandler>>(new Set());
   onMessageRef.current = onMessage;
 
   const connect = useCallback(() => {
     if (!token) return;
+    if (
+      wsRef.current?.readyState === WebSocket.OPEN ||
+      wsRef.current?.readyState === WebSocket.CONNECTING
+    ) {
+      return;
+    }
 
     // Derive WS URL from API URL: http->ws, /api/v1->/ws
     const wsUrl = config.apiUrl
@@ -78,9 +85,17 @@ export function useWebSocket(onMessage?: MessageHandler) {
 
       ws.onclose = () => {
         setStatus('disconnected');
-        wsRef.current = null;
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
         if (pingRef.current) clearInterval(pingRef.current);
-        scheduleReconnect();
+
+        const wasIntentional = closingSocketsRef.current.has(ws);
+        closingSocketsRef.current.delete(ws);
+
+        if (!wasIntentional) {
+          scheduleReconnect();
+        }
       };
 
       ws.onerror = () => {
@@ -119,7 +134,10 @@ export function useWebSocket(onMessage?: MessageHandler) {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (pingRef.current) clearInterval(pingRef.current);
-      wsRef.current?.close();
+      if (wsRef.current) {
+        closingSocketsRef.current.add(wsRef.current);
+        wsRef.current.close();
+      }
       wsRef.current = null;
     };
   }, [connect]);

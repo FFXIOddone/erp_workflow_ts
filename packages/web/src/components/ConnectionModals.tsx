@@ -49,11 +49,24 @@ interface Share {
 export function FileSharesModal({ isOpen, onClose, equipmentId, equipmentName, ipAddress }: FileSharesModalProps) {
   const [expandedShare, setExpandedShare] = useState<string | null>(null);
 
-  const { data, isLoading, error, refetch, isFetching } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<{
+    shares: Share[];
+    error?: string;
+    scannedAt?: string;
+  }>({
     queryKey: ['equipment-smb-shares', equipmentId, ipAddress],
     queryFn: async () => {
       const res = await api.get(`/equipment/${equipmentId}/smb-shares`, { params: { targetIp: ipAddress } });
-      return res.data.data;
+      const payload = res.data?.data;
+      const shares = Array.isArray(payload?.shares) ? payload.shares : [];
+      return {
+        shares: shares.map((share: Share) => ({
+          ...share,
+          items: Array.isArray(share?.items) ? share.items : [],
+        })),
+        error: typeof payload?.error === 'string' ? payload.error : undefined,
+        scannedAt: typeof payload?.scannedAt === 'string' ? payload.scannedAt : undefined,
+      };
     },
     enabled: isOpen,
     staleTime: 30000,
@@ -61,7 +74,7 @@ export function FileSharesModal({ isOpen, onClose, equipmentId, equipmentName, i
 
   if (!isOpen) return null;
 
-  const shares: Share[] = data?.shares || [];
+  const shares: Share[] = Array.isArray(data?.shares) ? data.shares : [];
   const errorMsg = data?.error;
 
   function formatFileSize(bytes: number | null): string {
@@ -315,11 +328,20 @@ export function WinServicesModal({ isOpen, onClose, equipmentId, equipmentName, 
   const [search, setSearch] = useState('');
   const [groupByCategory, setGroupByCategory] = useState(true);
 
-  const { data, isLoading, error, refetch, isFetching } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<{
+    services: ServiceInfo[];
+    error?: string;
+    summary?: { total?: number; running?: number; stopped?: number };
+  }>({
     queryKey: ['equipment-win-services', equipmentId, ipAddress, filter],
     queryFn: async () => {
       const res = await api.get(`/equipment/${equipmentId}/win-services`, { params: { filter, targetIp: ipAddress } });
-      return res.data.data;
+      const payload = res.data?.data;
+      return {
+        services: Array.isArray(payload?.services) ? payload.services : [],
+        error: typeof payload?.error === 'string' ? payload.error : undefined,
+        summary: payload?.summary && typeof payload.summary === 'object' ? payload.summary : undefined,
+      };
     },
     enabled: isOpen,
     staleTime: 30000,
@@ -327,7 +349,7 @@ export function WinServicesModal({ isOpen, onClose, equipmentId, equipmentName, 
 
   if (!isOpen) return null;
 
-  const services: ServiceInfo[] = data?.services || [];
+  const services: ServiceInfo[] = Array.isArray(data?.services) ? data.services : [];
   const errorMsg = data?.error;
   const summary = data?.summary;
 

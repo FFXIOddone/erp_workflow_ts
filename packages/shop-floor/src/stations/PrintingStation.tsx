@@ -33,7 +33,7 @@ import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import { useWebSocket, type WsStatus } from '../lib/useWebSocket';
 import toast from 'react-hot-toast';
-import { PrintingMethod, inferRoutingFromOrderDetails } from '@erp/shared';
+import { PrintingMethod, inferRoutingFromOrderDetails, isDesignOnlyOrder } from '@erp/shared';
 
 // ─── Types ────────────────────────────────────────────
 
@@ -199,6 +199,53 @@ interface RipFileValidation {
   resolvedPath?: string;
 }
 
+interface FieryDiagnostics {
+  share: {
+    path: string;
+    accessible: boolean;
+    writable: boolean;
+    error?: string | null;
+  };
+  jmf: {
+    host: string;
+    port: number;
+    discoveredUrl: string;
+    autoDiscovered: boolean;
+    discoveryRaw?: string | null;
+  };
+  queue: {
+    status: string;
+    queueSize: number;
+    raw?: string | null;
+  };
+  workflow: {
+    outputChannelName: string | null;
+    colorMode: string | null;
+    inkType: string | null;
+    whiteInkOptions: string | null;
+    discoveredWorkflows: string[];
+    discoverySource: string;
+    discoveryError?: string | null;
+    hint?: string | null;
+  };
+  media: {
+    media: string | null;
+    mediaType: string | null;
+    mediaUnit: string | null;
+    mediaDimension: string | null;
+    resolution: string | null;
+    whiteInkEnabled: boolean;
+  };
+  capabilities?: {
+    workflows: string[];
+    colorModes: string[];
+    inkTypes: string[];
+    whiteInkOptions: string[];
+    source: string;
+    error?: string | null;
+  } | null;
+}
+
 interface SendCandidate {
   id: string;
   kind: 'attachment' | 'fileChain';
@@ -209,10 +256,7 @@ interface SendCandidate {
   fileTypeLabel: string;
 }
 
-type PrintStation =
-  | PrintingMethod.ROLL_TO_ROLL
-  | PrintingMethod.FLATBED
-  | PrintingMethod.SCREEN_PRINT;
+type PrintStation = PrintingMethod.ROLL_TO_ROLL | PrintingMethod.FLATBED;
 
 // ─── Constants ────────────────────────────────────────
 
@@ -236,27 +280,79 @@ const STATION_CONFIG: Record<
     icon: 'text-purple-500',
     ring: 'ring-purple-300',
   },
-  SCREEN_PRINT: {
-    label: 'Screen Print',
-    color: 'text-green-700',
-    bg: 'bg-green-50',
-    border: 'border-green-200',
-    icon: 'text-green-500',
-    ring: 'ring-green-300',
-  },
 };
 
 const ALL_STATION_LABELS: Record<string, string> = {
-  ROLL_TO_ROLL: 'Roll to Roll',
-  FLATBED: 'Flatbed',
-  SCREEN_PRINT: 'Screen Print',
-  PRODUCTION: 'Production',
-  DESIGN: 'Design',
-  SHIPPING_RECEIVING: 'Shipping',
-  ORDER_ENTRY: 'Order Entry',
-  INSTALLATION: 'Installation',
   SALES: 'Sales',
+  DESIGN_ONLY: 'Design Only',
+  ORDER_ENTRY: 'Order Entry',
+  DESIGN: 'Design',
+  DESIGN_PROOF: 'Design - Proof',
+  DESIGN_APPROVAL: 'Design - Approval',
+  DESIGN_PRINT_READY: 'Design - Print Ready',
+  FLATBED: 'Flatbed',
+  FLATBED_PRINTING: 'Flatbed - Printing',
+  ROLL_TO_ROLL: 'Roll to Roll',
+  ROLL_TO_ROLL_PRINTING: 'Roll to Roll - Printing',
+  SCREEN_PRINT: 'Screen Print',
+  SCREEN_PRINT_PRINTING: 'Screen Print - Printing',
+  SCREEN_PRINT_ASSEMBLY: 'Screen Print - Assembly',
+  PRODUCTION: 'Production',
+  PRODUCTION_ZUND: 'Production - Zund',
+  PRODUCTION_FINISHING: 'Production - Finishing',
+  SHIPPING_RECEIVING: 'Shipping',
+  SHIPPING_QC: 'Shipping - QC',
+  SHIPPING_PACKAGING: 'Shipping - Packaging',
+  SHIPPING_SHIPMENT: 'Shipping - Shipment',
+  SHIPPING_INSTALL_READY: 'Shipping - Install Ready',
+  INSTALLATION: 'Installation',
+  INSTALLATION_REMOTE: 'Installation - Remote',
+  INSTALLATION_INHOUSE: 'Installation - InHouse',
+  COMPLETE: 'Complete',
+  COMPLETE_INSTALLED: 'Complete - Installed',
+  COMPLETE_SHIPPED: 'Complete - Shipped',
+  COMPLETE_DESIGN_ONLY: 'Complete - Design Only',
 };
+
+// Canonical station display order (mirrors routing-defaults.ts STATION_ORDER)
+const ROUTING_ORDER: string[] = [
+  'SALES',
+  'DESIGN_ONLY',
+  'ORDER_ENTRY',
+  'DESIGN',
+  'DESIGN_PROOF',
+  'DESIGN_APPROVAL',
+  'DESIGN_PRINT_READY',
+  'FLATBED',
+  'FLATBED_PRINTING',
+  'ROLL_TO_ROLL',
+  'ROLL_TO_ROLL_PRINTING',
+  'SCREEN_PRINT',
+  'SCREEN_PRINT_PRINTING',
+  'SCREEN_PRINT_ASSEMBLY',
+  'PRODUCTION',
+  'PRODUCTION_ZUND',
+  'PRODUCTION_FINISHING',
+  'SHIPPING_RECEIVING',
+  'SHIPPING_QC',
+  'SHIPPING_PACKAGING',
+  'SHIPPING_SHIPMENT',
+  'SHIPPING_INSTALL_READY',
+  'INSTALLATION',
+  'INSTALLATION_REMOTE',
+  'INSTALLATION_INHOUSE',
+  'COMPLETE',
+  'COMPLETE_INSTALLED',
+  'COMPLETE_SHIPPED',
+  'COMPLETE_DESIGN_ONLY',
+];
+function sortRouting(routing: string[]): string[] {
+  return [...routing].sort((a, b) => {
+    const ai = ROUTING_ORDER.indexOf(a);
+    const bi = ROUTING_ORDER.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+}
 
 const PRIORITY_CONFIG: Record<number, { label: string; color: string; textColor: string }> = {
   1: { label: 'RUSH', color: 'bg-red-500', textColor: 'text-white' },
@@ -273,17 +369,25 @@ const AUTO_SEND_CANDIDATE_ID = '__auto__';
 // ─── Helpers ──────────────────────────────────────────
 
 function isPrintStation(s: string): s is PrintStation {
-  return s === 'ROLL_TO_ROLL' || s === 'FLATBED' || s === 'SCREEN_PRINT';
+  return s === 'ROLL_TO_ROLL' || s === 'FLATBED';
 }
 
-function inferPrintStations(order: Pick<WorkOrder, 'description' | 'notes'>): PrintStation[] {
+function inferPrintStations(
+  order: Pick<WorkOrder, 'routing' | 'description' | 'notes'>
+): PrintStation[] {
   return inferRoutingFromOrderDetails({
     description: order.description,
     notes: order.notes,
+    routing: order.routing,
   }).filter((station): station is PrintStation => isPrintStation(station));
 }
 
-function getOrderPrintStations(order: Pick<WorkOrder, 'routing' | 'description' | 'notes'>): PrintStation[] {
+function getOrderPrintStations(
+  order: Pick<WorkOrder, 'routing' | 'description' | 'notes'>
+): PrintStation[] {
+  if (isDesignOnlyOrder({ description: order.description, routing: order.routing })) {
+    return [];
+  }
   const explicitStations = order.routing.filter(isPrintStation) as PrintStation[];
   return explicitStations.length > 0 ? explicitStations : inferPrintStations(order);
 }
@@ -392,7 +496,7 @@ function getLiveStateClasses(state: string | null | undefined): string {
 
 function buildSendCandidates(
   attachments: OrderAttachment[],
-  fileChainLinks: ShopFloorFileChainLink[],
+  fileChainLinks: ShopFloorFileChainLink[]
 ): SendCandidate[] {
   const fileChainCandidates = fileChainLinks
     .filter((link) => Boolean(link.printFileName?.trim() || link.printFilePath?.trim()))
@@ -401,9 +505,8 @@ function buildSendCandidates(
       kind: 'fileChain' as const,
       label: link.printFileName?.trim() || 'Linked print file',
       detail:
-        [link.status?.replace(/_/g, ' '), link.linkConfidence]
-          .filter(Boolean)
-          .join(' • ') || 'Existing file-chain print file',
+        [link.status?.replace(/_/g, ' '), link.linkConfidence].filter(Boolean).join(' • ') ||
+        'Existing file-chain print file',
       sourceFilePath: link.printFilePath?.trim() || undefined,
       fileTypeLabel: 'FILE CHAIN',
     }));
@@ -441,8 +544,13 @@ function buildSendCandidates(
  * Find the "active" print station for an order — the first one
  * in routing that is IN_PROGRESS, or failing that the first NOT_STARTED one.
  */
-function getActivePrintStation(order: WorkOrder, userStations: PrintStation[]): PrintStation | null {
-  const relevantStations = getOrderPrintStations(order).filter((station) => userStations.includes(station));
+function getActivePrintStation(
+  order: WorkOrder,
+  userStations: PrintStation[]
+): PrintStation | null {
+  const relevantStations = getOrderPrintStations(order).filter((station) =>
+    userStations.includes(station)
+  );
 
   // First look for one that's in progress
   for (const st of relevantStations) {
@@ -457,7 +565,10 @@ function getActivePrintStation(order: WorkOrder, userStations: PrintStation[]): 
   return null;
 }
 
-function getStationStatus(order: WorkOrder, station: string): 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' {
+function getStationStatus(
+  order: WorkOrder,
+  station: string
+): 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' {
   const prog = order.stationProgress.find((sp) => sp.station === station);
   return (prog?.status as 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED') || 'NOT_STARTED';
 }
@@ -497,12 +608,18 @@ export function PrintingStation() {
   const [revisionOrderNumber, setRevisionOrderNumber] = useState('');
   const [revisionReason, setRevisionReason] = useState('');
   const [revisionNotes, setRevisionNotes] = useState('');
+  const [activeTab, setActiveTab] = useState<'orders' | 'rip-dashboard' | 'rip-jobs' | 'send'>(
+    'orders'
+  );
   const [viewMode, setViewMode] = useState<'orders' | 'material'>('orders');
   const [completions, setCompletions] = useState<Record<string, Record<string, boolean>>>({});
   const [ripDashboard, setRipDashboard] = useState<RipDashboardData | null>(null);
   const [thriveStatus, setThriveStatus] = useState<ThriveConnectivityData | null>(null);
+  const [fieryDiagnostics, setFieryDiagnostics] = useState<FieryDiagnostics | null>(null);
   const [printEquipment, setPrintEquipment] = useState<EquipmentListItem[]>([]);
-  const [liveEquipmentStatus, setLiveEquipmentStatus] = useState<Record<string, EquipmentLiveStatus>>({});
+  const [liveEquipmentStatus, setLiveEquipmentStatus] = useState<
+    Record<string, EquipmentLiveStatus>
+  >({});
   const [operationsLoading, setOperationsLoading] = useState(true);
   const [operationsError, setOperationsError] = useState<string | null>(null);
   const [sendToRipOrder, setSendToRipOrder] = useState<WorkOrder | null>(null);
@@ -517,6 +634,7 @@ export function PrintingStation() {
   const [sendCopies, setSendCopies] = useState(1);
   const [sendValidation, setSendValidation] = useState<RipFileValidation | null>(null);
   const [sendingToRip, setSendingToRip] = useState(false);
+  const [sendingBatchRip, setSendingBatchRip] = useState(false);
   const fetchRef = useRef<() => void>();
   const operationsFetchRef = useRef<() => void>();
 
@@ -549,7 +667,7 @@ export function PrintingStation() {
       const json = await res.json();
       return (json.data !== undefined ? json.data : json) as T;
     },
-    [config.apiUrl, token, logout],
+    [config.apiUrl, token, logout]
   );
 
   // ─── WebSocket (live updates) ───────────────────────
@@ -575,7 +693,7 @@ export function PrintingStation() {
       ) {
         operationsFetchRef.current?.();
       }
-    }, []),
+    }, [])
   );
 
   // ─── Data Fetching ──────────────────────────────────
@@ -627,24 +745,24 @@ export function PrintingStation() {
     if (!token) return;
     setOperationsLoading(true);
     try {
-      const [dashboardData, thriveData, equipmentData, liveStatuses] = await Promise.all([
+      const [dashboardData, thriveData, fieryData, equipmentData, liveStatuses] = await Promise.all([
         fetchJson<RipDashboardData>('/rip-queue/dashboard'),
         fetchJson<ThriveConnectivityData>('/equipment/thrive/status'),
+        fetchJson<FieryDiagnostics>('/rip-queue/fiery/diagnostics'),
         fetchJson<EquipmentListResponse>('/equipment?pageSize=100'),
         fetchJson<EquipmentLiveStatus[]>('/equipment/live-status'),
       ]);
 
       setRipDashboard(dashboardData);
       setThriveStatus(thriveData);
+      setFieryDiagnostics(fieryData);
       setPrintEquipment(
         (equipmentData.items ?? []).filter(
-          (item) => Boolean(item.station) && isPrintStation(item.station || ''),
-        ),
+          (item) => Boolean(item.station) && isPrintStation(item.station || '')
+        )
       );
       setLiveEquipmentStatus(
-        Object.fromEntries(
-          liveStatuses.map((status) => [status.equipmentId, status]),
-        ),
+        Object.fromEntries(liveStatuses.map((status) => [status.equipmentId, status]))
       );
       setOperationsError(null);
     } catch (err: any) {
@@ -682,6 +800,7 @@ export function PrintingStation() {
     setSendCopies(1);
     setSendValidation(null);
     setSendingToRip(false);
+    setActiveTab('orders');
   }, []);
 
   const openSendToRipModal = useCallback(
@@ -697,6 +816,7 @@ export function PrintingStation() {
       setSendNotes('');
       setSendCopies(1);
       setSendValidation(null);
+      setActiveTab('send');
 
       try {
         const [attachments, fileChainLinks] = await Promise.all([
@@ -712,7 +832,7 @@ export function PrintingStation() {
         setSendCandidatesLoading(false);
       }
     },
-    [fetchJson],
+    [fetchJson]
   );
 
   // ─── Station Actions ────────────────────────────────
@@ -724,7 +844,10 @@ export function PrintingStation() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       });
-      if (res.status === 401) { logout(); return; }
+      if (res.status === 401) {
+        logout();
+        return;
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || body.message || `Failed (${res.status})`);
@@ -744,7 +867,10 @@ export function PrintingStation() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       });
-      if (res.status === 401) { logout(); return; }
+      if (res.status === 401) {
+        logout();
+        return;
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || body.message || `Failed (${res.status})`);
@@ -764,7 +890,10 @@ export function PrintingStation() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       });
-      if (res.status === 401) { logout(); return; }
+      if (res.status === 401) {
+        logout();
+        return;
+      }
       if (!res.ok) throw new Error('Failed');
       toast.success(`Re-opened ${ALL_STATION_LABELS[station] || station}`);
     } catch {
@@ -801,7 +930,7 @@ export function PrintingStation() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ station, completed: !current }),
       });
-      setCompletions(prev => ({
+      setCompletions((prev) => ({
         ...prev,
         [lineItemId]: { ...prev[lineItemId], [station]: !current },
       }));
@@ -820,7 +949,13 @@ export function PrintingStation() {
 
     userStations.forEach((station) => {
       const stationOrders = orders.filter((o) => getOrderPrintStations(o).includes(station));
-      const s = { notStarted: 0, inProgress: 0, completed: 0, total: stationOrders.length, overdue: 0 };
+      const s = {
+        notStarted: 0,
+        inProgress: 0,
+        completed: 0,
+        total: stationOrders.length,
+        overdue: 0,
+      };
       stationOrders.forEach((order) => {
         const progress = order.stationProgress.find((sp) => sp.station === station);
         if (!progress || progress.status === 'NOT_STARTED') s.notStarted++;
@@ -840,7 +975,7 @@ export function PrintingStation() {
       filtered = filtered.filter((o) => getOrderPrintStations(o).includes(selectedStation));
     } else {
       filtered = filtered.filter((o) =>
-        getOrderPrintStations(o).some((station) => userStations.includes(station)),
+        getOrderPrintStations(o).some((station) => userStations.includes(station))
       );
     }
 
@@ -853,7 +988,9 @@ export function PrintingStation() {
       } else {
         // In ALL view, hide orders where every print station is completed
         filtered = filtered.filter((o) => {
-          const printStations = getOrderPrintStations(o).filter((station) => userStations.includes(station));
+          const printStations = getOrderPrintStations(o).filter((station) =>
+            userStations.includes(station)
+          );
           if (printStations.length === 0) return true;
           return !printStations.every((st) => {
             const prog = o.stationProgress.find((sp) => sp.station === st);
@@ -902,7 +1039,8 @@ export function PrintingStation() {
   }, [viewMode, filteredOrders]);
 
   // The active station key for line-item completions
-  const activeStation = selectedStation !== 'ALL' ? selectedStation : (userStations[0] || 'ROLL_TO_ROLL');
+  const activeStation =
+    selectedStation !== 'ALL' ? selectedStation : userStations[0] || 'ROLL_TO_ROLL';
 
   const visibleStations = selectedStation === 'ALL' ? userStations : [selectedStation];
 
@@ -920,9 +1058,9 @@ export function PrintingStation() {
     () =>
       (ripDashboard?.hotfolders ?? []).filter(
         (hotfolder) =>
-          isPrintStation(hotfolder.station) && visibleStations.includes(hotfolder.station),
+          isPrintStation(hotfolder.station) && visibleStations.includes(hotfolder.station)
       ),
-    [ripDashboard?.hotfolders, visibleStations],
+    [ripDashboard?.hotfolders, visibleStations]
   );
 
   const filteredActiveRipJobs = useMemo(
@@ -935,7 +1073,7 @@ export function PrintingStation() {
         const mappedStation = hotfolderStationMap.get(job.hotfolderName.toLowerCase());
         return mappedStation ? visibleStations.includes(mappedStation) : true;
       }),
-    [ripDashboard?.activeJobs, visibleStations, hotfolderStationMap],
+    [ripDashboard?.activeJobs, visibleStations, hotfolderStationMap]
   );
 
   const printerCards = useMemo(
@@ -945,7 +1083,7 @@ export function PrintingStation() {
           (equipment) =>
             Boolean(equipment.station) &&
             isPrintStation(equipment.station || '') &&
-            visibleStations.includes(equipment.station as PrintStation),
+            visibleStations.includes(equipment.station as PrintStation)
         )
         .map((equipment) => ({
           equipment,
@@ -954,10 +1092,10 @@ export function PrintingStation() {
             filteredActiveRipJobs.find(
               (job) =>
                 job.equipment?.id === equipment.id ||
-                job.hotfolderName.toLowerCase() === equipment.name.toLowerCase(),
+                job.hotfolderName.toLowerCase() === equipment.name.toLowerCase()
             ) || null,
         })),
-    [printEquipment, liveEquipmentStatus, filteredActiveRipJobs, visibleStations],
+    [printEquipment, liveEquipmentStatus, filteredActiveRipJobs, visibleStations]
   );
 
   const activeRipJobByOrderId = useMemo(() => {
@@ -981,14 +1119,17 @@ export function PrintingStation() {
     if (!sendToRipOrder) return filteredHotfolders;
 
     const orderStations = getOrderPrintStations(sendToRipOrder).filter((station) =>
-      userStations.includes(station),
+      userStations.includes(station)
     );
     const matching = filteredHotfolders.filter(
-      (hotfolder) => isPrintStation(hotfolder.station) && orderStations.includes(hotfolder.station),
+      (hotfolder) => isPrintStation(hotfolder.station) && orderStations.includes(hotfolder.station)
     );
 
     return matching.length > 0 ? matching : filteredHotfolders;
   }, [sendToRipOrder, filteredHotfolders, userStations]);
+
+  const selectedHotfolder =
+    sendHotfolderOptions.find((hotfolder) => hotfolder.id === selectedHotfolderId) || null;
 
   useEffect(() => {
     if (sendToRipOrder && !selectedHotfolderId && sendHotfolderOptions[0]) {
@@ -1022,19 +1163,22 @@ export function PrintingStation() {
     }
 
     let cancelled = false;
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        const validation = await fetchJson<RipFileValidation>('/rip-queue/validate-file', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-        if (!cancelled) setSendValidation(validation);
-      } catch (err: any) {
-        if (!cancelled) {
-          setSendValidation({ valid: false, error: err.message || 'Validation failed' });
+    const timeoutId = window.setTimeout(
+      async () => {
+        try {
+          const validation = await fetchJson<RipFileValidation>('/rip-queue/validate-file', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+          if (!cancelled) setSendValidation(validation);
+        } catch (err: any) {
+          if (!cancelled) {
+            setSendValidation({ valid: false, error: err.message || 'Validation failed' });
+          }
         }
-      }
-    }, selectedSendCandidateId === 'manual' ? 250 : 0);
+      },
+      selectedSendCandidateId === 'manual' ? 250 : 0
+    );
 
     return () => {
       cancelled = true;
@@ -1085,7 +1229,7 @@ export function PrintingStation() {
         method: 'POST',
         body: JSON.stringify(payload),
       });
-      toast.success(`Sent ${sendToRipOrder.orderNumber} to RIP`);
+      toast.success(`Submitted ${sendToRipOrder.orderNumber} to RIP`);
       closeSendToRipModal();
       fetchPrintingOperations();
     } catch (err: any) {
@@ -1145,7 +1289,9 @@ export function PrintingStation() {
     const isUpdating = updatingOrder === order.id;
     const activeRipJob = activeRipJobByOrderId[order.id] || null;
     const pri = PRIORITY_CONFIG[order.priority] || PRIORITY_CONFIG[3];
-    const routingDisplay = order.routing.length > 0 ? order.routing : getOrderPrintStations(order);
+    const routingDisplay = sortRouting(
+      order.routing.length > 0 ? order.routing : getOrderPrintStations(order)
+    );
 
     return (
       <div
@@ -1165,7 +1311,9 @@ export function PrintingStation() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="font-semibold text-gray-900 font-mono">{order.orderNumber}</span>
-                <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${pri.color} ${pri.textColor}`}>
+                <span
+                  className={`px-2 py-0.5 text-xs font-bold rounded-full ${pri.color} ${pri.textColor}`}
+                >
                   {pri.label}
                 </span>
                 {overdue && stationStatus !== 'COMPLETED' && (
@@ -1209,8 +1357,8 @@ export function PrintingStation() {
                           stStatus === 'COMPLETED'
                             ? 'bg-green-100 text-green-700'
                             : stStatus === 'IN_PROGRESS'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-gray-100 text-gray-500'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-gray-100 text-gray-500'
                         }`}
                       >
                         {stStatus === 'COMPLETED' ? (
@@ -1241,7 +1389,9 @@ export function PrintingStation() {
               </div>
               {activeRipJob && (
                 <div className="mt-1 flex items-center gap-2 text-xs text-indigo-700">
-                  <span className={`px-2 py-0.5 rounded-full ${getRipStatusClasses(activeRipJob.status)}`}>
+                  <span
+                    className={`px-2 py-0.5 rounded-full ${getRipStatusClasses(activeRipJob.status)}`}
+                  >
                     {activeRipJob.status.replace(/_/g, ' ')}
                   </span>
                   <span className="truncate">{activeRipJob.hotfolderName}</span>
@@ -1251,7 +1401,10 @@ export function PrintingStation() {
             <div className="flex flex-wrap items-center justify-end gap-2">
               {stationStatus === 'NOT_STARTED' && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); startStation(order.id, actionStation); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startStation(order.id, actionStation);
+                  }}
                   disabled={isUpdating}
                   className="px-4 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 >
@@ -1260,7 +1413,10 @@ export function PrintingStation() {
               )}
               {stationStatus === 'IN_PROGRESS' && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); completeStation(order.id, actionStation); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    completeStation(order.id, actionStation);
+                  }}
                   disabled={isUpdating}
                   className="px-4 py-1.5 text-sm font-medium bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 >
@@ -1315,7 +1471,11 @@ export function PrintingStation() {
                 className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                 title="Quick peek"
               >
-                {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {isExpanded ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
               </button>
             </div>
           </div>
@@ -1325,7 +1485,9 @@ export function PrintingStation() {
         {isExpanded && (
           <div className="px-4 pb-4 border-t border-gray-100">
             <div className="pt-3">
-              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Routing Progress</h4>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                Routing Progress
+              </h4>
               <div className="flex items-center gap-1 flex-wrap mb-3">
                 {routingDisplay.map((st, idx) => {
                   const stStatus = getStationStatus(order, st);
@@ -1338,8 +1500,8 @@ export function PrintingStation() {
                           stStatus === 'COMPLETED'
                             ? 'bg-green-100 text-green-700 border border-green-200'
                             : stStatus === 'IN_PROGRESS'
-                            ? 'bg-blue-100 text-blue-700 border border-blue-200'
-                            : 'bg-gray-100 text-gray-500 border border-gray-200'
+                              ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                              : 'bg-gray-100 text-gray-500 border border-gray-200'
                         }`}
                       >
                         {stStatus === 'COMPLETED' ? (
@@ -1366,16 +1528,25 @@ export function PrintingStation() {
                   <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Line Items</h4>
                   <div className="space-y-1">
                     {order.lineItems.map((item) => {
-                      const stationKey = (station || getActivePrintStation(order, userStations)) as string;
+                      const stationKey = (station ||
+                        getActivePrintStation(order, userStations)) as string;
                       return (
-                        <label key={item.id} className="flex items-center gap-2 py-1 cursor-pointer">
+                        <label
+                          key={item.id}
+                          className="flex items-center gap-2 py-1 cursor-pointer"
+                        >
                           <input
                             type="checkbox"
                             checked={completions[item.id]?.[stationKey] || false}
-                            onChange={(e) => { e.stopPropagation(); toggleLineItemComplete(order.id, item.id, stationKey); }}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              toggleLineItemComplete(order.id, item.id, stationKey);
+                            }}
                             className="w-4 h-4 text-blue-600 rounded"
                           />
-                          <span className={`text-xs flex-1 truncate ${completions[item.id]?.[stationKey] ? 'line-through text-gray-400' : 'text-gray-600'}`}>
+                          <span
+                            className={`text-xs flex-1 truncate ${completions[item.id]?.[stationKey] ? 'line-through text-gray-400' : 'text-gray-600'}`}
+                          >
                             {item.description || item.itemMaster?.name || 'Item'}
                           </span>
                           <span className="text-xs font-medium">Qty: {item.quantity}</span>
@@ -1397,7 +1568,7 @@ export function PrintingStation() {
     sectionOrders: WorkOrder[],
     icon: React.ReactNode,
     bgColor: string,
-    station?: PrintStation,
+    station?: PrintStation
   ) => {
     if (sectionOrders.length === 0) return null;
     return (
@@ -1442,39 +1613,12 @@ export function PrintingStation() {
               className={`p-1 rounded-full ${wsStatus === 'connected' ? 'text-green-500' : 'text-gray-300'}`}
               title={wsStatus === 'connected' ? 'Live updates active' : 'Reconnecting...'}
             >
-              {wsStatus === 'connected' ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+              {wsStatus === 'connected' ? (
+                <Wifi className="w-4 h-4" />
+              ) : (
+                <WifiOff className="w-4 h-4" />
+              )}
             </div>
-            <div className="flex items-center bg-gray-100 rounded-lg p-0.5 mr-2">
-              <button
-                onClick={() => setViewMode('orders')}
-                className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                  viewMode === 'orders'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                <List className="w-3.5 h-3.5" /> Orders
-              </button>
-              <button
-                onClick={() => setViewMode('material')}
-                className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                  viewMode === 'material'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" /> Material
-              </button>
-            </div>
-            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer mr-2">
-              <input
-                type="checkbox"
-                checked={showCompleted}
-                onChange={(e) => setShowCompleted(e.target.checked)}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              Show completed
-            </label>
             <button
               onClick={() => {
                 fetchOrders();
@@ -1482,12 +1626,15 @@ export function PrintingStation() {
               }}
               className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
             >
-              <RefreshCw className={`w-4 h-4 ${(loading || operationsLoading) ? 'animate-spin' : ''}`} /> Refresh
+              <RefreshCw
+                className={`w-4 h-4 ${loading || operationsLoading ? 'animate-spin' : ''}`}
+              />{' '}
+              Refresh
             </button>
             <button
               onClick={async () => {
                 const ordersMissingPrint = filteredOrders.filter((o) => {
-                  const printStations = ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT'];
+                  const printStations = ['ROLL_TO_ROLL', 'FLATBED'];
                   return !o.routing.some((s) => printStations.includes(s));
                 });
                 if (ordersMissingPrint.length === 0) {
@@ -1499,7 +1646,9 @@ export function PrintingStation() {
                     method: 'POST',
                     body: JSON.stringify({ orderIds: ordersMissingPrint.map((o) => o.id) }),
                   })) as { fixed: number };
-                  alert(`Fixed ${res.fixed} order${res.fixed !== 1 ? 's' : ''} - adding ROLL_TO_ROLL & FLATBED`);
+                  alert(
+                    `Fixed ${res.fixed} order${res.fixed !== 1 ? 's' : ''} - adding ROLL_TO_ROLL & FLATBED`
+                  );
                   fetchOrders();
                 } catch (err: any) {
                   alert(`Error fixing routes: ${err.message}`);
@@ -1510,6 +1659,41 @@ export function PrintingStation() {
             >
               <Wrench className="w-4 h-4" /> Fix Routes
             </button>
+            {selectedStation === PrintingMethod.FLATBED && (
+              <button
+                onClick={async () => {
+                  setSendingBatchRip(true);
+                  try {
+                    const res = (await fetchJson('/rip-queue/batches/hh-global', {
+                      method: 'POST',
+                    })) as { success: boolean; batchesSubmitted: number; jobsCreated: number };
+                    if (res.success) {
+                      toast.success(
+                        `Submitted ${res.batchesSubmitted} batch${res.batchesSubmitted !== 1 ? 'es' : ''} (${res.jobsCreated} job${res.jobsCreated !== 1 ? 's' : ''})`
+                      );
+                      fetchOrders();
+                      fetchPrintingOperations();
+                    } else {
+                      toast.error('Failed to submit batches');
+                    }
+                  } catch (err: any) {
+                    toast.error(`Error: ${err.message}`);
+                  } finally {
+                    setSendingBatchRip(false);
+                  }
+                }}
+                disabled={sendingBatchRip}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg disabled:opacity-50"
+                title="Submit HH Global orders as material batches to Fiery RIP"
+              >
+                {sendingBatchRip ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+                Send Batched HH Global
+              </button>
+            )}
           </div>
         </div>
 
@@ -1531,7 +1715,9 @@ export function PrintingStation() {
               >
                 <div className="flex items-center gap-2 mb-2">
                   <Printer className={`h-4 w-4 ${isSelected ? cfg.icon : 'text-gray-400'}`} />
-                  <span className={`font-semibold text-sm ${isSelected ? cfg.color : 'text-gray-700'}`}>
+                  <span
+                    className={`font-semibold text-sm ${isSelected ? cfg.color : 'text-gray-700'}`}
+                  >
                     {cfg.label}
                   </span>
                 </div>
@@ -1591,379 +1777,651 @@ export function PrintingStation() {
         </div>
       )}
 
-      {/* Content */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_23rem]">
-        <div className="min-h-0 overflow-auto">
-          {viewMode === 'material' ? (
-            <div className="p-4 space-y-4">
-              {Object.entries(materialGroups).map(([material, items]) => (
-                <div key={material} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                  <div className="bg-blue-50 px-4 py-2 border-b flex items-center justify-between">
-                <span className="font-semibold text-blue-900">{material}</span>
-                <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
-                  {items.length} item{items.length !== 1 ? 's' : ''}
-                </span>
-              </div>
-              <div className="divide-y">
-                {items.map(({ lineItem: li, order }) => (
-                  <label key={li.id} className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={completions[li.id]?.[activeStation] || false}
-                      onChange={() => toggleLineItemComplete(order.id, li.id, activeStation)}
-                      className="w-4 h-4 text-blue-600 rounded"
-                    />
-                    <span className={completions[li.id]?.[activeStation] ? 'line-through text-gray-400 text-sm' : 'text-sm'}>
-                      {li.description || li.itemMaster?.name || 'Item'}
-                    </span>
-                    <span className="text-xs text-gray-400 ml-auto">
-                      {order.orderNumber} · Qty: {li.quantity}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          ))}
-              {Object.keys(materialGroups).length === 0 && (
-                <div className="text-center py-12 text-gray-400">
-                  <Layers className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <p className="text-lg font-medium text-gray-900 mb-1">No line items to group</p>
-                  <p className="text-sm text-gray-500">
-                    {filteredOrders.length === 0
-                      ? 'No orders in queue'
-                      : 'No line items found in the current orders'}
-                  </p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="p-4">
-              {filteredOrders.length === 0 ? (
-                <div className="text-center py-12 text-gray-400">
-                  <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <p className="text-lg font-medium text-gray-900 mb-1">No orders in queue</p>
-                  <p className="text-sm text-gray-500">
-                    {selectedStation !== 'ALL'
-                      ? `No active orders at ${STATION_CONFIG[selectedStation]?.label}`
-                      : 'No active orders with print stations in routing'}
-                  </p>
-                </div>
-              ) : selectedStation === 'ALL' ? (
-                <div className="space-y-2">
-                  {filteredOrders.map((order) => renderOrderCard(order))}
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {renderSection(
-                    'In Progress',
-                    groupedOrders.inProgress || [],
-                    <PlayCircle className="h-5 w-5 text-blue-600" />,
-                    'bg-blue-50 text-blue-700',
-                    selectedStation,
-                  )}
-                  {renderSection(
-                    'Waiting to Start',
-                    groupedOrders.notStarted || [],
-                    <Clock className="h-5 w-5 text-gray-600" />,
-                    'bg-gray-100 text-gray-700',
-                    selectedStation,
-                  )}
-                  {showCompleted &&
-                    renderSection(
-                      'Completed',
-                      groupedOrders.completed || [],
-                      <CheckCircle className="h-5 w-5 text-green-600" />,
-                      'bg-green-50 text-green-700',
-                      selectedStation,
-                    )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <PrintingOperationsSidebar
-          visibleStations={visibleStations}
-          operationsLoading={operationsLoading}
-          hotfolders={filteredHotfolders}
-          thriveStatus={thriveStatus}
-          ripDashboard={ripDashboard}
-          activeJobs={filteredActiveRipJobs}
-          printerCards={printerCards}
-          onRefresh={fetchPrintingOperations}
-        />
+      {/* Tab bar */}
+      <div className="bg-white border-b flex items-center gap-1 px-4 overflow-x-auto">
+        {(
+          [
+            { key: 'orders', label: 'Orders', icon: <List className="w-3.5 h-3.5" /> },
+            {
+              key: 'rip-dashboard',
+              label: 'RIP Dashboard',
+              icon: <Activity className="w-3.5 h-3.5" />,
+            },
+            { key: 'rip-jobs', label: 'RIP Jobs', icon: <FileText className="w-3.5 h-3.5" /> },
+            { key: 'send', label: 'Send to RIP', icon: <Send className="w-3.5 h-3.5" /> },
+          ] as const
+        ).map(({ key, label, icon }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              activeTab === key
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {icon}
+            {label}
+            {key === 'orders' && (
+              <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600">
+                {filteredOrders.length}
+              </span>
+            )}
+            {key === 'rip-jobs' && filteredActiveRipJobs.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-indigo-100 text-indigo-700">
+                {filteredActiveRipJobs.length}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
 
-      {sendToRipOrder && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-          onClick={closeSendToRipModal}
-        >
-          <div
-            className="bg-white rounded-xl shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div>
-                <h3 className="text-lg font-bold text-gray-900">Send to RIP</h3>
-                <p className="text-sm text-gray-500">
-                  {sendToRipOrder.orderNumber} · {sendToRipOrder.customerName}
-                </p>
+      {/* Tab Content */}
+      <div className="flex-1 min-h-0 overflow-auto">
+        {/* ── Orders Tab ── */}
+        {activeTab === 'orders' && (
+          <>
+            {/* Orders sub-toolbar */}
+            <div className="bg-white border-b px-4 py-2 flex items-center gap-3 flex-wrap">
+              <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+                <button
+                  onClick={() => setViewMode('orders')}
+                  className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === 'orders'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <List className="w-3.5 h-3.5" /> Orders
+                </button>
+                <button
+                  onClick={() => setViewMode('material')}
+                  className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === 'material'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" /> Material
+                </button>
               </div>
-              <button
-                onClick={closeSendToRipModal}
-                className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
-              >
-                Close
-              </button>
+              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showCompleted}
+                  onChange={(e) => setShowCompleted(e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                Show completed
+              </label>
             </div>
 
-            <div className="space-y-5">
-              <section className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
-                  <FileText className="w-4 h-4 text-indigo-600" />
-                  Source file
-                </div>
-
-                {sendCandidatesLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-3">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Loading order files...
+            {viewMode === 'material' ? (
+              <div className="p-4 space-y-4">
+                {Object.entries(materialGroups).map(([material, items]) => (
+                  <div
+                    key={material}
+                    className="bg-white rounded-lg border border-gray-200 overflow-hidden"
+                  >
+                    <div className="bg-blue-50 px-4 py-2 border-b flex items-center justify-between">
+                      <span className="font-semibold text-blue-900">{material}</span>
+                      <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">
+                        {items.length} item{items.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div className="divide-y">
+                      {items.map(({ lineItem: li, order }) => (
+                        <label
+                          key={li.id}
+                          className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={completions[li.id]?.[activeStation] || false}
+                            onChange={() => toggleLineItemComplete(order.id, li.id, activeStation)}
+                            className="w-4 h-4 text-blue-600 rounded"
+                          />
+                          <span
+                            className={
+                              completions[li.id]?.[activeStation]
+                                ? 'line-through text-gray-400 text-sm'
+                                : 'text-sm'
+                            }
+                          >
+                            {li.description || li.itemMaster?.name || 'Item'}
+                          </span>
+                          <span className="text-xs text-gray-400 ml-auto">
+                            {order.orderNumber} · Qty: {li.quantity}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {Object.keys(materialGroups).length === 0 && (
+                  <div className="text-center py-12 text-gray-400">
+                    <Layers className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                    <p className="text-lg font-medium text-gray-900 mb-1">No line items to group</p>
+                    <p className="text-sm text-gray-500">
+                      {filteredOrders.length === 0
+                        ? 'No orders in queue'
+                        : 'No line items found in the current orders'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="p-4">
+                {filteredOrders.length === 0 ? (
+                  <div className="text-center py-12 text-gray-400">
+                    <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                    <p className="text-lg font-medium text-gray-900 mb-1">No orders in queue</p>
+                    <p className="text-sm text-gray-500">
+                      {selectedStation !== 'ALL'
+                        ? `No active orders at ${STATION_CONFIG[selectedStation]?.label}`
+                        : 'No active orders with print stations in routing'}
+                    </p>
+                  </div>
+                ) : selectedStation === 'ALL' ? (
+                  <div className="space-y-2">
+                    {filteredOrders.map((order) => renderOrderCard(order))}
                   </div>
                 ) : (
-                  <>
-                    <div className="space-y-2">
-                      <button
-                        onClick={() => {
-                          setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
-                          setShowManualPathFallback(false);
-                        }}
-                        className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
-                          selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID
-                            ? 'border-indigo-400 bg-indigo-50'
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900">Auto-select best order file</p>
-                            <p className="text-xs text-gray-500 truncate">
-                              {autoSelectedSendCandidate
-                                ? `${autoSelectedSendCandidate.label} · ${autoSelectedSendCandidate.detail}`
-                                : 'Use the best accessible linked file or attachment on this order'}
-                            </p>
-                          </div>
-                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
-                            AUTO
-                          </span>
-                        </div>
-                      </button>
+                  <div className="space-y-6">
+                    {renderSection(
+                      'In Progress',
+                      groupedOrders.inProgress || [],
+                      <PlayCircle className="h-5 w-5 text-blue-600" />,
+                      'bg-blue-50 text-blue-700',
+                      selectedStation
+                    )}
+                    {renderSection(
+                      'Waiting to Start',
+                      groupedOrders.notStarted || [],
+                      <Clock className="h-5 w-5 text-gray-600" />,
+                      'bg-gray-100 text-gray-700',
+                      selectedStation
+                    )}
+                    {showCompleted &&
+                      renderSection(
+                        'Completed',
+                        groupedOrders.completed || [],
+                        <CheckCircle className="h-5 w-5 text-green-600" />,
+                        'bg-green-50 text-green-700',
+                        selectedStation
+                      )}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
 
-                      {sendCandidates.length > 0 && (
-                        <div className="space-y-2">
-                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500 px-1">
-                            Choose a specific linked file
+        {/* ── RIP Dashboard Tab ── */}
+        {activeTab === 'rip-dashboard' && (
+          <PrintingOperationsSidebar
+            visibleStations={visibleStations}
+            operationsLoading={operationsLoading}
+            hotfolders={filteredHotfolders}
+            thriveStatus={thriveStatus}
+            ripDashboard={ripDashboard}
+            activeJobs={filteredActiveRipJobs}
+            printerCards={printerCards}
+            onRefresh={fetchPrintingOperations}
+          />
+        )}
+
+        {/* ── RIP Jobs Tab ── */}
+        {activeTab === 'rip-jobs' && (
+          <RipJobsPanel
+            activeJobs={filteredActiveRipJobs}
+            recentCompleted={ripDashboard?.recentCompleted ?? []}
+            operationsLoading={operationsLoading}
+            onRefresh={fetchPrintingOperations}
+            onSendToRip={(order) => {
+              const matchedOrder = orders.find((o) => o.id === order.id);
+              if (matchedOrder) openSendToRipModal(matchedOrder);
+            }}
+          />
+        )}
+
+        {/* ── Send to RIP Tab ── */}
+        {activeTab === 'send' && (
+          <div className="p-4 max-w-2xl mx-auto">
+            {!sendToRipOrder ? (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-500">
+                  Select an order from the Orders tab to send to RIP, or pick one below.
+                </p>
+                <div className="space-y-2">
+                  {filteredOrders.slice(0, 20).map((order) => (
+                    <button
+                      key={order.id}
+                      onClick={() => openSendToRipModal(order)}
+                      className="w-full text-left rounded-lg border border-gray-200 px-4 py-3 hover:border-indigo-300 hover:bg-indigo-50 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 font-mono">
+                            {order.orderNumber}
                           </p>
-                          {sendCandidates.map((candidate) => (
+                          <p className="text-xs text-gray-500 truncate">{order.customerName}</p>
+                        </div>
+                        <Send className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+                      </div>
+                    </button>
+                  ))}
+                  {filteredOrders.length === 0 && (
+                    <p className="text-sm text-gray-400 text-center py-8">No orders in queue</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">Send to RIP</h3>
+                    <p className="text-sm text-gray-500">
+                      {sendToRipOrder.orderNumber} · {sendToRipOrder.customerName}
+                    </p>
+                  </div>
+                  <button
+                    onClick={closeSendToRipModal}
+                    className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                  >
+                    ← Back
+                  </button>
+                </div>
+
+                <div className="space-y-5">
+                  <section className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                      <FileText className="w-4 h-4 text-indigo-600" />
+                      Source file
+                    </div>
+
+                    {sendCandidatesLoading ? (
+                      <div className="flex items-center gap-2 text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-3">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Loading order files...
+                      </div>
+                    ) : (
+                      <>
+                        <div className="space-y-2">
+                          <button
+                            onClick={() => {
+                              setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+                              setShowManualPathFallback(false);
+                            }}
+                            className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
+                              selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID
+                                ? 'border-indigo-400 bg-indigo-50'
+                                : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-gray-900">
+                                  Auto-select best order file
+                                </p>
+                                <p className="text-xs text-gray-500 truncate">
+                                  {autoSelectedSendCandidate
+                                    ? `${autoSelectedSendCandidate.label} · ${autoSelectedSendCandidate.detail}`
+                                    : 'Use the best accessible linked file or attachment on this order'}
+                                </p>
+                              </div>
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                                AUTO
+                              </span>
+                            </div>
+                          </button>
+
+                          {sendCandidates.length > 0 && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-medium uppercase tracking-wide text-gray-500 px-1">
+                                Choose a specific linked file
+                              </p>
+                              {sendCandidates.map((candidate) => (
+                                <button
+                                  key={candidate.id}
+                                  onClick={() => {
+                                    setSelectedSendCandidateId(candidate.id);
+                                    setShowManualPathFallback(false);
+                                  }}
+                                  className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
+                                    selectedSendCandidateId === candidate.id
+                                      ? 'border-indigo-400 bg-indigo-50'
+                                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium text-gray-900 truncate">
+                                        {candidate.label}
+                                      </p>
+                                      <p className="text-xs text-gray-500 truncate">
+                                        {candidate.detail}
+                                      </p>
+                                    </div>
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                      {candidate.fileTypeLabel}
+                                    </span>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {!showManualPathFallback && (
                             <button
-                              key={candidate.id}
                               onClick={() => {
-                                setSelectedSendCandidateId(candidate.id);
-                                setShowManualPathFallback(false);
+                                setSelectedSendCandidateId('manual');
+                                setShowManualPathFallback(true);
                               }}
+                              className="text-sm text-indigo-700 hover:text-indigo-800 font-medium"
+                            >
+                              Use a custom network path instead
+                            </button>
+                          )}
+                        </div>
+
+                        {showManualPathFallback && (
+                          <div className="space-y-2">
+                            <button
+                              onClick={() => setSelectedSendCandidateId('manual')}
                               className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
-                                selectedSendCandidateId === candidate.id
+                                selectedSendCandidateId === 'manual'
                                   ? 'border-indigo-400 bg-indigo-50'
                                   : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                               }`}
                             >
                               <div className="flex items-center justify-between gap-3">
                                 <div className="min-w-0">
-                                  <p className="text-sm font-medium text-gray-900 truncate">{candidate.label}</p>
-                                  <p className="text-xs text-gray-500 truncate">{candidate.detail}</p>
+                                  <p className="text-sm font-medium text-gray-900">
+                                    Manual network path
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    Only needed when the order has no usable linked files
+                                  </p>
                                 </div>
-                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
-                                  {candidate.fileTypeLabel}
-                                </span>
+                                <FolderOpen className="w-4 h-4 text-gray-400" />
                               </div>
                             </button>
-                          ))}
-                        </div>
-                      )}
 
-                      {!showManualPathFallback && (
-                        <button
-                          onClick={() => {
-                            setSelectedSendCandidateId('manual');
-                            setShowManualPathFallback(true);
-                          }}
-                          className="text-sm text-indigo-700 hover:text-indigo-800 font-medium"
-                        >
-                          Use a custom network path instead
-                        </button>
-                      )}
-                    </div>
+                            {selectedSendCandidateId === 'manual' && (
+                              <input
+                                type="text"
+                                value={manualSourcePath}
+                                onChange={(e) => setManualSourcePath(e.target.value)}
+                                placeholder="\\\\server\\share\\Customer\\WO####\\PRINT\\file.pdf"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
+                              />
+                            )}
 
-                    {showManualPathFallback && (
-                      <div className="space-y-2">
-                        <button
-                          onClick={() => setSelectedSendCandidateId('manual')}
-                          className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
-                            selectedSendCandidateId === 'manual'
-                              ? 'border-indigo-400 bg-indigo-50'
-                              : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-900">Manual network path</p>
-                              <p className="text-xs text-gray-500">Only needed when the order has no usable linked files</p>
-                            </div>
-                            <FolderOpen className="w-4 h-4 text-gray-400" />
+                            {selectedSendCandidateId === 'manual' && sendCandidates.length > 0 && (
+                              <button
+                                onClick={() => {
+                                  setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+                                  setShowManualPathFallback(false);
+                                }}
+                                className="text-sm text-gray-600 hover:text-gray-800"
+                              >
+                                Back to automatic file selection
+                              </button>
+                            )}
                           </div>
-                        </button>
-
-                        {selectedSendCandidateId === 'manual' && (
-                          <input
-                            type="text"
-                            value={manualSourcePath}
-                            onChange={(e) => setManualSourcePath(e.target.value)}
-                            placeholder="\\\\server\\share\\Customer\\WO####\\PRINT\\file.pdf"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
-                          />
                         )}
+                      </>
+                    )}
 
-                        {selectedSendCandidateId === 'manual' && sendCandidates.length > 0 && (
-                          <button
-                            onClick={() => {
-                              setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
-                              setShowManualPathFallback(false);
-                            }}
-                            className="text-sm text-gray-600 hover:text-gray-800"
-                          >
-                            Back to automatic file selection
-                          </button>
+                    {sendCandidatesError && (
+                      <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        {sendCandidatesError}
+                      </div>
+                    )}
+
+                    {sendValidation && (
+                      <div
+                        className={`text-sm rounded-lg px-3 py-2 border ${
+                          sendValidation.valid
+                            ? 'bg-green-50 border-green-200 text-green-700'
+                            : 'bg-red-50 border-red-200 text-red-700'
+                        }`}
+                      >
+                        {sendValidation.valid
+                          ? `Ready: ${sendValidation.fileName || 'Selected file'} (${formatFileSize(sendValidation.size)})`
+                          : sendValidation.error || 'File validation failed'}
+                        {sendValidation.resolvedPath && (
+                          <p className="mt-1 text-xs font-mono break-all text-current/80">
+                            {sendValidation.resolvedPath}
+                          </p>
                         )}
                       </div>
                     )}
-                  </>
-                )}
+                  </section>
 
-                {sendCandidatesError && (
-                  <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    {sendCandidatesError}
-                  </div>
-                )}
-
-                {sendValidation && (
-                  <div
-                    className={`text-sm rounded-lg px-3 py-2 border ${
-                      sendValidation.valid
-                        ? 'bg-green-50 border-green-200 text-green-700'
-                        : 'bg-red-50 border-red-200 text-red-700'
-                    }`}
-                  >
-                    {sendValidation.valid
-                      ? `Ready: ${sendValidation.fileName || 'Selected file'} (${formatFileSize(sendValidation.size)})`
-                      : sendValidation.error || 'File validation failed'}
-                  </div>
-                )}
-              </section>
-
-              <section className="space-y-3">
-                <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
-                  <HardDrive className="w-4 h-4 text-blue-600" />
-                  Select hotfolder
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {sendHotfolderOptions.map((hotfolder) => {
-                    const machineStatus = thriveStatus?.status?.[hotfolder.machineId];
-                    const jobCount = filteredActiveRipJobs.filter(
-                      (job) => job.hotfolderName.toLowerCase() === hotfolder.name.toLowerCase(),
-                    ).length;
-                    return (
-                      <button
-                        key={hotfolder.id}
-                        onClick={() => setSelectedHotfolderId(hotfolder.id)}
-                        className={`rounded-lg border px-3 py-3 text-left transition-colors ${
-                          selectedHotfolderId === hotfolder.id
-                            ? 'border-indigo-400 bg-indigo-50'
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">{hotfolder.name}</p>
-                            <p className="text-xs text-gray-500 truncate">
-                              {hotfolder.ripType} · {hotfolder.machineName}
-                            </p>
-                          </div>
-                          <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                              machineStatus?.online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                  <section className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                      <HardDrive className="w-4 h-4 text-blue-600" />
+                      Select hotfolder
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {sendHotfolderOptions.map((hotfolder) => {
+                        const machineStatus = thriveStatus?.status?.[hotfolder.machineId];
+                        const jobCount = filteredActiveRipJobs.filter(
+                          (job) => job.hotfolderName.toLowerCase() === hotfolder.name.toLowerCase()
+                        ).length;
+                        return (
+                          <button
+                            key={hotfolder.id}
+                            onClick={() => setSelectedHotfolderId(hotfolder.id)}
+                            className={`rounded-lg border px-3 py-3 text-left transition-colors ${
+                              selectedHotfolderId === hotfolder.id
+                                ? 'border-indigo-400 bg-indigo-50'
+                                : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                             }`}
                           >
-                            {machineStatus?.online ? (jobCount > 0 ? `Busy ${jobCount}` : 'Ready') : 'Offline'}
-                          </span>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-gray-900 truncate">
+                                  {hotfolder.name}
+                                </p>
+                                <p className="text-xs text-gray-500 truncate">
+                                  {hotfolder.ripType} · {hotfolder.machineName}
+                                </p>
+                              </div>
+                              <span
+                                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                  machineStatus?.online
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-red-100 text-red-700'
+                                }`}
+                              >
+                                {machineStatus?.online
+                                  ? jobCount > 0
+                                    ? `Busy ${jobCount}`
+                                    : 'Ready'
+                                  : 'Offline'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-gray-400 truncate mt-2">
+                              {hotfolder.path}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {sendHotfolderOptions.length === 0 && (
+                      <div className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-3">
+                        No matching hotfolders are configured for the selected print stations.
+                      </div>
+                    )}
+                  </section>
+
+                  {selectedHotfolder?.ripType === 'Fiery' && (
+                    <section className="space-y-3">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                        <Printer className="w-4 h-4 text-violet-600" />
+                        Fiery import readiness
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        Files are copied into the Fiery hotfolder and imported with the
+                        controller defaults. The diagnostics below are informational only.
+                      </p>
+
+                      {!fieryDiagnostics ? (
+                        <div className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-3">
+                          Loading Fiery diagnostics...
                         </div>
-                        <p className="text-[11px] text-gray-400 truncate mt-2">{hotfolder.path}</p>
-                      </button>
-                    );
-                  })}
+                      ) : (
+                        <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <div className="rounded-lg border border-gray-200 px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-wide text-gray-500">
+                                Share
+                              </p>
+                              <p
+                                className={`mt-1 text-sm font-semibold ${
+                                  fieryDiagnostics.share.accessible && fieryDiagnostics.share.writable
+                                    ? 'text-green-700'
+                                    : 'text-red-700'
+                                }`}
+                              >
+                                {fieryDiagnostics.share.accessible && fieryDiagnostics.share.writable
+                                  ? 'Writable'
+                                  : fieryDiagnostics.share.accessible
+                                    ? 'Read only'
+                                    : 'Offline'}
+                              </p>
+                            </div>
+                            <div className="rounded-lg border border-gray-200 px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-wide text-gray-500">
+                                Diagnostics
+                              </p>
+                              <p
+                                className={`mt-1 text-sm font-semibold ${
+                                  fieryDiagnostics.jmf.discoveredUrl ? 'text-green-700' : 'text-red-700'
+                                }`}
+                              >
+                                {fieryDiagnostics.jmf.autoDiscovered ? 'Auto-discovered' : 'Fallback URL'}
+                              </p>
+                            </div>
+                            <div className="rounded-lg border border-gray-200 px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-wide text-gray-500">
+                                Queue
+                              </p>
+                              <p className="mt-1 text-sm font-semibold text-gray-900">
+                                {fieryDiagnostics.queue.status} · {fieryDiagnostics.queue.queueSize}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                                Controller defaults
+                              </p>
+                              <p className="mt-1 font-medium text-gray-900">
+                                {fieryDiagnostics.workflow.outputChannelName || 'Using Fiery defaults'}
+                              </p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {fieryDiagnostics.workflow.colorMode || 'Unknown'} ·{' '}
+                                {fieryDiagnostics.workflow.inkType || 'Unknown'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                                Media
+                              </p>
+                              <p className="mt-1 font-medium text-gray-900">
+                                {fieryDiagnostics.media.media || 'Not configured'}
+                              </p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {fieryDiagnostics.media.mediaDimension || 'No size'} ·{' '}
+                                {fieryDiagnostics.media.resolution || 'No resolution'}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1 text-xs text-gray-500">
+                            <p className="font-mono break-all">{fieryDiagnostics.jmf.discoveredUrl}</p>
+                            <p className="font-mono break-all">{fieryDiagnostics.share.path}</p>
+                          </div>
+
+                          {(fieryDiagnostics.share.error || fieryDiagnostics.workflow.discoveryError) && (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                              {fieryDiagnostics.share.error ||
+                                fieryDiagnostics.workflow.discoveryError ||
+                                'Fiery diagnostics need attention'}
+                          </div>
+                          )}
+
+                          {fieryDiagnostics.workflow.hint && (
+                            <p className="text-xs text-gray-500">{fieryDiagnostics.workflow.hint}</p>
+                          )}
+                        </div>
+                      )}
+                    </section>
+                  )}
+
+                  <section className="grid grid-cols-1 md:grid-cols-[10rem_minmax(0,1fr)] gap-4">
+                    <label className="block">
+                      <span className="text-sm font-medium text-gray-700">Copies</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={sendCopies}
+                        onChange={(e) => setSendCopies(Math.max(1, Number(e.target.value) || 1))}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-sm font-medium text-gray-700">Operator notes</span>
+                      <textarea
+                        value={sendNotes}
+                        onChange={(e) => setSendNotes(e.target.value)}
+                        placeholder="Optional RIP notes, media reminders, or printer instructions"
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none h-20"
+                      />
+                    </label>
+                  </section>
                 </div>
-                {sendHotfolderOptions.length === 0 && (
-                  <div className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-3">
-                    No matching hotfolders are configured for the selected print stations.
-                  </div>
-                )}
-              </section>
 
-              <section className="grid grid-cols-1 md:grid-cols-[10rem_minmax(0,1fr)] gap-4">
-                <label className="block">
-                  <span className="text-sm font-medium text-gray-700">Copies</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={sendCopies}
-                    onChange={(e) => setSendCopies(Math.max(1, Number(e.target.value) || 1))}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  />
-                </label>
-                <label className="block">
-                  <span className="text-sm font-medium text-gray-700">Operator notes</span>
-                  <textarea
-                    value={sendNotes}
-                    onChange={(e) => setSendNotes(e.target.value)}
-                    placeholder="Optional RIP notes, media reminders, or printer instructions"
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none h-20"
-                  />
-                </label>
-              </section>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 mt-6">
-              <button
-                onClick={closeSendToRipModal}
-                className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSendToRip}
-                disabled={!canSendToRip || sendingToRip}
-                className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
-              >
-                {sendingToRip ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                Send to RIP
-              </button>
-            </div>
+                <div className="flex items-center justify-end gap-3 mt-6">
+                  <button
+                    onClick={closeSendToRipModal}
+                    className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    onClick={handleSendToRip}
+                    disabled={!canSendToRip || sendingToRip}
+                    className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {sendingToRip ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4" />
+                    )}
+                    Send to RIP
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {showRevisionModal && revisionOrderId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowRevisionModal(false)}>
-          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setShowRevisionModal(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="text-lg font-bold text-gray-900 mb-1">Send Back to Design</h3>
             <p className="text-sm text-gray-500 mb-4">{revisionOrderNumber}</p>
 
@@ -2017,11 +2475,20 @@ export function PrintingStation() {
                     return;
                   }
                   try {
-                    const res = await fetch(`${config.apiUrl}/orders/${revisionOrderId}/revision-request`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                      body: JSON.stringify({ reason: revisionReason, notes: revisionNotes || undefined }),
-                    });
+                    const res = await fetch(
+                      `${config.apiUrl}/orders/${revisionOrderId}/revision-request`,
+                      {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({
+                          reason: revisionReason,
+                          notes: revisionNotes || undefined,
+                        }),
+                      }
+                    );
                     if (!res.ok) throw new Error(`API ${res.status}`);
                     toast.success('Sent back to Design');
                     setShowRevisionModal(false);
@@ -2077,14 +2544,17 @@ function OrderDetailPanel({
   const overdue = dueDate ? dueDate < new Date() : false;
   const pri = PRIORITY_CONFIG[order.priority] || PRIORITY_CONFIG[3];
   const orderPrintStations = getOrderPrintStations(order);
-  const routingDisplay = order.routing.length > 0 ? order.routing : orderPrintStations;
+  const routingDisplay = sortRouting(order.routing.length > 0 ? order.routing : orderPrintStations);
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="bg-blue-600 text-white">
         <div className="flex items-center gap-3 px-4 pt-3 pb-2">
-          <button onClick={onBack} className="p-1.5 -ml-1 rounded-full hover:bg-white/20 active:bg-white/30">
+          <button
+            onClick={onBack}
+            className="p-1.5 -ml-1 rounded-full hover:bg-white/20 active:bg-white/30"
+          >
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="flex-1 min-w-0">
@@ -2099,9 +2569,13 @@ function OrderDetailPanel({
             <p className="text-white/80 text-sm truncate">{order.customerName}</p>
           </div>
           {dueDate && (
-            <div className={`text-right text-xs px-2 py-1 rounded-lg ${overdue ? 'bg-red-600/50 text-red-100 font-bold' : 'bg-white/10 text-white/80'}`}>
+            <div
+              className={`text-right text-xs px-2 py-1 rounded-lg ${overdue ? 'bg-red-600/50 text-red-100 font-bold' : 'bg-white/10 text-white/80'}`}
+            >
               <Clock className="w-3 h-3 inline mr-1" />
-              {overdue ? 'OVERDUE' : dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              {overdue
+                ? 'OVERDUE'
+                : dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
             </div>
           )}
           {!dueDate && <span className="text-xs text-white/50">No due date</span>}
@@ -2118,11 +2592,13 @@ function OrderDetailPanel({
                     stStatus === 'COMPLETED'
                       ? 'bg-white/25 text-white'
                       : stStatus === 'IN_PROGRESS'
-                      ? 'bg-white text-gray-900 font-bold'
-                      : 'text-white/40'
+                        ? 'bg-white text-gray-900 font-bold'
+                        : 'text-white/40'
                   }`}
                 >
-                  {stStatus === 'COMPLETED' && <CheckCircle className="w-2.5 h-2.5 inline mr-0.5" />}
+                  {stStatus === 'COMPLETED' && (
+                    <CheckCircle className="w-2.5 h-2.5 inline mr-0.5" />
+                  )}
                   {ALL_STATION_LABELS[rt] || rt}
                 </span>
               </div>
@@ -2135,7 +2611,9 @@ function OrderDetailPanel({
       <div className="flex-1 overflow-y-auto bg-gray-50">
         {/* Description + Notes */}
         <div className="px-4 pt-3 pb-2">
-          {order.description && <p className="text-sm text-gray-800 leading-snug">{order.description}</p>}
+          {order.description && (
+            <p className="text-sm text-gray-800 leading-snug">{order.description}</p>
+          )}
           {order.notes && (
             <div className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
               <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-500" />
@@ -2151,7 +2629,9 @@ function OrderDetailPanel({
               <h3 className="text-xs font-semibold text-gray-500 uppercase">Print Stations</h3>
               {activeRipJob && (
                 <div className="mt-1 flex items-center gap-2 text-xs text-indigo-700">
-                  <span className={`px-2 py-0.5 rounded-full ${getRipStatusClasses(activeRipJob.status)}`}>
+                  <span
+                    className={`px-2 py-0.5 rounded-full ${getRipStatusClasses(activeRipJob.status)}`}
+                  >
                     {activeRipJob.status.replace(/_/g, ' ')}
                   </span>
                   <span className="truncate">{activeRipJob.hotfolderName}</span>
@@ -2178,25 +2658,31 @@ function OrderDetailPanel({
                     stStatus === 'IN_PROGRESS'
                       ? `${cfg.bg} ${cfg.border}`
                       : stStatus === 'COMPLETED'
-                      ? 'bg-green-50 border-green-200'
-                      : 'bg-white border-gray-200'
+                        ? 'bg-green-50 border-green-200'
+                        : 'bg-white border-gray-200'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Printer className={`h-5 w-5 ${stStatus === 'COMPLETED' ? 'text-green-500' : cfg.icon}`} />
+                      <Printer
+                        className={`h-5 w-5 ${stStatus === 'COMPLETED' ? 'text-green-500' : cfg.icon}`}
+                      />
                       <div>
-                        <span className={`font-semibold text-sm ${stStatus === 'COMPLETED' ? 'text-green-700' : cfg.color}`}>
+                        <span
+                          className={`font-semibold text-sm ${stStatus === 'COMPLETED' ? 'text-green-700' : cfg.color}`}
+                        >
                           {cfg.label}
                         </span>
-                        <div className={`text-xs ${order.routing.includes(ps) ? 'text-gray-500' : 'text-amber-600'}`}>
+                        <div
+                          className={`text-xs ${order.routing.includes(ps) ? 'text-gray-500' : 'text-amber-600'}`}
+                        >
                           {!order.routing.includes(ps)
                             ? 'Inferred from order details'
                             : stStatus === 'COMPLETED' && prog?.completedAt
-                            ? `Completed ${formatDate(prog.completedAt)}`
-                            : stStatus === 'IN_PROGRESS' && prog?.startedAt
-                            ? `Started ${formatDate(prog.startedAt)}`
-                            : 'Waiting'}
+                              ? `Completed ${formatDate(prog.completedAt)}`
+                              : stStatus === 'IN_PROGRESS' && prog?.startedAt
+                                ? `Started ${formatDate(prog.startedAt)}`
+                                : 'Waiting'}
                         </div>
                       </div>
                     </div>
@@ -2254,12 +2740,21 @@ function OrderDetailPanel({
             </h3>
             <div className="space-y-2">
               {order.lineItems.map((item) => (
-                <div key={item.id} className="flex items-center gap-3 bg-white rounded-lg border border-gray-100 px-3 py-2">
-                  <span className="text-xs text-gray-400 w-5 text-right font-mono">{item.itemNumber}.</span>
+                <div
+                  key={item.id}
+                  className="flex items-center gap-3 bg-white rounded-lg border border-gray-100 px-3 py-2"
+                >
+                  <span className="text-xs text-gray-400 w-5 text-right font-mono">
+                    {item.itemNumber}.
+                  </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-800 truncate">{item.description || item.itemMaster?.name || 'Item'}</p>
+                    <p className="text-sm text-gray-800 truncate">
+                      {item.description || item.itemMaster?.name || 'Item'}
+                    </p>
                   </div>
-                  <span className="text-sm font-medium text-gray-700 whitespace-nowrap">Qty: {item.quantity}</span>
+                  <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    Qty: {item.quantity}
+                  </span>
                 </div>
               ))}
             </div>
@@ -2277,7 +2772,9 @@ function OrderDetailPanel({
             <div>
               <span className="text-gray-500">Priority</span>
               <p className="font-medium">
-                <span className={`px-2 py-0.5 text-xs rounded-full ${pri.color} ${pri.textColor}`}>{pri.label}</span>
+                <span className={`px-2 py-0.5 text-xs rounded-full ${pri.color} ${pri.textColor}`}>
+                  {pri.label}
+                </span>
               </p>
             </div>
             {order.assignedTo && (
@@ -2290,13 +2787,146 @@ function OrderDetailPanel({
               <span className="text-gray-500">Due Date</span>
               <p className={`font-medium ${overdue ? 'text-red-600' : 'text-gray-800'}`}>
                 {order.dueDate
-                  ? new Date(order.dueDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                  ? new Date(order.dueDate).toLocaleDateString('en-US', {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                    })
                   : 'Not set'}
               </p>
             </div>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────
+// RIP Jobs Panel — full tab view for active + recent jobs
+// ────────────────────────────────────────────────────────
+
+function RipJobsPanel({
+  activeJobs,
+  recentCompleted,
+  operationsLoading,
+  onRefresh,
+  onSendToRip,
+}: {
+  activeJobs: RipJobSummary[];
+  recentCompleted: RipJobSummary[];
+  operationsLoading: boolean;
+  onRefresh: () => void;
+  onSendToRip: (order: { id: string }) => void;
+}) {
+  return (
+    <div className="p-4 space-y-4 max-w-3xl mx-auto">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-gray-900">RIP Jobs</h3>
+        <button
+          onClick={onRefresh}
+          className="p-2 text-gray-500 hover:bg-white rounded-lg border border-gray-200"
+          title="Refresh"
+        >
+          <RefreshCw className={`w-4 h-4 ${operationsLoading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-indigo-600" />
+          <h4 className="font-medium text-gray-900">Active ({activeJobs.length})</h4>
+        </div>
+        {activeJobs.length === 0 ? (
+          <p className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+            No active RIP jobs.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {activeJobs.map((job) => (
+              <div key={job.id} className="bg-white rounded-lg border border-gray-200 px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">
+                      {job.workOrder?.orderNumber || 'Unlinked'}
+                      {job.workOrder?.customerName && (
+                        <span className="ml-2 font-normal text-gray-500">
+                          · {job.workOrder.customerName}
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate mt-0.5">{job.sourceFileName}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{job.hotfolderName}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                    <span
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getRipStatusClasses(job.status)}`}
+                    >
+                      {job.status.replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-[10px] text-gray-400">
+                      {formatDateTime(job.printStartedAt || job.queuedAt)}
+                    </span>
+                  </div>
+                </div>
+                {job.workOrder && (
+                  <button
+                    onClick={() => onSendToRip(job.workOrder!)}
+                    className="mt-2 text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                  >
+                    <Send className="w-3 h-3" /> Re-send to RIP
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <CheckCircle className="w-4 h-4 text-green-600" />
+          <h4 className="font-medium text-gray-900">Recent Completed ({recentCompleted.length})</h4>
+        </div>
+        {recentCompleted.length === 0 ? (
+          <p className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+            No recent completed jobs.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {recentCompleted.map((job) => (
+              <div
+                key={job.id}
+                className="bg-white rounded-lg border border-gray-200 px-4 py-3 opacity-80"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900">
+                      {job.workOrder?.orderNumber || 'Unlinked'}
+                      {job.workOrder?.customerName && (
+                        <span className="ml-2 font-normal text-gray-500">
+                          · {job.workOrder.customerName}
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate mt-0.5">{job.sourceFileName}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <span
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getRipStatusClasses(job.status)}`}
+                    >
+                      {job.status.replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-[10px] text-gray-400">
+                      {formatDateTime(job.printCompletedAt || job.printStartedAt)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -2324,13 +2954,15 @@ function PrintingOperationsSidebar({
   }>;
   onRefresh: () => void;
 }) {
-  const stationLabel = visibleStations.map((station) => STATION_CONFIG[station]?.label || station).join(', ');
+  const stationLabel = visibleStations
+    .map((station) => STATION_CONFIG[station]?.label || station)
+    .join(', ');
 
   return (
-    <aside className="border-t xl:border-t-0 xl:border-l border-gray-200 bg-gray-50/80 min-h-0 overflow-auto p-4 space-y-4">
+    <div className="p-4 space-y-4 max-w-3xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-semibold text-gray-900">Live Print Ops</h3>
+          <h3 className="font-semibold text-gray-900">RIP Dashboard</h3>
           <p className="text-xs text-gray-500">{stationLabel}</p>
         </div>
         <button
@@ -2348,28 +2980,36 @@ function PrintingOperationsSidebar({
             <Activity className="w-3.5 h-3.5 text-blue-600" />
             In Queue
           </div>
-          <p className="mt-2 text-2xl font-semibold text-gray-900">{ripDashboard?.kpis?.inQueue ?? 0}</p>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">
+            {ripDashboard?.kpis?.inQueue ?? 0}
+          </p>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-3">
           <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wide">
             <Loader2 className="w-3.5 h-3.5 text-indigo-600" />
             RIPping
           </div>
-          <p className="mt-2 text-2xl font-semibold text-gray-900">{ripDashboard?.kpis?.processing ?? 0}</p>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">
+            {ripDashboard?.kpis?.processing ?? 0}
+          </p>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-3">
           <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wide">
             <Printer className="w-3.5 h-3.5 text-violet-600" />
             Printing
           </div>
-          <p className="mt-2 text-2xl font-semibold text-gray-900">{ripDashboard?.kpis?.printing ?? 0}</p>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">
+            {ripDashboard?.kpis?.printing ?? 0}
+          </p>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-3">
           <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-wide">
             <CheckCircle className="w-3.5 h-3.5 text-green-600" />
             Today
           </div>
-          <p className="mt-2 text-2xl font-semibold text-gray-900">{ripDashboard?.kpis?.completedToday ?? 0}</p>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">
+            {ripDashboard?.kpis?.completedToday ?? 0}
+          </p>
         </div>
       </div>
 
@@ -2380,13 +3020,15 @@ function PrintingOperationsSidebar({
         </div>
 
         {hotfolders.length === 0 ? (
-          <p className="text-sm text-gray-500">No hotfolders configured for these print stations.</p>
+          <p className="text-sm text-gray-500">
+            No hotfolders configured for these print stations.
+          </p>
         ) : (
           <div className="space-y-2">
             {hotfolders.map((hotfolder) => {
               const machineStatus = thriveStatus?.status?.[hotfolder.machineId];
               const activeCount = activeJobs.filter(
-                (job) => job.hotfolderName.toLowerCase() === hotfolder.name.toLowerCase(),
+                (job) => job.hotfolderName.toLowerCase() === hotfolder.name.toLowerCase()
               ).length;
 
               return (
@@ -2400,10 +3042,16 @@ function PrintingOperationsSidebar({
                     </div>
                     <span
                       className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                        machineStatus?.online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                        machineStatus?.online
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-red-100 text-red-700'
                       }`}
                     >
-                      {machineStatus?.online ? (activeCount > 0 ? `Busy ${activeCount}` : 'Ready') : 'Offline'}
+                      {machineStatus?.online
+                        ? activeCount > 0
+                          ? `Busy ${activeCount}`
+                          : 'Ready'
+                        : 'Offline'}
                     </span>
                   </div>
                   <p className="text-[11px] text-gray-400 truncate mt-2">{hotfolder.path}</p>
@@ -2421,7 +3069,9 @@ function PrintingOperationsSidebar({
         </div>
 
         {activeJobs.length === 0 ? (
-          <p className="text-sm text-gray-500">No active RIP jobs for the selected print stations.</p>
+          <p className="text-sm text-gray-500">
+            No active RIP jobs for the selected print stations.
+          </p>
         ) : (
           <div className="space-y-2">
             {activeJobs.slice(0, 8).map((job) => (
@@ -2433,7 +3083,9 @@ function PrintingOperationsSidebar({
                     </p>
                     <p className="text-xs text-gray-500 truncate">{job.sourceFileName}</p>
                   </div>
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getRipStatusClasses(job.status)}`}>
+                  <span
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getRipStatusClasses(job.status)}`}
+                  >
                     {job.status.replace(/_/g, ' ')}
                   </span>
                 </div>
@@ -2463,24 +3115,37 @@ function PrintingOperationsSidebar({
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{equipment.name}</p>
                     <p className="text-xs text-gray-500 truncate">
-                      {STATION_CONFIG[equipment.station as PrintStation]?.label || equipment.station || equipment.type}
+                      {STATION_CONFIG[equipment.station as PrintStation]?.label ||
+                        equipment.station ||
+                        equipment.type}
                     </p>
                   </div>
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getEquipmentStatusClasses(equipment.status)}`}>
+                  <span
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getEquipmentStatusClasses(equipment.status)}`}
+                  >
                     {equipment.status.replace(/_/g, ' ')}
                   </span>
                 </div>
 
                 <div className="mt-3 flex items-center gap-2 text-xs">
-                  <span className={`px-2 py-0.5 rounded-full font-medium ${getLiveStateClasses(live?.state)}`}>
-                    {live?.state ? live.state.toUpperCase() : live?.reachable === false ? 'OFFLINE' : 'UNKNOWN'}
+                  <span
+                    className={`px-2 py-0.5 rounded-full font-medium ${getLiveStateClasses(live?.state)}`}
+                  >
+                    {live?.state
+                      ? live.state.toUpperCase()
+                      : live?.reachable === false
+                        ? 'OFFLINE'
+                        : 'UNKNOWN'}
                   </span>
-                  {live?.stateMessage && <span className="text-gray-500 truncate">{live.stateMessage}</span>}
+                  {live?.stateMessage && (
+                    <span className="text-gray-500 truncate">{live.stateMessage}</span>
+                  )}
                 </div>
 
                 {activeJob && (
                   <div className="mt-2 text-xs text-indigo-700">
-                    {activeJob.workOrder?.orderNumber || 'Active job'} · {activeJob.status.replace(/_/g, ' ')}
+                    {activeJob.workOrder?.orderNumber || 'Active job'} ·{' '}
+                    {activeJob.status.replace(/_/g, ' ')}
                   </div>
                 )}
 
@@ -2494,7 +3159,6 @@ function PrintingOperationsSidebar({
           </div>
         )}
       </section>
-    </aside>
+    </div>
   );
 }
-

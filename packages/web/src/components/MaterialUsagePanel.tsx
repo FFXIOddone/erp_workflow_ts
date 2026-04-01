@@ -91,19 +91,22 @@ export function MaterialUsagePanel({ workOrderId, orderNumber }: MaterialUsagePa
   const { data: materials, isLoading } = useQuery<MaterialUsage[]>({
     queryKey: ['materials', 'order', workOrderId],
     queryFn: () =>
-      api.get(`/materials/order/${workOrderId}`).then((r) => r.data.data?.items || r.data.data || []),
+      api.get(`/materials/order/${workOrderId}`).then((r) => {
+        const items = r.data.data?.items ?? r.data.data ?? [];
+        return Array.isArray(items) ? items : [];
+      }),
   });
 
   const addFromBOMMutation = useMutation({
-    mutationFn: () => api.post(`/materials/order/${workOrderId}/from-bom`),
+    mutationFn: () => api.post(`/materials/order/${workOrderId}/from-bom`, {}),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['materials', 'order', workOrderId] });
       queryClient.invalidateQueries({ queryKey: ['job-cost', workOrderId] });
-      const count = res.data.count || 0;
-      toast.success(`Added ${count} materials from BOM`);
+      const count = res.data.count ?? res.data.data?.length ?? 0;
+      toast.success(res.data.message || `Added ${count} materials from BOM`);
     },
-    onError: () => {
-      toast.error('Failed to add materials from BOM');
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.error || err?.message || 'Failed to add materials from BOM');
     },
   });
 
@@ -151,7 +154,7 @@ export function MaterialUsagePanel({ workOrderId, orderNumber }: MaterialUsagePa
 
   // Auto-suggest materials mutation
   const suggestMutation = useMutation({
-    mutationFn: () => api.get(`/bom/suggest/${workOrderId}`),
+    mutationFn: () => api.get(`/materials/order/${workOrderId}/bom-suggestions`),
     onSuccess: (res) => {
       setSuggestions(res.data.data);
       setShowSuggestions(true);
@@ -164,7 +167,7 @@ export function MaterialUsagePanel({ workOrderId, orderNumber }: MaterialUsagePa
   // Apply suggestions mutation
   const applyMutation = useMutation({
     mutationFn: (materials: BOMSuggestion['materials']) =>
-      api.post(`/bom/apply/${workOrderId}`, { materials }),
+      api.post(`/materials/order/${workOrderId}/apply-bom-suggestions`, { materials }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['materials', 'order', workOrderId] });
       queryClient.invalidateQueries({ queryKey: ['job-cost', workOrderId] });

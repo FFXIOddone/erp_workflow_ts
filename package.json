@@ -50,8 +50,8 @@
     "xlsx": "^0.18.5"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": "24.14.0",
     "pnpm": ">=8.0.0"
   },
-  "packageManager": "npm@10.5.0"
+  "packageManager": "npm@11.9.0"
 }

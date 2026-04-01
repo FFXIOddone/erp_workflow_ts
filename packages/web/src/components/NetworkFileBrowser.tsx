@@ -105,21 +105,38 @@ export function NetworkFileBrowser({ orderId, orderNumber }: NetworkFileBrowserP
   const subfolder = currentPath.length > 0 ? currentPath.join('/') : undefined;
 
   // Fetch file categories
-  const { data: categories } = useQuery({
+  const { data: categories = [] } = useQuery<Array<{ value: string; label: string }>>({
     queryKey: ['file-categories'],
     queryFn: async () => {
       const response = await api.get('/file-browser/categories');
-      return response.data.data as { value: string; label: string }[];
+      const payload = response.data?.data;
+      return Array.isArray(payload) ? payload : [];
     },
     staleTime: Infinity,
   });
 
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery<FileBrowserData>({
     queryKey: ['file-browser', orderId, subfolder],
     queryFn: async () => {
       const params = subfolder ? { subfolder } : {};
       const response = await api.get(`/file-browser/orders/${orderId}/files`, { params });
-      return response.data.data as FileBrowserData;
+      const payload = response.data?.data;
+      return {
+        configured: Boolean(payload?.configured),
+        folderExists: typeof payload?.folderExists === 'boolean' ? payload.folderExists : undefined,
+        folderPath: typeof payload?.folderPath === 'string' ? payload.folderPath : null,
+        currentSubfolder: typeof payload?.currentSubfolder === 'string' ? payload.currentSubfolder : null,
+        message: typeof payload?.message === 'string' ? payload.message : undefined,
+        error: typeof payload?.error === 'string' ? payload.error : undefined,
+        files: Array.isArray(payload?.files) ? payload.files : [],
+        woNumber: typeof payload?.woNumber === 'string' ? payload.woNumber : undefined,
+        customerName: typeof payload?.customerName === 'string' ? payload.customerName : undefined,
+        searchedLocations: Array.isArray(payload?.searchedLocations) ? payload.searchedLocations : [],
+        folderName: typeof payload?.folderName === 'string' ? payload.folderName : undefined,
+        customerFolder: typeof payload?.customerFolder === 'string' ? payload.customerFolder : undefined,
+        hasManualOverride:
+          typeof payload?.hasManualOverride === 'boolean' ? payload.hasManualOverride : undefined,
+      };
     },
   });
 
@@ -223,12 +240,21 @@ export function NetworkFileBrowser({ orderId, orderNumber }: NetworkFileBrowserP
   });
 
   // Browse folders query (for folder picker modal)
-  const { data: browseFolders, isLoading: isBrowsing } = useQuery({
+  const { data: browseFolders, isLoading: isBrowsing } = useQuery<{
+    currentPath: string;
+    parentPath: string | null;
+    folders: { name: string; path: string }[];
+  }>({
     queryKey: ['browse-folders', browseCurrentPath],
     queryFn: async () => {
       const params = browseCurrentPath ? { path: browseCurrentPath } : {};
       const response = await api.get('/file-browser/browse-folders', { params });
-      return response.data.data as { currentPath: string; parentPath: string | null; folders: { name: string; path: string }[] };
+      const payload = response.data?.data;
+      return {
+        currentPath: typeof payload?.currentPath === 'string' ? payload.currentPath : '',
+        parentPath: typeof payload?.parentPath === 'string' ? payload.parentPath : null,
+        folders: Array.isArray(payload?.folders) ? payload.folders : [],
+      };
     },
     enabled: showFolderPicker,
   });

@@ -132,22 +132,22 @@ export function PrinterDashboardPage() {
 
   // Fetch dashboard data
   const { data: dashboard, isLoading, refetch } = useQuery<DashboardData>({
-    queryKey: ['print-queue', 'dashboard'],
-    queryFn: () => api.get('/print-queue/dashboard').then((r) => r.data.data),
+    queryKey: ['rip-queue', 'dashboard'],
+    queryFn: () => api.get('/rip-queue/dashboard').then((r) => r.data.data),
   });
 
   // Fetch all pending jobs
   const { data: pendingJobs } = useQuery<PrintJobItem[]>({
-    queryKey: ['print-queue', 'jobs', 'pending'],
-    queryFn: () => api.get('/print-queue/jobs', { params: { status: 'PENDING,PREPARING,READY' } }).then((r) => r.data.data),
+    queryKey: ['rip-queue', 'jobs', 'pending'],
+    queryFn: () => api.get('/rip-queue/jobs', { params: { status: 'PENDING,PREPARING,READY' } }).then((r) => r.data.data),
   });
 
   // Status change mutation
   const statusMutation = useMutation({
     mutationFn: ({ jobId, status, equipmentId }: { jobId: string; status: string; equipmentId?: string }) =>
-      api.put(`/print-queue/jobs/${jobId}/status`, { status, equipmentId }),
+      api.put(`/rip-queue/jobs/${jobId}/status`, { status, equipmentId }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['print-queue'] });
+      queryClient.invalidateQueries({ queryKey: ['rip-queue'] });
       toast.success('Job status updated');
     },
     onError: () => toast.error('Failed to update status'),

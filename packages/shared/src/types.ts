@@ -2671,9 +2671,11 @@ export interface RipJob {
 /** Input to create a RIP job (send file to hotfolder) */
 export interface CreateRipJobInput {
   workOrderId: string;
-  sourceFilePath: string;
-  hotfolderPath: string;
-  hotfolderName: string;
+  sourceFilePath?: string;
+  attachmentId?: string;
+  hotfolderId?: string;
+  hotfolderPath?: string;
+  hotfolderName?: string;
   ripType?: string;
   equipmentId?: string;
   printSettings?: PrintSettings;

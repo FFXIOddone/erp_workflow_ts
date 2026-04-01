@@ -13,6 +13,8 @@ export default defineConfig(({ command }) => ({
     host: true,
     port: 5186,
     strictPort: true,
+    // Allow the shop-floor dev app to be opened from LAN Macs by IP or hostname.
+    allowedHosts: true,
     fs: { strict: false },
   },
   build: {

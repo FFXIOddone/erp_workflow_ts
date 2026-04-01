@@ -25,6 +25,7 @@ import { thriveService } from './thrive.js';
 
 export const FIERY_CONFIG = {
   exportPath: '\\\\192.168.254.57\\EFI Export Folder',
+  downloadPath: '\\\\192.168.254.57\\ProgramData\\EFI\\EFI XF\\JDF\\Download',
   ip: '192.168.254.57',
 };
 
@@ -34,11 +35,11 @@ export interface FieryJob {
   fileName: string;
   timestamp: string | null;
   dimensions: {
-    width: number;  // in points (1/72 inch)
-    height: number;
-    depth: number;
+    widthIn: number;
+    heightIn: number;
   } | null;
   media: {
+    vutekMedia: string | null;    // EFI:VutekProp Media (actual media loaded)
     brand: string | null;
     description: string | null;
     type: string | null;
@@ -48,12 +49,19 @@ export interface FieryJob {
   rtlUrl: string | null;
   hasZccCutFile: boolean;
   zccFileName: string | null;
+  zccFilePath?: string | null;
   // Parsed work order info (from Thrive file path)
   workOrderNumber: string | null;
   customerName: string | null;
   // Thrive cross-reference data
   thriveFilePath: string | null;
   thriveJobMatch: boolean;
+}
+
+export interface FieryDownloadFile {
+  fileName: string;
+  filePath: string;
+  timestamp: string | null;
 }
 
 export interface FieryJobLinked extends FieryJob {
@@ -94,35 +102,23 @@ export async function parseJdfFile(filePath: string): Promise<FieryJob | null> {
     // Get resources
     const resourcePool = jdf.ResourcePool || {};
     const resources = Array.isArray(resourcePool) ? resourcePool : [resourcePool];
-    
-    // Find component (dimensions)
-    let dimensions: FieryJob['dimensions'] = null;
+
     let previewUrl: string | null = null;
     let rtlUrl: string | null = null;
-    let media: FieryJob['media'] = null;
+    let vutekMedia: string | null = null;
+    let jdfBrand: string | null = null;
+    let jdfDescription: string | null = null;
+    let jdfMediaType: string | null = null;
     const inks: string[] = [];
-    
+
     // Parse all resource elements
     for (const pool of resources) {
-      // Component - has dimensions
-      const component = pool.Component;
-      if (component) {
-        const dims = component.Dimensions?.split(' ').map(Number);
-        if (dims && dims.length >= 2) {
-          dimensions = {
-            width: dims[0],
-            height: dims[1],
-            depth: dims[2] || 0,
-          };
-        }
-      }
-      
       // Preview URL
       const preview = pool.Preview;
       if (preview?.URL) {
         previewUrl = preview.URL;
       }
-      
+
       // RunList - has file URL
       const runList = pool.RunList;
       if (runList) {
@@ -134,17 +130,25 @@ export async function parseJdfFile(filePath: string): Promise<FieryJob | null> {
           }
         }
       }
-      
-      // Media info
+
+      // JDF Media element (often a Fiery XF default, not actual media)
       const mediaEl = pool.Media;
       if (mediaEl) {
-        media = {
-          brand: mediaEl.Brand || null,
-          description: mediaEl.DescriptiveName || null,
-          type: mediaEl.MediaType || null,
-        };
+        jdfBrand = mediaEl.Brand || null;
+        jdfDescription = mediaEl.DescriptiveName || null;
+        jdfMediaType = mediaEl.MediaType || null;
       }
-      
+
+      // MachineProperties > VutekProp — actual VUTEk media setting
+      // (EFI: namespace prefix is stripped by removeNSPrefix: true)
+      const machineProps = pool.MachineProperties || pool['EFI:MachineProperties'];
+      if (machineProps) {
+        const vutekProp = machineProps.VutekProp || machineProps['EFI:VutekProp'];
+        if (vutekProp?.Media) {
+          vutekMedia = vutekProp.Media;
+        }
+      }
+
       // Colorant order (inks)
       const colorantControl = pool.ColorantControl;
       if (colorantControl?.ColorantOrder) {
@@ -159,6 +163,9 @@ export async function parseJdfFile(filePath: string): Promise<FieryJob | null> {
         }
       }
     }
+
+    // Extract dimensions from job name (e.g., "101x83", "6.37x33.07", "31x8")
+    const dimensions = parseDimensionsFromName(jobName);
     
     // Get timestamp: prefer file mtime (when actually printed) over AuditPool.Created.TimeStamp
     // (AuditPool.Created.TimeStamp is the JDF creation date, which can be years old for
@@ -180,6 +187,16 @@ export async function parseJdfFile(filePath: string): Promise<FieryJob | null> {
     const dir = path.dirname(filePath);
     const zccFiles = await findMatchingZccFiles(dir, baseName);
     
+    // Build media info: VutekProp Media is a static default ("60 inch Web"),
+    // JDF Media is also a static default ("3CB 3-Part Carbonless").
+    // Real per-job media comes from Thrive cross-reference (applied later).
+    const media: FieryJob['media'] = {
+      vutekMedia: vutekMedia || null,
+      brand: null,       // JDF brand is always wrong (Appleton)
+      description: null, // Will be set from Thrive printMedia if matched
+      type: null,
+    };
+
     // Work order info will be populated later via Thrive cross-reference
     return {
       jobId,
@@ -193,6 +210,7 @@ export async function parseJdfFile(filePath: string): Promise<FieryJob | null> {
       rtlUrl,
       hasZccCutFile: zccFiles.length > 0,
       zccFileName: zccFiles[0] || null,
+      zccFilePath: zccFiles[0] ? path.join(dir, zccFiles[0]) : null,
       workOrderNumber: null,
       customerName: null,
       thriveFilePath: null,
@@ -211,6 +229,25 @@ function extractJobName(jobId: string): string {
   // Remove .rtl_101 suffix if present
   let name = jobId.replace(/\.rtl(_\d+)?$/, '');
   return name;
+}
+
+/**
+ * Extract piece dimensions from job name (e.g., "101x83", "6.37x33.07", "31x8")
+ * These are the actual piece sizes embedded in the naming convention.
+ * JDF Component Dimensions are total tile/nested area and not useful.
+ */
+function parseDimensionsFromName(name: string): FieryJob['dimensions'] {
+  // Match patterns like: 101x83, 6.37x33.07, 10x10, 28x35
+  // Must appear as a standalone segment (preceded by start/underscore/dash/space)
+  const match = name.match(/(?:^|[_\- ])(\d+\.?\d*)x(\d+\.?\d?)(?=[_\- (]|$)/i);
+  if (match) {
+    const w = parseFloat(match[1]);
+    const h = parseFloat(match[2]);
+    if (w > 0 && h > 0 && w < 500 && h < 500) {
+      return { widthIn: w, heightIn: h };
+    }
+  }
+  return null;
 }
 
 /**
@@ -302,47 +339,53 @@ function parseThrivePath(filePath: string): {
   const workOrderNumber = woMatch ? `WO${woMatch[1]}` : null;
   
   // Extract customer name (folder before WO folder)
-  // Pattern: S:\Safari\CustomerName\WO... or S:\CustomerName\WO...
-  const custMatch = filePath.match(/[A-Z]:\\(?:Safari\\)?([^\\]+)\\WO\d/i);
+  // UNC: \\wildesigns-fs1\Company Files\Safari\CustomerName\WO...
+  // UNC: \\wildesigns-fs1\Company Files\CustomerName\YEAR\WO...
+  // Drive: S:\Safari\CustomerName\WO... or S:\CustomerName\WO...
+  const custMatch = filePath.match(/(?:Company Files|[A-Z]:)\\(?:Safari\\)?([^\\]+)\\(?:\d{4}\\)?WO\d/i);
   const customerName = custMatch ? custMatch[1] : null;
   
   return { workOrderNumber, customerName };
 }
 
+interface ThriveLookupEntry {
+  fileName: string;
+  jobName: string;
+  printMedia?: string;
+}
+
 /**
  * Build Thrive job lookup map for cross-referencing
- * Maps normalized job names to their file paths
+ * Maps normalized job names to their file paths + media info
  */
-async function buildThriveJobLookup(): Promise<Map<string, { fileName: string; jobName: string }>> {
-  const lookup = new Map<string, { fileName: string; jobName: string }>();
-  
+async function buildThriveJobLookup(): Promise<Map<string, ThriveLookupEntry>> {
+  const lookup = new Map<string, ThriveLookupEntry>();
+
   try {
     const { printJobs } = await thriveService.getAllJobs();
-    
+
     for (const job of printJobs) {
-      // Create normalized key from job name
-      const normalizedName = normalizeJobName(job.jobName);
-      
-      // Store full file path for WO extraction
-      lookup.set(normalizedName, {
+      const entry: ThriveLookupEntry = {
         fileName: job.fileName,
         jobName: job.jobName,
-      });
-      
+        printMedia: (job as any).printMedia || undefined,
+      };
+
+      // Create normalized key from job name
+      const normalizedName = normalizeJobName(job.jobName);
+      lookup.set(normalizedName, entry);
+
       // Also index by base file name (without path)
       const baseFileName = path.basename(job.fileName, '.pdf');
       const normalizedBaseName = normalizeJobName(baseFileName);
       if (!lookup.has(normalizedBaseName)) {
-        lookup.set(normalizedBaseName, {
-          fileName: job.fileName,
-          jobName: job.jobName,
-        });
+        lookup.set(normalizedBaseName, entry);
       }
     }
   } catch (error) {
     console.warn('Could not build Thrive job lookup:', error);
   }
-  
+
   return lookup;
 }
 
@@ -361,9 +404,11 @@ async function searchFileServerForSource(jobName: string): Promise<string | null
     .slice(0, 2);
   
   if (searchTerms.length === 0) return null;
-  
-  const searchPattern = searchTerms.join('*');
-  const basePaths = ['S:\\', 'S:\\Safari\\'];
+
+  const basePaths = [
+    '\\\\wildesigns-fs1\\Company Files',
+    '\\\\wildesigns-fs1\\Company Files\\Safari',
+  ];
   
   for (const basePath of basePaths) {
     try {
@@ -414,19 +459,22 @@ async function searchFileServerForSource(jobName: string): Promise<string | null
 // ─── TTL Cache for getAllFieryJobs ───────────────────
 let fieryJobsCache: { data: FieryJob[]; expiresAt: number } | null = null;
 const FIERY_CACHE_TTL_MS = 30_000; // 30 seconds
+let fieryDownloadCache: { data: FieryDownloadFile[]; expiresAt: number } | null = null;
+const FIERY_DOWNLOAD_CACHE_TTL_MS = 10_000; // 10 seconds
 
 /**
  * Build Thrive job lookup from pre-fetched data (avoids duplicate network call)
  */
-function buildThriveJobLookupFromData(printJobs: Array<{ fileName: string; jobName: string }>): Map<string, { fileName: string; jobName: string }> {
-  const lookup = new Map<string, { fileName: string; jobName: string }>();
+function buildThriveJobLookupFromData(printJobs: Array<{ fileName: string; jobName: string; printMedia?: string }>): Map<string, ThriveLookupEntry> {
+  const lookup = new Map<string, ThriveLookupEntry>();
   for (const job of printJobs) {
+    const entry: ThriveLookupEntry = { fileName: job.fileName, jobName: job.jobName, printMedia: job.printMedia };
     const normalizedName = normalizeJobName(job.jobName);
-    lookup.set(normalizedName, { fileName: job.fileName, jobName: job.jobName });
+    lookup.set(normalizedName, entry);
     const baseFileName = path.basename(job.fileName, '.pdf');
     const normalizedBaseName = normalizeJobName(baseFileName);
     if (!lookup.has(normalizedBaseName)) {
-      lookup.set(normalizedBaseName, { fileName: job.fileName, jobName: job.jobName });
+      lookup.set(normalizedBaseName, entry);
     }
   }
   return lookup;
@@ -465,16 +513,95 @@ export async function getAllFieryJobs(preFetchedPrintJobs?: Array<{ fileName: st
           job.customerName = pathInfo.customerName;
           job.thriveFilePath = thriveMatch.fileName;
           job.thriveJobMatch = true;
+          // Keep the Thrive print-media label separate from the RIP substrate.
+          // The actual RIP-side media remains in `vutekMedia` from the parsed JDF.
+          if (thriveMatch.printMedia) {
+            job.media = {
+              ...job.media!,
+              description: thriveMatch.printMedia,
+            };
+          }
         }
         jobs.push(job);
       }
     }
   }
   
+  // For recent unlinked jobs, try file server search fallback
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const unlinkedRecent = jobs.filter(j =>
+    !j.thriveJobMatch && j.timestamp && new Date(j.timestamp).getTime() > weekAgo
+  );
+  // Limit file server searches to avoid slow responses
+  const searchBatch = unlinkedRecent.slice(0, 20);
+  if (searchBatch.length > 0) {
+    await Promise.all(searchBatch.map(async (job) => {
+      try {
+        const sourcePath = await searchFileServerForSource(job.jobName);
+        if (sourcePath) {
+          const pathInfo = parseThrivePath(sourcePath);
+          job.workOrderNumber = pathInfo.workOrderNumber;
+          job.customerName = pathInfo.customerName;
+          job.thriveFilePath = sourcePath;
+        }
+      } catch {}
+    }));
+  }
+
   // Cache result
   fieryJobsCache = { data: jobs, expiresAt: Date.now() + FIERY_CACHE_TTL_MS };
   
   return jobs;
+}
+
+async function scanFieryDownloadFiles(dir: string, depth: number): Promise<FieryDownloadFile[]> {
+  if (depth > 4) return [];
+
+  const files: FieryDownloadFile[] = [];
+  let entries: string[];
+
+  try {
+    entries = await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry);
+    const lower = entry.toLowerCase();
+
+    try {
+      const stat = await fs.stat(fullPath);
+      if (stat.isDirectory()) {
+        files.push(...(await scanFieryDownloadFiles(fullPath, depth + 1)));
+      } else if (stat.isFile() && lower.endsWith('.pdf')) {
+        files.push({
+          fileName: entry,
+          filePath: fullPath,
+          timestamp: stat.mtime.toISOString(),
+        });
+      }
+    } catch {
+      // Skip unreadable entries.
+    }
+  }
+
+  return files;
+}
+
+/**
+ * Get PDF files currently downloaded by the Fiery JDF connector.
+ * These are stronger evidence that the job has actually reached the RIP machine
+ * even if the export-folder JDF/RTL artifacts have not appeared yet.
+ */
+export async function getAllFieryDownloadFiles(): Promise<FieryDownloadFile[]> {
+  if (fieryDownloadCache && Date.now() < fieryDownloadCache.expiresAt) {
+    return fieryDownloadCache.data;
+  }
+
+  const files = await scanFieryDownloadFiles(FIERY_CONFIG.downloadPath, 0);
+  fieryDownloadCache = { data: files, expiresAt: Date.now() + FIERY_DOWNLOAD_CACHE_TTL_MS };
+  return files;
 }
 
 /**
@@ -628,8 +755,9 @@ export async function getFierySummary(): Promise<{
     inkConfigs[inkKey] = (inkConfigs[inkKey] || 0) + 1;
     
     // Track media types
-    if (job.media?.description) {
-      mediaTypes.add(job.media.description);
+    const mediaName = job.media?.vutekMedia || job.media?.description;
+    if (mediaName) {
+      mediaTypes.add(mediaName);
     }
   }
   

@@ -11,11 +11,12 @@
  * - Cutter machine info (G3 M-2500)
  */
 
-import Database from 'better-sqlite3';
+import type BetterSqlite3 from 'better-sqlite3';
 import fs from 'fs';
 import { promises as fsP } from 'fs';
 import path from 'path';
 import os from 'os';
+import { loadBetterSqlite3, requireBetterSqlite3 } from '../lib/better-sqlite3.js';
 
 // ============ Types ============
 
@@ -96,6 +97,7 @@ const REFRESH_INTERVAL_MS = 30000; // 30 seconds
 
 // Last refresh timestamps
 const lastRefresh: Record<string, number> = {};
+type BetterSqliteDatabase = InstanceType<typeof BetterSqlite3>;
 
 // ============ Helpers ============
 
@@ -155,7 +157,8 @@ async function refreshLocalCopy(zundId: string): Promise<string> {
   return localPath;
 }
 
-async function openDb(zundId: string): Promise<Database.Database> {
+async function openDb(zundId: string): Promise<BetterSqliteDatabase> {
+  const Database = await requireBetterSqlite3('Zund');
   const localPath = await refreshLocalCopy(zundId);
   // Ensure material name map is loaded (no-op after first load, refreshes every 24h)
   loadMaterialMap().catch(err => console.warn('[Zund] Material map load error:', err.message));
@@ -174,10 +177,39 @@ const ZUND_MATERIAL_PATHS: Record<string, string> = {
 let materialNameMap: Record<string, string> = {};
 let materialMapLoadedAt = 0;
 const MATERIAL_MAP_TTL_MS = 86_400_000; // 24h
+let materialMapLoadPromise: Promise<void> | null = null;
+
+function isBusyLikeError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes('EBUSY') || message.includes('EPERM') || message.includes('resource busy or locked');
+}
+
+async function safeReplaceFromRemote(remotePath: string, localPath: string, timeoutMs: number, label: string): Promise<void> {
+  const tempPath = `${localPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await withTimeout(fsP.copyFile(remotePath, tempPath), timeoutMs, label);
+    await fsP.rename(tempPath, localPath);
+  } catch (err) {
+    try {
+      if (fs.existsSync(tempPath)) {
+        await fsP.unlink(tempPath);
+      }
+    } catch {
+      // best effort cleanup
+    }
+    throw err;
+  }
+}
 
 export async function loadMaterialMap(): Promise<void> {
+  if (materialMapLoadPromise) return materialMapLoadPromise;
+
+  materialMapLoadPromise = (async () => {
   const now = Date.now();
   if (now - materialMapLoadedAt < MATERIAL_MAP_TTL_MS && Object.keys(materialNameMap).length > 0) return;
+
+  const Database = await loadBetterSqlite3('Zund');
+  if (!Database) return;
 
   const newMap: Record<string, string> = {};
   ensureCacheDir();
@@ -185,13 +217,14 @@ export async function loadMaterialMap(): Promise<void> {
   for (const [zundId, remotePath] of Object.entries(ZUND_MATERIAL_PATHS)) {
     const localPath = path.join(LOCAL_CACHE_DIR, `${zundId}_material.db3`);
     try {
-      await withTimeout(fsP.copyFile(remotePath, localPath), 5000, `copyMaterial ${zundId}`);
+      await safeReplaceFromRemote(remotePath, localPath, 5000, `copyMaterial ${zundId}`);
     } catch (err: any) {
       if (!fs.existsSync(localPath)) {
         console.warn(`[Zund] Cannot load Material.db3 for ${zundId}: ${err.message}`);
         continue;
       }
-      console.warn(`[Zund] Using cached Material.db3 for ${zundId}: ${err.message}`);
+      const severity = isBusyLikeError(err) ? 'log' : 'warn';
+      console[severity](`[Zund] Using cached Material.db3 for ${zundId}: ${err.message}`);
     }
 
     try {
@@ -211,6 +244,13 @@ export async function loadMaterialMap(): Promise<void> {
     materialNameMap = newMap;
     materialMapLoadedAt = now;
     console.log(`[Zund] Loaded ${Object.keys(newMap).length} material names from Material.db3`);
+  }
+  })();
+
+  try {
+    await materialMapLoadPromise;
+  } finally {
+    materialMapLoadPromise = null;
   }
 }
 

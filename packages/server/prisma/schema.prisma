@@ -406,6 +406,7 @@ model WorkOrder {
   inventoryItems   InventoryItem[]
   attachments      OrderAttachment[]
   shipments        Shipment[]
+  fedExShipmentRecords FedExShipmentRecord[]
   materialUsages   MaterialUsage[]
   jobCost          JobCost?
   qcInspections    QCInspection[]
@@ -466,6 +467,7 @@ model WorkOrder {
 
   // Design Revision Requests
   revisionRequests  DesignRevisionRequest[] @relation("OrderRevisionRequests")
+  barcodescans      BarcodeScan[]
 
   // ============ Performance Indexes ============
   // Single column indexes
@@ -500,22 +502,44 @@ enum OrderStatus {
 }
 
 enum PrintingMethod {
+  // Primary stations
+  SALES
+  DESIGN_ONLY
+  ORDER_ENTRY
+  DESIGN
+  FLATBED
   ROLL_TO_ROLL
   SCREEN_PRINT
   PRODUCTION
-  FLATBED
-  DESIGN
-  SALES
-  INSTALLATION
-  ORDER_ENTRY
   SHIPPING_RECEIVING
-  // Sub-stations
+  INSTALLATION
+  COMPLETE
+  // Design sub-stations
+  DESIGN_PROOF
+  DESIGN_APPROVAL
+  DESIGN_PRINT_READY
+  // Flatbed sub-stations
   FLATBED_PRINTING
+  // Roll to Roll sub-stations
   ROLL_TO_ROLL_PRINTING
+  // Screen Print sub-stations
+  SCREEN_PRINT_PRINTING
+  SCREEN_PRINT_ASSEMBLY
+  // Production sub-stations
   PRODUCTION_ZUND
   PRODUCTION_FINISHING
+  // Shipping sub-stations
   SHIPPING_QC
   SHIPPING_PACKAGING
+  SHIPPING_SHIPMENT
+  SHIPPING_INSTALL_READY
+  // Installation sub-stations
+  INSTALLATION_REMOTE
+  INSTALLATION_INHOUSE
+  // Complete sub-stations
+  COMPLETE_INSTALLED
+  COMPLETE_SHIPPED
+  COMPLETE_DESIGN_ONLY
 }
 
 // ============ Line Items ============
@@ -1433,6 +1457,39 @@ model ImportHistory {
 
   @@index([createdAt])
   @@index([userId])
+}
+
+// ============ FedEx Ship Manager Logs ============
+
+model FedExShipmentRecord {
+  id                     String   @id @default(uuid())
+  sourceFileName         String
+  sourceFilePath         String?
+  sourceFileDate         DateTime
+  eventTimestamp         DateTime?
+  trackingNumber         String?
+  service                String?
+  recipientCompanyName   String?
+  recipientContactName   String?
+  destinationAddressLine1 String?
+  destinationCity        String?
+  destinationState       String?
+  destinationPostalCode  String?
+  destinationCountry     String?
+  workOrderId            String?
+  workOrder              WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  sourceKey              String   @unique
+  rawPayload             String   @db.Text
+  rawData                Json?
+  importedAt             DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([sourceFileDate])
+  @@index([eventTimestamp])
+  @@index([trackingNumber])
+  @@index([recipientCompanyName])
+  @@index([workOrderId])
+  @@index([sourceFileName])
 }
 
 // ============ Vendor / Procurement ============
@@ -13293,4 +13350,19 @@ model FileChainLog {
   @@index([event])
   @@index([cutId])
   @@index([workOrderId])
+}
+model BarcodeScan {
+  id           String      @id @default(cuid())
+  rawBarcode   String
+  parsedCutId  String?
+  orientation  String?
+  station      String?
+  matched      Boolean     @default(false)
+  workOrderId  String?
+  workOrder    WorkOrder?  @relation(fields: [workOrderId], references: [id])
+  scannedAt    DateTime    @default(now())
+
+  @@index([parsedCutId])
+  @@index([workOrderId])
+  @@index([scannedAt])
 }

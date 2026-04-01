@@ -10,22 +10,44 @@ export enum OrderStatus {
 
 // Printing Methods / Stations
 export enum PrintingMethod {
+  // Primary stations (in workflow order)
+  SALES = 'SALES',
+  DESIGN_ONLY = 'DESIGN_ONLY',
+  ORDER_ENTRY = 'ORDER_ENTRY',
+  DESIGN = 'DESIGN',
+  FLATBED = 'FLATBED',
   ROLL_TO_ROLL = 'ROLL_TO_ROLL',
   SCREEN_PRINT = 'SCREEN_PRINT',
   PRODUCTION = 'PRODUCTION',
-  FLATBED = 'FLATBED',
-  DESIGN = 'DESIGN',
-  SALES = 'SALES',
-  INSTALLATION = 'INSTALLATION',
-  ORDER_ENTRY = 'ORDER_ENTRY',
   SHIPPING_RECEIVING = 'SHIPPING_RECEIVING',
-  // Sub-stations
+  INSTALLATION = 'INSTALLATION',
+  COMPLETE = 'COMPLETE',
+  // Design sub-stations
+  DESIGN_PROOF = 'DESIGN_PROOF',
+  DESIGN_APPROVAL = 'DESIGN_APPROVAL',
+  DESIGN_PRINT_READY = 'DESIGN_PRINT_READY',
+  // Flatbed sub-stations
   FLATBED_PRINTING = 'FLATBED_PRINTING',
+  // Roll to Roll sub-stations
   ROLL_TO_ROLL_PRINTING = 'ROLL_TO_ROLL_PRINTING',
+  // Screen Print sub-stations
+  SCREEN_PRINT_PRINTING = 'SCREEN_PRINT_PRINTING',
+  SCREEN_PRINT_ASSEMBLY = 'SCREEN_PRINT_ASSEMBLY',
+  // Production sub-stations
   PRODUCTION_ZUND = 'PRODUCTION_ZUND',
   PRODUCTION_FINISHING = 'PRODUCTION_FINISHING',
+  // Shipping sub-stations
   SHIPPING_QC = 'SHIPPING_QC',
   SHIPPING_PACKAGING = 'SHIPPING_PACKAGING',
+  SHIPPING_SHIPMENT = 'SHIPPING_SHIPMENT',
+  SHIPPING_INSTALL_READY = 'SHIPPING_INSTALL_READY',
+  // Installation sub-stations
+  INSTALLATION_REMOTE = 'INSTALLATION_REMOTE',
+  INSTALLATION_INHOUSE = 'INSTALLATION_INHOUSE',
+  // Complete sub-stations
+  COMPLETE_INSTALLED = 'COMPLETE_INSTALLED',
+  COMPLETE_SHIPPED = 'COMPLETE_SHIPPED',
+  COMPLETE_DESIGN_ONLY = 'COMPLETE_DESIGN_ONLY',
 }
 
 // Station Status
@@ -194,11 +216,11 @@ export enum QCStatus {
 // Equipment Status (extended for routing intelligence)
 export enum EquipmentStatus {
   OPERATIONAL = 'OPERATIONAL',
-  DEGRADED = 'DEGRADED',     // Working but slower (routing intelligence)
+  DEGRADED = 'DEGRADED', // Working but slower (routing intelligence)
   MAINTENANCE = 'MAINTENANCE',
   DOWN = 'DOWN',
   WARMING_UP = 'WARMING_UP', // Starting up (routing intelligence)
-  OFFLINE = 'OFFLINE',       // Not available (routing intelligence)
+  OFFLINE = 'OFFLINE', // Not available (routing intelligence)
   RETIRED = 'RETIRED',
 }
 
@@ -266,7 +288,7 @@ export enum EmailTrigger {
   ORDER_STATUS_CHANGED = 'ORDER_STATUS_CHANGED',
   ORDER_COMPLETED = 'ORDER_COMPLETED',
   ORDER_SHIPPED = 'ORDER_SHIPPED',
-  
+
   // Quote events
   QUOTE_SENT = 'QUOTE_SENT',
   QUOTE_FOLLOWUP_3DAY = 'QUOTE_FOLLOWUP_3DAY',
@@ -274,27 +296,27 @@ export enum EmailTrigger {
   QUOTE_FOLLOWUP_14DAY = 'QUOTE_FOLLOWUP_14DAY',
   QUOTE_APPROVED = 'QUOTE_APPROVED',
   QUOTE_REJECTED = 'QUOTE_REJECTED',
-  
+
   // Proof events
   PROOF_UPLOADED = 'PROOF_UPLOADED',
   PROOF_APPROVED = 'PROOF_APPROVED',
   PROOF_REJECTED = 'PROOF_REJECTED',
   PROOF_REMINDER = 'PROOF_REMINDER',
-  
+
   // Due date events
   DUE_DATE_7DAY = 'DUE_DATE_7DAY',
   DUE_DATE_3DAY = 'DUE_DATE_3DAY',
   DUE_DATE_1DAY = 'DUE_DATE_1DAY',
   ORDER_LATE = 'ORDER_LATE',
-  
+
   // Portal events
   PORTAL_WELCOME = 'PORTAL_WELCOME',
   PORTAL_PASSWORD_RESET = 'PORTAL_PASSWORD_RESET',
-  
+
   // Shipment events
   SHIPMENT_CREATED = 'SHIPMENT_CREATED',
   SHIPMENT_DELIVERED = 'SHIPMENT_DELIVERED',
-  
+
   // Manual trigger
   MANUAL = 'MANUAL',
 }
@@ -360,21 +382,21 @@ export enum SubcontractStatus {
 // ============ Document Management Enums ============
 
 export enum DocumentCategory {
-  DESIGN_FILE = 'DESIGN_FILE',         // AI, PSD, InDesign files
-  PROOF = 'PROOF',                     // Proof PDFs for approval
-  CONTRACT = 'CONTRACT',               // Signed contracts
-  LOGO = 'LOGO',                       // Customer logos
-  BRAND_GUIDE = 'BRAND_GUIDE',         // Brand guidelines
-  INVOICE = 'INVOICE',                 // Invoices
-  PURCHASE_ORDER = 'PURCHASE_ORDER',   // PO documents
+  DESIGN_FILE = 'DESIGN_FILE', // AI, PSD, InDesign files
+  PROOF = 'PROOF', // Proof PDFs for approval
+  CONTRACT = 'CONTRACT', // Signed contracts
+  LOGO = 'LOGO', // Customer logos
+  BRAND_GUIDE = 'BRAND_GUIDE', // Brand guidelines
+  INVOICE = 'INVOICE', // Invoices
+  PURCHASE_ORDER = 'PURCHASE_ORDER', // PO documents
   DELIVERY_RECEIPT = 'DELIVERY_RECEIPT', // Signed delivery receipts
-  PHOTO = 'PHOTO',                     // Progress photos, install photos
-  INSURANCE = 'INSURANCE',             // Insurance certificates
-  LICENSE = 'LICENSE',                 // Business licenses
-  W9 = 'W9',                           // W-9 forms
-  QUOTE = 'QUOTE',                     // Quote documents
-  SPECIFICATION = 'SPECIFICATION',     // Technical specs
-  OTHER = 'OTHER',                     // Miscellaneous
+  PHOTO = 'PHOTO', // Progress photos, install photos
+  INSURANCE = 'INSURANCE', // Insurance certificates
+  LICENSE = 'LICENSE', // Business licenses
+  W9 = 'W9', // W-9 forms
+  QUOTE = 'QUOTE', // Quote documents
+  SPECIFICATION = 'SPECIFICATION', // Technical specs
+  OTHER = 'OTHER', // Miscellaneous
 }
 
 // ============ Recurring Orders Enums ============
@@ -474,36 +496,36 @@ export enum WebhookEventType {
   ORDER_COMPLETED = 'ORDER_COMPLETED',
   ORDER_SHIPPED = 'ORDER_SHIPPED',
   ORDER_CANCELLED = 'ORDER_CANCELLED',
-  
+
   // Station progress
   STATION_STARTED = 'STATION_STARTED',
   STATION_COMPLETED = 'STATION_COMPLETED',
-  
+
   // Quotes
   QUOTE_CREATED = 'QUOTE_CREATED',
   QUOTE_SENT = 'QUOTE_SENT',
   QUOTE_APPROVED = 'QUOTE_APPROVED',
   QUOTE_REJECTED = 'QUOTE_REJECTED',
   QUOTE_CONVERTED = 'QUOTE_CONVERTED',
-  
+
   // Customer
   CUSTOMER_CREATED = 'CUSTOMER_CREATED',
   CUSTOMER_UPDATED = 'CUSTOMER_UPDATED',
-  
+
   // Proofs
   PROOF_UPLOADED = 'PROOF_UPLOADED',
   PROOF_APPROVED = 'PROOF_APPROVED',
   PROOF_REJECTED = 'PROOF_REJECTED',
-  
+
   // Installation
   INSTALL_SCHEDULED = 'INSTALL_SCHEDULED',
   INSTALL_STARTED = 'INSTALL_STARTED',
   INSTALL_COMPLETED = 'INSTALL_COMPLETED',
-  
+
   // Inventory
   INVENTORY_LOW = 'INVENTORY_LOW',
   INVENTORY_DEPLETED = 'INVENTORY_DEPLETED',
-  
+
   // Shipments
   SHIPMENT_CREATED = 'SHIPMENT_CREATED',
   SHIPMENT_SHIPPED = 'SHIPMENT_SHIPPED',
@@ -543,22 +565,22 @@ export enum AlertTriggerType {
   INVENTORY_LOW_STOCK = 'INVENTORY_LOW_STOCK',
   INVENTORY_DEPLETED = 'INVENTORY_DEPLETED',
   INVENTORY_EXPIRING = 'INVENTORY_EXPIRING',
-  
+
   // Order triggers
   ORDER_OVERDUE = 'ORDER_OVERDUE',
   ORDER_STUCK_IN_STATION = 'ORDER_STUCK_IN_STATION',
   ORDER_REQUIRES_ATTENTION = 'ORDER_REQUIRES_ATTENTION',
-  
+
   // Production triggers
   EQUIPMENT_DOWNTIME = 'EQUIPMENT_DOWNTIME',
   EQUIPMENT_MAINTENANCE_DUE = 'EQUIPMENT_MAINTENANCE_DUE',
   PRODUCTION_BOTTLENECK = 'PRODUCTION_BOTTLENECK',
-  
+
   // Business triggers
   QUOTE_EXPIRING = 'QUOTE_EXPIRING',
   PAYMENT_OVERDUE = 'PAYMENT_OVERDUE',
   CUSTOMER_CREDIT_EXCEEDED = 'CUSTOMER_CREDIT_EXCEEDED',
-  
+
   // System triggers
   SCHEDULED = 'SCHEDULED',
   MANUAL = 'MANUAL',
@@ -569,15 +591,15 @@ export enum AlertTriggerType {
 
 // Integration Type
 export enum IntegrationType {
-  ACCOUNTING = 'ACCOUNTING',      // QuickBooks, Xero
-  ECOMMERCE = 'ECOMMERCE',        // WooCommerce, Shopify
-  PAYMENT = 'PAYMENT',            // Stripe, Square
-  SHIPPING = 'SHIPPING',          // UPS, FedEx, USPS
-  EMAIL = 'EMAIL',                // SendGrid, Mailgun
-  STORAGE = 'STORAGE',            // S3, Google Cloud Storage
-  CRM = 'CRM',                    // Salesforce, HubSpot
-  CALENDAR = 'CALENDAR',          // Google Calendar, Outlook
-  CUSTOM = 'CUSTOM',              // Custom API integrations
+  ACCOUNTING = 'ACCOUNTING', // QuickBooks, Xero
+  ECOMMERCE = 'ECOMMERCE', // WooCommerce, Shopify
+  PAYMENT = 'PAYMENT', // Stripe, Square
+  SHIPPING = 'SHIPPING', // UPS, FedEx, USPS
+  EMAIL = 'EMAIL', // SendGrid, Mailgun
+  STORAGE = 'STORAGE', // S3, Google Cloud Storage
+  CRM = 'CRM', // Salesforce, HubSpot
+  CALENDAR = 'CALENDAR', // Google Calendar, Outlook
+  CUSTOM = 'CUSTOM', // Custom API integrations
 }
 
 // Integration Status
@@ -587,8 +609,8 @@ export enum IntegrationStatus {
   ERROR = 'ERROR',
   SYNCING = 'SYNCING',
   RATE_LIMITED = 'RATE_LIMITED',
-  EXPIRED = 'EXPIRED',              // OAuth token expired
-  REQUIRES_REAUTH = 'REQUIRES_REAUTH',  // Needs user to re-authorize
+  EXPIRED = 'EXPIRED', // OAuth token expired
+  REQUIRES_REAUTH = 'REQUIRES_REAUTH', // Needs user to re-authorize
 }
 
 // Credential Type
@@ -603,17 +625,17 @@ export enum CredentialType {
 
 // Sync Type
 export enum SyncType {
-  MANUAL = 'MANUAL',              // User-initiated sync
-  SCHEDULED = 'SCHEDULED',        // Auto-scheduled sync
-  WEBHOOK = 'WEBHOOK',            // Triggered by webhook
-  REALTIME = 'REALTIME',          // Continuous sync
+  MANUAL = 'MANUAL', // User-initiated sync
+  SCHEDULED = 'SCHEDULED', // Auto-scheduled sync
+  WEBHOOK = 'WEBHOOK', // Triggered by webhook
+  REALTIME = 'REALTIME', // Continuous sync
 }
 
 // Sync Direction
 export enum SyncDirection {
-  PULL = 'PULL',                  // External -> ERP
-  PUSH = 'PUSH',                  // ERP -> External
-  BIDIRECTIONAL = 'BIDIRECTIONAL',  // Both directions
+  PULL = 'PULL', // External -> ERP
+  PUSH = 'PUSH', // ERP -> External
+  BIDIRECTIONAL = 'BIDIRECTIONAL', // Both directions
 }
 
 // Sync Status
@@ -622,7 +644,7 @@ export enum SyncStatus {
   IN_PROGRESS = 'IN_PROGRESS',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
-  PARTIAL = 'PARTIAL',            // Some records failed
+  PARTIAL = 'PARTIAL', // Some records failed
   CANCELLED = 'CANCELLED',
 }
 
@@ -685,45 +707,45 @@ export enum AuditAction {
 
 // Change Source
 export enum ChangeSource {
-  WEB_UI = 'WEB_UI',          // User action in web app
-  PORTAL = 'PORTAL',          // Customer portal action
-  API = 'API',                // REST API call
-  WEBHOOK = 'WEBHOOK',        // Webhook trigger
-  SYNC = 'SYNC',              // Integration sync
-  IMPORT = 'IMPORT',          // Data import
-  SYSTEM = 'SYSTEM',          // Automated system action
-  MIGRATION = 'MIGRATION',    // Data migration
+  WEB_UI = 'WEB_UI', // User action in web app
+  PORTAL = 'PORTAL', // Customer portal action
+  API = 'API', // REST API call
+  WEBHOOK = 'WEBHOOK', // Webhook trigger
+  SYNC = 'SYNC', // Integration sync
+  IMPORT = 'IMPORT', // Data import
+  SYSTEM = 'SYSTEM', // Automated system action
+  MIGRATION = 'MIGRATION', // Data migration
 }
 
 // ============ Print Station Management Enums ============
 
 // Print Job Status
 export enum PrintJobStatus {
-  PENDING = 'PENDING',           // Waiting in queue
-  PREPARING = 'PREPARING',       // Pre-print preparation (RIP, layout)
-  READY = 'READY',               // Ready to print
-  PRINTING = 'PRINTING',         // Currently printing
-  DRYING = 'DRYING',             // Print complete, drying
-  FINISHING = 'FINISHING',       // Post-print processing (laminate, cut)
+  PENDING = 'PENDING', // Waiting in queue
+  PREPARING = 'PREPARING', // Pre-print preparation (RIP, layout)
+  READY = 'READY', // Ready to print
+  PRINTING = 'PRINTING', // Currently printing
+  DRYING = 'DRYING', // Print complete, drying
+  FINISHING = 'FINISHING', // Post-print processing (laminate, cut)
   QUALITY_CHECK = 'QUALITY_CHECK', // Quality inspection
-  COMPLETED = 'COMPLETED',       // Successfully completed
-  ON_HOLD = 'ON_HOLD',           // Paused by operator
-  FAILED = 'FAILED',             // Failed, needs intervention
-  CANCELLED = 'CANCELLED',       // Cancelled
-  REPRINTING = 'REPRINTING',     // Reprinting due to quality issue
+  COMPLETED = 'COMPLETED', // Successfully completed
+  ON_HOLD = 'ON_HOLD', // Paused by operator
+  FAILED = 'FAILED', // Failed, needs intervention
+  CANCELLED = 'CANCELLED', // Cancelled
+  REPRINTING = 'REPRINTING', // Reprinting due to quality issue
 }
 
 // RIP job lifecycle status
 export enum RipJobStatus {
-  QUEUED = 'QUEUED',             // File copied to hotfolder, waiting for RIP
-  PROCESSING = 'PROCESSING',     // RIP is processing (rasterizing)
-  READY = 'READY',               // RIP done, ready to send to printer
-  SENDING = 'SENDING',           // Sending to printer
-  PRINTING = 'PRINTING',         // Currently printing
-  PRINTED = 'PRINTED',           // Print complete
-  COMPLETED = 'COMPLETED',       // Fully done (verified/cleared)
-  FAILED = 'FAILED',             // Error occurred
-  CANCELLED = 'CANCELLED',       // Cancelled by user
+  QUEUED = 'QUEUED', // File copied to hotfolder, waiting for RIP
+  PROCESSING = 'PROCESSING', // RIP is processing (rasterizing)
+  READY = 'READY', // RIP done, ready to send to printer
+  SENDING = 'SENDING', // Sending to printer
+  PRINTING = 'PRINTING', // Currently printing
+  PRINTED = 'PRINTED', // Print complete
+  COMPLETED = 'COMPLETED', // Fully done (verified/cleared)
+  FAILED = 'FAILED', // Error occurred
+  CANCELLED = 'CANCELLED', // Cancelled by user
 }
 
 // ============ User Preference Enums ============
@@ -786,10 +808,10 @@ export enum FavoriteEntityType {
 
 // Search Type
 export enum SearchType {
-  GLOBAL = 'GLOBAL',           // Global search bar
-  ENTITY = 'ENTITY',           // Entity-specific search
+  GLOBAL = 'GLOBAL', // Global search bar
+  ENTITY = 'ENTITY', // Entity-specific search
   QUICK_ACTION = 'QUICK_ACTION', // Command palette
-  FILTER = 'FILTER',           // Filter/faceted search
+  FILTER = 'FILTER', // Filter/faceted search
 }
 
 // Search Entity Type
@@ -811,13 +833,13 @@ export enum SearchEntityType {
 
 // Import Job Status
 export enum ImportJobStatus {
-  PENDING = 'PENDING',           // Waiting to start
-  VALIDATING = 'VALIDATING',     // Checking data
-  PROCESSING = 'PROCESSING',     // Importing records
-  COMPLETED = 'COMPLETED',       // Successfully finished
-  FAILED = 'FAILED',             // Failed with errors
-  CANCELLED = 'CANCELLED',       // User cancelled
-  PARTIAL = 'PARTIAL',           // Completed with some errors
+  PENDING = 'PENDING', // Waiting to start
+  VALIDATING = 'VALIDATING', // Checking data
+  PROCESSING = 'PROCESSING', // Importing records
+  COMPLETED = 'COMPLETED', // Successfully finished
+  FAILED = 'FAILED', // Failed with errors
+  CANCELLED = 'CANCELLED', // User cancelled
+  PARTIAL = 'PARTIAL', // Completed with some errors
 }
 
 // Import Entity Type
@@ -846,53 +868,53 @@ export enum ImportFileType {
 
 // Shortcut scope - where the shortcut is active
 export enum ShortcutScope {
-  GLOBAL = 'GLOBAL',           // Works everywhere
-  PAGE = 'PAGE',               // Works on specific page
-  MODAL = 'MODAL',             // Works in modals only
-  FORM = 'FORM',               // Works in form context
+  GLOBAL = 'GLOBAL', // Works everywhere
+  PAGE = 'PAGE', // Works on specific page
+  MODAL = 'MODAL', // Works in modals only
+  FORM = 'FORM', // Works in form context
 }
 
 // Shortcut category for organization
 export enum ShortcutCategory {
-  NAVIGATION = 'NAVIGATION',   // Navigate to pages
-  ACTION = 'ACTION',           // Perform actions (save, delete, etc.)
-  SEARCH = 'SEARCH',           // Search-related
-  TABLE = 'TABLE',             // Table operations
-  MODAL = 'MODAL',             // Modal control
-  EDITING = 'EDITING',         // Edit operations
-  SELECTION = 'SELECTION',     // Select/deselect
-  VIEW = 'VIEW',               // View changes
-  SYSTEM = 'SYSTEM',           // System-level (help, settings)
+  NAVIGATION = 'NAVIGATION', // Navigate to pages
+  ACTION = 'ACTION', // Perform actions (save, delete, etc.)
+  SEARCH = 'SEARCH', // Search-related
+  TABLE = 'TABLE', // Table operations
+  MODAL = 'MODAL', // Modal control
+  EDITING = 'EDITING', // Edit operations
+  SELECTION = 'SELECTION', // Select/deselect
+  VIEW = 'VIEW', // View changes
+  SYSTEM = 'SYSTEM', // System-level (help, settings)
 }
 
 // ============ SSS-001: ML Prediction & Routing Intelligence ============
 
 // Types of ML models used for predictions
 export enum PredictionModelType {
-  GRADIENT_BOOST = 'GRADIENT_BOOST',    // XGBoost/LightGBM style
-  NEURAL_NET = 'NEURAL_NET',            // Deep learning
-  RANDOM_FOREST = 'RANDOM_FOREST',      // Ensemble decision trees
+  GRADIENT_BOOST = 'GRADIENT_BOOST', // XGBoost/LightGBM style
+  NEURAL_NET = 'NEURAL_NET', // Deep learning
+  RANDOM_FOREST = 'RANDOM_FOREST', // Ensemble decision trees
   LINEAR_REGRESSION = 'LINEAR_REGRESSION', // Simple linear
-  RULE_BASED = 'RULE_BASED',            // Business rules only
-  HYBRID = 'HYBRID',                    // Combination approach
+  RULE_BASED = 'RULE_BASED', // Business rules only
+  HYBRID = 'HYBRID', // Combination approach
 }
 
 // Types of optimization rules
 export enum OptimizationRuleType {
-  ROUTING = 'ROUTING',           // Affects route selection
-  SCHEDULING = 'SCHEDULING',     // Affects timing/scheduling
-  BATCHING = 'BATCHING',         // Groups jobs together
-  RESOURCE = 'RESOURCE',         // Manages equipment/operators
-  QUALITY = 'QUALITY',           // Quality-based routing
-  COST = 'COST',                 // Cost optimization
-  DEADLINE = 'DEADLINE',         // Due date driven
+  ROUTING = 'ROUTING', // Affects route selection
+  SCHEDULING = 'SCHEDULING', // Affects timing/scheduling
+  BATCHING = 'BATCHING', // Groups jobs together
+  RESOURCE = 'RESOURCE', // Manages equipment/operators
+  QUALITY = 'QUALITY', // Quality-based routing
+  COST = 'COST', // Cost optimization
+  DEADLINE = 'DEADLINE', // Due date driven
 }
 
 // Categories for organizing optimization rules
 export enum OptimizationCategory {
-  EFFICIENCY = 'EFFICIENCY',         // Speed/throughput
+  EFFICIENCY = 'EFFICIENCY', // Speed/throughput
   COST_REDUCTION = 'COST_REDUCTION', // Lower costs
-  QUALITY = 'QUALITY',               // Quality outcomes
+  QUALITY = 'QUALITY', // Quality outcomes
   CUSTOMER_SERVICE = 'CUSTOMER_SERVICE', // Customer satisfaction
   RESOURCE_BALANCE = 'RESOURCE_BALANCE', // Even load distribution
   SUSTAINABILITY = 'SUSTAINABILITY', // Waste reduction
@@ -903,18 +925,18 @@ export enum OptimizationCategory {
 
 // Types of routing decisions
 export enum RoutingDecisionType {
-  INITIAL = 'INITIAL',           // First route assignment
+  INITIAL = 'INITIAL', // First route assignment
   OPTIMIZATION = 'OPTIMIZATION', // System optimized route
   MANUAL_OVERRIDE = 'MANUAL_OVERRIDE', // User changed route
-  REROUTE = 'REROUTE',           // Changed due to issue
+  REROUTE = 'REROUTE', // Changed due to issue
   SKIP_STATION = 'SKIP_STATION', // Skipped a station
-  ADD_STATION = 'ADD_STATION',   // Added a station
-  REORDER = 'REORDER',           // Changed station order
+  ADD_STATION = 'ADD_STATION', // Added a station
+  REORDER = 'REORDER', // Changed station order
 }
 
 // What triggered a routing decision
 export enum RoutingTrigger {
-  NEW_ORDER = 'NEW_ORDER',       // New order created
+  NEW_ORDER = 'NEW_ORDER', // New order created
   QUEUE_IMBALANCE = 'QUEUE_IMBALANCE', // Queue depths unbalanced
   EQUIPMENT_CHANGE = 'EQUIPMENT_CHANGE', // Equipment status changed
   OPERATOR_CHANGE = 'OPERATOR_CHANGE', // Operator availability changed
@@ -927,60 +949,60 @@ export enum RoutingTrigger {
 
 // Who/what made the routing decision
 export enum DecisionMaker {
-  SYSTEM = 'SYSTEM',             // Automated decision
-  USER = 'USER',                 // Manual user decision
-  RULE = 'RULE',                 // Business rule triggered
-  ML_MODEL = 'ML_MODEL',         // ML prediction accepted
+  SYSTEM = 'SYSTEM', // Automated decision
+  USER = 'USER', // Manual user decision
+  RULE = 'RULE', // Business rule triggered
+  ML_MODEL = 'ML_MODEL', // ML prediction accepted
 }
 
 // Outcome of a routing decision
 export enum DecisionOutcome {
-  PENDING = 'PENDING',           // Not yet completed
-  SUCCESS = 'SUCCESS',           // Route worked well
-  PARTIAL = 'PARTIAL',           // Partially successful
-  FAILED = 'FAILED',             // Route caused issues
-  REVERTED = 'REVERTED',         // Had to change back
+  PENDING = 'PENDING', // Not yet completed
+  SUCCESS = 'SUCCESS', // Route worked well
+  PARTIAL = 'PARTIAL', // Partially successful
+  FAILED = 'FAILED', // Route caused issues
+  REVERTED = 'REVERTED', // Had to change back
 }
 
 // Types of scheduling constraints
 export enum ConstraintType {
-  CAPACITY = 'CAPACITY',         // Maximum capacity limits
+  CAPACITY = 'CAPACITY', // Maximum capacity limits
   AVAILABILITY = 'AVAILABILITY', // Time-based availability
-  DEPENDENCY = 'DEPENDENCY',     // Job dependencies
-  SKILL = 'SKILL',               // Operator skill requirements
-  EQUIPMENT = 'EQUIPMENT',       // Equipment requirements
-  MATERIAL = 'MATERIAL',         // Material availability
-  DEADLINE = 'DEADLINE',         // Due date constraints
-  PREFERENCE = 'PREFERENCE',     // Soft preferences
+  DEPENDENCY = 'DEPENDENCY', // Job dependencies
+  SKILL = 'SKILL', // Operator skill requirements
+  EQUIPMENT = 'EQUIPMENT', // Equipment requirements
+  MATERIAL = 'MATERIAL', // Material availability
+  DEADLINE = 'DEADLINE', // Due date constraints
+  PREFERENCE = 'PREFERENCE', // Soft preferences
 }
 
 // What the constraint targets
 export enum ConstraintTarget {
-  STATION = 'STATION',           // Specific station
-  OPERATOR = 'OPERATOR',         // Specific operator
-  EQUIPMENT = 'EQUIPMENT',       // Specific equipment
-  MATERIAL = 'MATERIAL',         // Specific material
-  JOB_TYPE = 'JOB_TYPE',         // Type of job
-  CUSTOMER = 'CUSTOMER',         // Customer-specific
-  GLOBAL = 'GLOBAL',             // System-wide
+  STATION = 'STATION', // Specific station
+  OPERATOR = 'OPERATOR', // Specific operator
+  EQUIPMENT = 'EQUIPMENT', // Specific equipment
+  MATERIAL = 'MATERIAL', // Specific material
+  JOB_TYPE = 'JOB_TYPE', // Type of job
+  CUSTOMER = 'CUSTOMER', // Customer-specific
+  GLOBAL = 'GLOBAL', // System-wide
 }
 
 // ============ SSS-008/SSS-011: NLP Query & Command Palette ============
 
 // Query intent types - what the user wants to do
 export enum QueryIntent {
-  SEARCH = 'SEARCH',             // Find/search for something
-  REPORT = 'REPORT',             // Generate a report
-  COMPARE = 'COMPARE',           // Compare two things
-  AGGREGATE = 'AGGREGATE',       // Sum/count/average
-  NAVIGATE = 'NAVIGATE',         // Go to a page/record
-  CREATE = 'CREATE',             // Create new record
-  UPDATE = 'UPDATE',             // Modify existing record
-  DELETE = 'DELETE',             // Remove record
-  EXPORT = 'EXPORT',             // Export data
-  SCHEDULE = 'SCHEDULE',         // Schedule something
-  NOTIFY = 'NOTIFY',             // Send notification
-  HELP = 'HELP',                 // Get help/documentation
+  SEARCH = 'SEARCH', // Find/search for something
+  REPORT = 'REPORT', // Generate a report
+  COMPARE = 'COMPARE', // Compare two things
+  AGGREGATE = 'AGGREGATE', // Sum/count/average
+  NAVIGATE = 'NAVIGATE', // Go to a page/record
+  CREATE = 'CREATE', // Create new record
+  UPDATE = 'UPDATE', // Modify existing record
+  DELETE = 'DELETE', // Remove record
+  EXPORT = 'EXPORT', // Export data
+  SCHEDULE = 'SCHEDULE', // Schedule something
+  NOTIFY = 'NOTIFY', // Send notification
+  HELP = 'HELP', // Get help/documentation
 }
 
 // Schedule frequency for saved queries
@@ -990,68 +1012,68 @@ export enum ScheduleFrequency {
   WEEKLY = 'WEEKLY',
   MONTHLY = 'MONTHLY',
   QUARTERLY = 'QUARTERLY',
-  CUSTOM = 'CUSTOM',             // Uses cron expression
+  CUSTOM = 'CUSTOM', // Uses cron expression
 }
 
 // Types of commands in the palette
 export enum CommandType {
-  SEARCH = 'SEARCH',             // Search query
-  NAVIGATION = 'NAVIGATION',     // Go to page/record
-  ACTION = 'ACTION',             // Quick action (create, edit)
-  NLP_QUERY = 'NLP_QUERY',       // Natural language query
-  SHORTCUT = 'SHORTCUT',         // Keyboard shortcut
-  RECENT = 'RECENT',             // Recent item
+  SEARCH = 'SEARCH', // Search query
+  NAVIGATION = 'NAVIGATION', // Go to page/record
+  ACTION = 'ACTION', // Quick action (create, edit)
+  NLP_QUERY = 'NLP_QUERY', // Natural language query
+  SHORTCUT = 'SHORTCUT', // Keyboard shortcut
+  RECENT = 'RECENT', // Recent item
 }
 
 // Categories for quick actions
 export enum ActionCategory {
-  CREATE = 'CREATE',             // Create new records
-  NAVIGATION = 'NAVIGATION',     // Go to pages
-  WORKFLOW = 'WORKFLOW',         // Workflow actions
-  REPORT = 'REPORT',             // Generate reports
+  CREATE = 'CREATE', // Create new records
+  NAVIGATION = 'NAVIGATION', // Go to pages
+  WORKFLOW = 'WORKFLOW', // Workflow actions
+  REPORT = 'REPORT', // Generate reports
   COMMUNICATION = 'COMMUNICATION', // Send emails/notifications
-  SETTINGS = 'SETTINGS',         // Settings/preferences
-  TOOLS = 'TOOLS',               // Utility tools
+  SETTINGS = 'SETTINGS', // Settings/preferences
+  TOOLS = 'TOOLS', // Utility tools
 }
 
 // ============ SSS-015: Integration Automation Platform ============
 
 // Workflow categories
 export enum WorkflowCategory {
-  NOTIFICATIONS = 'NOTIFICATIONS',   // Send emails, SMS, push notifications
-  INTEGRATIONS = 'INTEGRATIONS',     // Sync with external systems
-  DATA_SYNC = 'DATA_SYNC',           // Sync data between internal systems
-  AUTOMATION = 'AUTOMATION',         // Internal automation tasks
-  REPORTING = 'REPORTING',           // Automated report generation
-  MAINTENANCE = 'MAINTENANCE',       // System maintenance tasks
+  NOTIFICATIONS = 'NOTIFICATIONS', // Send emails, SMS, push notifications
+  INTEGRATIONS = 'INTEGRATIONS', // Sync with external systems
+  DATA_SYNC = 'DATA_SYNC', // Sync data between internal systems
+  AUTOMATION = 'AUTOMATION', // Internal automation tasks
+  REPORTING = 'REPORTING', // Automated report generation
+  MAINTENANCE = 'MAINTENANCE', // System maintenance tasks
 }
 
 // Types of workflow triggers
 export enum WorkflowTriggerType {
-  EVENT = 'EVENT',               // Triggered by system event
-  SCHEDULE = 'SCHEDULE',         // Triggered on schedule (cron)
-  WEBHOOK = 'WEBHOOK',           // Triggered by external webhook
-  MANUAL = 'MANUAL',             // Manually triggered by user
-  CONDITION = 'CONDITION',       // Triggered when condition becomes true
+  EVENT = 'EVENT', // Triggered by system event
+  SCHEDULE = 'SCHEDULE', // Triggered on schedule (cron)
+  WEBHOOK = 'WEBHOOK', // Triggered by external webhook
+  MANUAL = 'MANUAL', // Manually triggered by user
+  CONDITION = 'CONDITION', // Triggered when condition becomes true
 }
 
 // What to do when workflow errors
 export enum WorkflowErrorAction {
-  STOP = 'STOP',                 // Stop execution immediately
-  CONTINUE = 'CONTINUE',         // Skip failed step, continue
-  RETRY = 'RETRY',               // Retry failed step
-  FALLBACK = 'FALLBACK',         // Execute fallback step
+  STOP = 'STOP', // Stop execution immediately
+  CONTINUE = 'CONTINUE', // Skip failed step, continue
+  RETRY = 'RETRY', // Retry failed step
+  FALLBACK = 'FALLBACK', // Execute fallback step
 }
 
 // Types of workflow steps
 export enum WorkflowStepType {
-  ACTION = 'ACTION',             // Execute an action
-  CONDITION = 'CONDITION',       // Branch based on condition
-  DELAY = 'DELAY',               // Wait for specified time
-  LOOP = 'LOOP',                 // Loop over items
-  PARALLEL = 'PARALLEL',         // Execute multiple actions in parallel
-  TRANSFORM = 'TRANSFORM',       // Transform data
-  APPROVAL = 'APPROVAL',         // Wait for human approval
+  ACTION = 'ACTION', // Execute an action
+  CONDITION = 'CONDITION', // Branch based on condition
+  DELAY = 'DELAY', // Wait for specified time
+  LOOP = 'LOOP', // Loop over items
+  PARALLEL = 'PARALLEL', // Execute multiple actions in parallel
+  TRANSFORM = 'TRANSFORM', // Transform data
+  APPROVAL = 'APPROVAL', // Wait for human approval
 }
 
 // Types of actions a step can perform
@@ -1083,25 +1105,25 @@ export enum WorkflowActionType {
 
 // Execution status for workflows
 export enum WorkflowExecutionStatus {
-  PENDING = 'PENDING',           // Waiting to start
-  RUNNING = 'RUNNING',           // Currently executing
-  WAITING = 'WAITING',           // Waiting for external input/approval
-  PAUSED = 'PAUSED',             // Manually paused
-  COMPLETED = 'COMPLETED',       // Successfully completed
-  FAILED = 'FAILED',             // Failed with error
-  CANCELLED = 'CANCELLED',       // Manually cancelled
-  RETRYING = 'RETRYING',         // Waiting to retry
+  PENDING = 'PENDING', // Waiting to start
+  RUNNING = 'RUNNING', // Currently executing
+  WAITING = 'WAITING', // Waiting for external input/approval
+  PAUSED = 'PAUSED', // Manually paused
+  COMPLETED = 'COMPLETED', // Successfully completed
+  FAILED = 'FAILED', // Failed with error
+  CANCELLED = 'CANCELLED', // Manually cancelled
+  RETRYING = 'RETRYING', // Waiting to retry
 }
 
 // Step execution status
 export enum WorkflowStepStatus {
-  PENDING = 'PENDING',           // Not yet started
-  RUNNING = 'RUNNING',           // Currently executing
-  WAITING = 'WAITING',           // Waiting for approval/external
-  SKIPPED = 'SKIPPED',           // Skipped due to conditions
-  COMPLETED = 'COMPLETED',       // Successfully completed
-  FAILED = 'FAILED',             // Failed with error
-  RETRYING = 'RETRYING',         // Waiting to retry
+  PENDING = 'PENDING', // Not yet started
+  RUNNING = 'RUNNING', // Currently executing
+  WAITING = 'WAITING', // Waiting for approval/external
+  SKIPPED = 'SKIPPED', // Skipped due to conditions
+  COMPLETED = 'COMPLETED', // Successfully completed
+  FAILED = 'FAILED', // Failed with error
+  RETRYING = 'RETRYING', // Waiting to retry
 }
 
 // Variable types for workflow variables
@@ -1110,8 +1132,8 @@ export enum WorkflowVariableType {
   NUMBER = 'NUMBER',
   BOOLEAN = 'BOOLEAN',
   JSON = 'JSON',
-  SECRET = 'SECRET',             // Encrypted credential
-  API_KEY = 'API_KEY',           // API key (encrypted)
+  SECRET = 'SECRET', // Encrypted credential
+  API_KEY = 'API_KEY', // API key (encrypted)
   CONNECTION_STRING = 'CONNECTION_STRING', // Database/service connection
 }
 
@@ -1121,61 +1143,61 @@ export enum WorkflowVariableType {
 
 // Severity level for validation rules
 export enum ValidationSeverity {
-  ERROR = 'ERROR',               // Blocks save, must be fixed
-  WARNING = 'WARNING',           // Allows save, but alerts user
-  INFO = 'INFO',                 // Informational, logged only
+  ERROR = 'ERROR', // Blocks save, must be fixed
+  WARNING = 'WARNING', // Allows save, but alerts user
+  INFO = 'INFO', // Informational, logged only
 }
 
 // Types of field constraints
 export enum FieldConstraintType {
-  MIN_LENGTH = 'MIN_LENGTH',     // Minimum string length
-  MAX_LENGTH = 'MAX_LENGTH',     // Maximum string length
-  MIN_VALUE = 'MIN_VALUE',       // Minimum numeric value
-  MAX_VALUE = 'MAX_VALUE',       // Maximum numeric value
-  PATTERN = 'PATTERN',           // Regex pattern match
-  REQUIRED = 'REQUIRED',         // Field must have value
-  UNIQUE = 'UNIQUE',             // Value must be unique in scope
-  ENUM = 'ENUM',                 // Value must be in allowed list
-  CUSTOM = 'CUSTOM',             // Custom validation function
-  DEPENDENCY = 'DEPENDENCY',     // Depends on another field
-  DATE_RANGE = 'DATE_RANGE',     // Date must be in range
-  FUTURE_DATE = 'FUTURE_DATE',   // Date must be in future
-  PAST_DATE = 'PAST_DATE',       // Date must be in past
-  FILE_TYPE = 'FILE_TYPE',       // Allowed file extensions
-  FILE_SIZE = 'FILE_SIZE',       // Maximum file size
+  MIN_LENGTH = 'MIN_LENGTH', // Minimum string length
+  MAX_LENGTH = 'MAX_LENGTH', // Maximum string length
+  MIN_VALUE = 'MIN_VALUE', // Minimum numeric value
+  MAX_VALUE = 'MAX_VALUE', // Maximum numeric value
+  PATTERN = 'PATTERN', // Regex pattern match
+  REQUIRED = 'REQUIRED', // Field must have value
+  UNIQUE = 'UNIQUE', // Value must be unique in scope
+  ENUM = 'ENUM', // Value must be in allowed list
+  CUSTOM = 'CUSTOM', // Custom validation function
+  DEPENDENCY = 'DEPENDENCY', // Depends on another field
+  DATE_RANGE = 'DATE_RANGE', // Date must be in range
+  FUTURE_DATE = 'FUTURE_DATE', // Date must be in future
+  PAST_DATE = 'PAST_DATE', // Date must be in past
+  FILE_TYPE = 'FILE_TYPE', // Allowed file extensions
+  FILE_SIZE = 'FILE_SIZE', // Maximum file size
 }
 
 // Types of data anomalies detected
 export enum AnomalyType {
-  ORPHAN_RECORD = 'ORPHAN_RECORD',         // Record with missing parent
-  DUPLICATE = 'DUPLICATE',                  // Duplicate record detected
+  ORPHAN_RECORD = 'ORPHAN_RECORD', // Record with missing parent
+  DUPLICATE = 'DUPLICATE', // Duplicate record detected
   CONSTRAINT_VIOLATION = 'CONSTRAINT_VIOLATION', // Business rule violation
-  DATA_CORRUPTION = 'DATA_CORRUPTION',      // Corrupted or invalid data
-  MISSING_REQUIRED = 'MISSING_REQUIRED',    // Required field is null
+  DATA_CORRUPTION = 'DATA_CORRUPTION', // Corrupted or invalid data
+  MISSING_REQUIRED = 'MISSING_REQUIRED', // Required field is null
   REFERENTIAL_INTEGRITY = 'REFERENTIAL_INTEGRITY', // FK violation
-  RANGE_VIOLATION = 'RANGE_VIOLATION',      // Value outside allowed range
-  FORMAT_ERROR = 'FORMAT_ERROR',            // Wrong data format
-  STALE_DATA = 'STALE_DATA',               // Data not updated as expected
+  RANGE_VIOLATION = 'RANGE_VIOLATION', // Value outside allowed range
+  FORMAT_ERROR = 'FORMAT_ERROR', // Wrong data format
+  STALE_DATA = 'STALE_DATA', // Data not updated as expected
   CIRCULAR_REFERENCE = 'CIRCULAR_REFERENCE', // Self-referencing loop
 }
 
 // Status of integrity checks
 export enum IntegrityCheckStatus {
-  PENDING = 'PENDING',           // Not yet run
-  RUNNING = 'RUNNING',           // Currently executing
-  PASSED = 'PASSED',             // All checks passed
-  FAILED = 'FAILED',             // One or more failures
-  SKIPPED = 'SKIPPED',           // Check was skipped
+  PENDING = 'PENDING', // Not yet run
+  RUNNING = 'RUNNING', // Currently executing
+  PASSED = 'PASSED', // All checks passed
+  FAILED = 'FAILED', // One or more failures
+  SKIPPED = 'SKIPPED', // Check was skipped
 }
 
 // Check frequency for scheduled integrity checks
 export enum CheckFrequency {
-  REAL_TIME = 'REAL_TIME',       // On every change
+  REAL_TIME = 'REAL_TIME', // On every change
   HOURLY = 'HOURLY',
   DAILY = 'DAILY',
   WEEKLY = 'WEEKLY',
   MONTHLY = 'MONTHLY',
-  ON_DEMAND = 'ON_DEMAND',       // Manual trigger only
+  ON_DEMAND = 'ON_DEMAND', // Manual trigger only
 }
 
 // ============================================================================
@@ -1193,14 +1215,14 @@ export enum AuditEventType {
   ARCHIVE = 'ARCHIVE',
   EXPORT = 'EXPORT',
   IMPORT = 'IMPORT',
-  
+
   // Access events
   LOGIN = 'LOGIN',
   LOGOUT = 'LOGOUT',
   LOGIN_FAILED = 'LOGIN_FAILED',
   PASSWORD_CHANGE = 'PASSWORD_CHANGE',
   PERMISSION_CHANGE = 'PERMISSION_CHANGE',
-  
+
   // Business events
   APPROVAL = 'APPROVAL',
   REJECTION = 'REJECTION',
@@ -1208,7 +1230,7 @@ export enum AuditEventType {
   SUBMISSION = 'SUBMISSION',
   CANCELLATION = 'CANCELLATION',
   STATUS_CHANGE = 'STATUS_CHANGE',
-  
+
   // System events
   SYSTEM_CONFIG = 'SYSTEM_CONFIG',
   INTEGRATION_SYNC = 'INTEGRATION_SYNC',
@@ -1218,47 +1240,47 @@ export enum AuditEventType {
 
 // Categories for filtering audit events
 export enum AuditCategory {
-  DATA_CHANGE = 'DATA_CHANGE',   // Normal CRUD operations
-  SECURITY = 'SECURITY',         // Authentication, authorization
-  BUSINESS = 'BUSINESS',         // Workflow actions
-  COMPLIANCE = 'COMPLIANCE',     // Regulatory actions
-  SYSTEM = 'SYSTEM',             // System operations
-  INTEGRATION = 'INTEGRATION',   // External system events
+  DATA_CHANGE = 'DATA_CHANGE', // Normal CRUD operations
+  SECURITY = 'SECURITY', // Authentication, authorization
+  BUSINESS = 'BUSINESS', // Workflow actions
+  COMPLIANCE = 'COMPLIANCE', // Regulatory actions
+  SYSTEM = 'SYSTEM', // System operations
+  INTEGRATION = 'INTEGRATION', // External system events
 }
 
 // Document types that require signatures
 export enum SignatureDocType {
-  QUOTE = 'QUOTE',               // Quote approval
+  QUOTE = 'QUOTE', // Quote approval
   PURCHASE_ORDER = 'PURCHASE_ORDER', // PO authorization
-  WORK_ORDER = 'WORK_ORDER',     // Work order approval
+  WORK_ORDER = 'WORK_ORDER', // Work order approval
   CHANGE_ORDER = 'CHANGE_ORDER', // Change request approval
   QUALITY_CHECK = 'QUALITY_CHECK', // QC sign-off
-  SHIPPING = 'SHIPPING',         // Shipping authorization
-  INVOICE = 'INVOICE',           // Invoice approval
-  CONTRACT = 'CONTRACT',         // Contract signing
-  TIME_ENTRY = 'TIME_ENTRY',     // Timesheet approval
-  EXPENSE = 'EXPENSE',           // Expense approval
+  SHIPPING = 'SHIPPING', // Shipping authorization
+  INVOICE = 'INVOICE', // Invoice approval
+  CONTRACT = 'CONTRACT', // Contract signing
+  TIME_ENTRY = 'TIME_ENTRY', // Timesheet approval
+  EXPENSE = 'EXPENSE', // Expense approval
 }
 
 // Types of signatures
 export enum SignatureType {
-  TYPED = 'TYPED',               // Typed name
-  DRAWN = 'DRAWN',               // Mouse/touch drawn
-  UPLOADED = 'UPLOADED',         // Uploaded image
-  DIGITAL = 'DIGITAL',           // PKI certificate
-  BIOMETRIC = 'BIOMETRIC',       // Fingerprint/face
-  PIN = 'PIN',                   // PIN verification
+  TYPED = 'TYPED', // Typed name
+  DRAWN = 'DRAWN', // Mouse/touch drawn
+  UPLOADED = 'UPLOADED', // Uploaded image
+  DIGITAL = 'DIGITAL', // PKI certificate
+  BIOMETRIC = 'BIOMETRIC', // Fingerprint/face
+  PIN = 'PIN', // PIN verification
 }
 
 // Compliance categories
 export enum ComplianceCategory {
   DATA_PRIVACY = 'DATA_PRIVACY', // GDPR, CCPA
-  FINANCIAL = 'FINANCIAL',       // SOX, financial controls
-  SAFETY = 'SAFETY',             // Workplace safety
-  QUALITY = 'QUALITY',           // ISO, quality standards
-  SECURITY = 'SECURITY',         // Cybersecurity compliance
-  INDUSTRY = 'INDUSTRY',         // Industry-specific regs
-  INTERNAL = 'INTERNAL',         // Company policies
+  FINANCIAL = 'FINANCIAL', // SOX, financial controls
+  SAFETY = 'SAFETY', // Workplace safety
+  QUALITY = 'QUALITY', // ISO, quality standards
+  SECURITY = 'SECURITY', // Cybersecurity compliance
+  INDUSTRY = 'INDUSTRY', // Industry-specific regs
+  INTERNAL = 'INTERNAL', // Company policies
 }
 
 // Severity of compliance violations
@@ -1271,11 +1293,11 @@ export enum ComplianceSeverity {
 
 // What to do on compliance violation
 export enum ComplianceAction {
-  LOG = 'LOG',                   // Just log it
-  ALERT = 'ALERT',               // Send notification
-  BLOCK = 'BLOCK',               // Prevent action
-  ESCALATE = 'ESCALATE',         // Notify management
-  QUARANTINE = 'QUARANTINE',     // Isolate the record
+  LOG = 'LOG', // Just log it
+  ALERT = 'ALERT', // Send notification
+  BLOCK = 'BLOCK', // Prevent action
+  ESCALATE = 'ESCALATE', // Notify management
+  QUARANTINE = 'QUARANTINE', // Isolate the record
 }
 
 // Status of compliance violations
@@ -1290,30 +1312,30 @@ export enum ViolationStatus {
 
 // Basis for data retention
 export enum RetentionBasis {
-  LEGAL_REQUIREMENT = 'LEGAL_REQUIREMENT',   // Required by law
-  BUSINESS_NEED = 'BUSINESS_NEED',           // Needed for operations
-  CONSENT = 'CONSENT',                       // User consented
-  CONTRACT = 'CONTRACT',                     // Part of contract obligation
+  LEGAL_REQUIREMENT = 'LEGAL_REQUIREMENT', // Required by law
+  BUSINESS_NEED = 'BUSINESS_NEED', // Needed for operations
+  CONSENT = 'CONSENT', // User consented
+  CONTRACT = 'CONTRACT', // Part of contract obligation
   LEGITIMATE_INTEREST = 'LEGITIMATE_INTEREST', // Legitimate business interest
 }
 
 // What to do when retention expires
 export enum ExpiryAction {
-  DELETE = 'DELETE',             // Hard delete
-  ANONYMIZE = 'ANONYMIZE',       // Remove PII but keep record
-  ARCHIVE = 'ARCHIVE',           // Move to cold storage
-  REVIEW = 'REVIEW',             // Flag for manual review
+  DELETE = 'DELETE', // Hard delete
+  ANONYMIZE = 'ANONYMIZE', // Remove PII but keep record
+  ARCHIVE = 'ARCHIVE', // Move to cold storage
+  REVIEW = 'REVIEW', // Flag for manual review
 }
 
 // Types of access
 export enum AccessType {
-  VIEW = 'VIEW',                 // Read single record
-  LIST = 'LIST',                 // List/search records
-  EXPORT = 'EXPORT',             // Export data
-  DOWNLOAD = 'DOWNLOAD',         // Download file
-  PRINT = 'PRINT',               // Print
-  SHARE = 'SHARE',               // Share with others
-  API_CALL = 'API_CALL',         // API access
+  VIEW = 'VIEW', // Read single record
+  LIST = 'LIST', // List/search records
+  EXPORT = 'EXPORT', // Export data
+  DOWNLOAD = 'DOWNLOAD', // Download file
+  PRINT = 'PRINT', // Print
+  SHARE = 'SHARE', // Share with others
+  API_CALL = 'API_CALL', // API access
 }
 
 // ============================================================================
@@ -1322,38 +1344,38 @@ export enum AccessType {
 
 // Organization types
 export enum OrganizationType {
-  COMPANY = 'COMPANY',           // Main company
-  DIVISION = 'DIVISION',         // Business division
-  SUBSIDIARY = 'SUBSIDIARY',     // Subsidiary company
-  FRANCHISE = 'FRANCHISE',       // Franchise location
-  PARTNER = 'PARTNER',           // Partner organization
+  COMPANY = 'COMPANY', // Main company
+  DIVISION = 'DIVISION', // Business division
+  SUBSIDIARY = 'SUBSIDIARY', // Subsidiary company
+  FRANCHISE = 'FRANCHISE', // Franchise location
+  PARTNER = 'PARTNER', // Partner organization
 }
 
 // Organization status
 export enum OrgStatus {
-  PENDING = 'PENDING',           // Awaiting activation
-  ACTIVE = 'ACTIVE',             // Active and operational
-  SUSPENDED = 'SUSPENDED',       // Temporarily suspended
-  INACTIVE = 'INACTIVE',         // Deactivated
-  ARCHIVED = 'ARCHIVED',         // Archived for records
+  PENDING = 'PENDING', // Awaiting activation
+  ACTIVE = 'ACTIVE', // Active and operational
+  SUSPENDED = 'SUSPENDED', // Temporarily suspended
+  INACTIVE = 'INACTIVE', // Deactivated
+  ARCHIVED = 'ARCHIVED', // Archived for records
 }
 
 // Subscription tiers
 export enum SubscriptionTier {
-  FREE = 'FREE',                 // Free tier
-  BASIC = 'BASIC',               // Basic paid
+  FREE = 'FREE', // Free tier
+  BASIC = 'BASIC', // Basic paid
   PROFESSIONAL = 'PROFESSIONAL', // Pro tier
-  ENTERPRISE = 'ENTERPRISE',     // Enterprise tier
-  CUSTOM = 'CUSTOM',             // Custom agreement
+  ENTERPRISE = 'ENTERPRISE', // Enterprise tier
+  CUSTOM = 'CUSTOM', // Custom agreement
 }
 
 // Location types
 export enum LocationType {
-  PRODUCTION = 'PRODUCTION',     // Manufacturing facility
-  WAREHOUSE = 'WAREHOUSE',       // Storage/distribution
-  OFFICE = 'OFFICE',             // Office only
-  RETAIL = 'RETAIL',             // Retail storefront
-  HYBRID = 'HYBRID',             // Mixed use
+  PRODUCTION = 'PRODUCTION', // Manufacturing facility
+  WAREHOUSE = 'WAREHOUSE', // Storage/distribution
+  OFFICE = 'OFFICE', // Office only
+  RETAIL = 'RETAIL', // Retail storefront
+  HYBRID = 'HYBRID', // Mixed use
 }
 
 // Department member roles
@@ -1366,11 +1388,11 @@ export enum DeptMemberRole {
 
 // Team types
 export enum TeamType {
-  PRODUCTION = 'PRODUCTION',     // Production crew
+  PRODUCTION = 'PRODUCTION', // Production crew
   INSTALLATION = 'INSTALLATION', // Install team
-  SALES = 'SALES',               // Sales team
-  SUPPORT = 'SUPPORT',           // Customer support
-  ADMIN = 'ADMIN',               // Administrative
+  SALES = 'SALES', // Sales team
+  SUPPORT = 'SUPPORT', // Customer support
+  ADMIN = 'ADMIN', // Administrative
   CROSS_FUNCTIONAL = 'CROSS_FUNCTIONAL', // Cross-department
 }
 
@@ -1383,23 +1405,23 @@ export enum TeamMemberRole {
 
 // Org-level user roles
 export enum OrgUserRole {
-  OWNER = 'OWNER',               // Organization owner
-  ADMIN = 'ADMIN',               // Org admin
-  MANAGER = 'MANAGER',           // Manager
-  MEMBER = 'MEMBER',             // Regular member
-  GUEST = 'GUEST',               // Guest/limited access
+  OWNER = 'OWNER', // Organization owner
+  ADMIN = 'ADMIN', // Org admin
+  MANAGER = 'MANAGER', // Manager
+  MEMBER = 'MEMBER', // Regular member
+  GUEST = 'GUEST', // Guest/limited access
 }
 
 // Setting categories
 export enum SettingCategory {
-  GENERAL = 'GENERAL',           // General settings
-  BRANDING = 'BRANDING',         // Brand/appearance
-  WORKFLOW = 'WORKFLOW',         // Workflow rules
+  GENERAL = 'GENERAL', // General settings
+  BRANDING = 'BRANDING', // Brand/appearance
+  WORKFLOW = 'WORKFLOW', // Workflow rules
   NOTIFICATIONS = 'NOTIFICATIONS', // Notification preferences
   INTEGRATIONS = 'INTEGRATIONS', // Integration configs
-  BILLING = 'BILLING',           // Billing settings
-  SECURITY = 'SECURITY',         // Security settings
-  FEATURES = 'FEATURES',         // Feature toggles
+  BILLING = 'BILLING', // Billing settings
+  SECURITY = 'SECURITY', // Security settings
+  FEATURES = 'FEATURES', // Feature toggles
 }
 
 // Setting value types
@@ -1408,7 +1430,7 @@ export enum SettingValueType {
   NUMBER = 'NUMBER',
   BOOLEAN = 'BOOLEAN',
   JSON = 'JSON',
-  SECRET = 'SECRET',             // Encrypted value
+  SECRET = 'SECRET', // Encrypted value
 }
 
 // ============================================================================
@@ -1417,11 +1439,11 @@ export enum SettingValueType {
 
 // Cost center types
 export enum CostCenterType {
-  REVENUE = 'REVENUE',           // Revenue-generating
-  EXPENSE = 'EXPENSE',           // Expense only
-  PROFIT = 'PROFIT',             // Both revenue and expense
-  SERVICE = 'SERVICE',           // Internal service department
-  OVERHEAD = 'OVERHEAD',         // Overhead/indirect
+  REVENUE = 'REVENUE', // Revenue-generating
+  EXPENSE = 'EXPENSE', // Expense only
+  PROFIT = 'PROFIT', // Both revenue and expense
+  SERVICE = 'SERVICE', // Internal service department
+  OVERHEAD = 'OVERHEAD', // Overhead/indirect
 }
 
 // Budget periods
@@ -1429,59 +1451,59 @@ export enum BudgetPeriod {
   MONTHLY = 'MONTHLY',
   QUARTERLY = 'QUARTERLY',
   ANNUAL = 'ANNUAL',
-  PROJECT = 'PROJECT',           // Per-project budget
+  PROJECT = 'PROJECT', // Per-project budget
 }
 
 // Overhead allocation methods
 export enum AllocationMethod {
-  DIRECT = 'DIRECT',             // Direct assignment
-  LABOR_HOURS = 'LABOR_HOURS',   // Based on labor hours
+  DIRECT = 'DIRECT', // Direct assignment
+  LABOR_HOURS = 'LABOR_HOURS', // Based on labor hours
   MACHINE_HOURS = 'MACHINE_HOURS', // Based on machine hours
   SQUARE_FOOTAGE = 'SQUARE_FOOTAGE', // Based on space used
-  HEADCOUNT = 'HEADCOUNT',       // Based on employee count
-  REVENUE = 'REVENUE',           // Based on revenue
-  EQUAL = 'EQUAL',               // Split equally
+  HEADCOUNT = 'HEADCOUNT', // Based on employee count
+  REVENUE = 'REVENUE', // Based on revenue
+  EQUAL = 'EQUAL', // Split equally
 }
 
 // Types of materials
 export enum MaterialType {
-  SUBSTRATE = 'SUBSTRATE',       // Print substrates (vinyl, paper, etc.)
-  INK = 'INK',                   // Inks and toners
-  LAMINATE = 'LAMINATE',         // Laminates and overlays
-  HARDWARE = 'HARDWARE',         // Mounting hardware
-  PACKAGING = 'PACKAGING',       // Packaging materials
-  SUPPLIES = 'SUPPLIES',         // Consumable supplies
+  SUBSTRATE = 'SUBSTRATE', // Print substrates (vinyl, paper, etc.)
+  INK = 'INK', // Inks and toners
+  LAMINATE = 'LAMINATE', // Laminates and overlays
+  HARDWARE = 'HARDWARE', // Mounting hardware
+  PACKAGING = 'PACKAGING', // Packaging materials
+  SUPPLIES = 'SUPPLIES', // Consumable supplies
   OTHER = 'OTHER',
 }
 
 // Types of labor activities
 export enum LaborActivity {
-  SETUP = 'SETUP',               // Machine setup
-  PRODUCTION = 'PRODUCTION',     // Actual production
-  FINISHING = 'FINISHING',       // Post-production finishing
-  PACKAGING = 'PACKAGING',       // Packaging
+  SETUP = 'SETUP', // Machine setup
+  PRODUCTION = 'PRODUCTION', // Actual production
+  FINISHING = 'FINISHING', // Post-production finishing
+  PACKAGING = 'PACKAGING', // Packaging
   QUALITY_CHECK = 'QUALITY_CHECK', // QC inspection
-  REWORK = 'REWORK',             // Fixing issues
-  MAINTENANCE = 'MAINTENANCE',   // Equipment maintenance
-  ADMIN = 'ADMIN',               // Administrative
+  REWORK = 'REWORK', // Fixing issues
+  MAINTENANCE = 'MAINTENANCE', // Equipment maintenance
+  ADMIN = 'ADMIN', // Administrative
 }
 
 // Labor cost approval status
 export enum LaborCostStatus {
-  PENDING = 'PENDING',           // Awaiting approval
-  APPROVED = 'APPROVED',         // Approved for payroll/billing
-  REJECTED = 'REJECTED',         // Rejected - needs correction
-  BILLED = 'BILLED',             // Included in invoice
+  PENDING = 'PENDING', // Awaiting approval
+  APPROVED = 'APPROVED', // Approved for payroll/billing
+  REJECTED = 'REJECTED', // Rejected - needs correction
+  BILLED = 'BILLED', // Included in invoice
 }
 
 // Overhead categories
 export enum OverheadCategory {
-  FACILITY = 'FACILITY',         // Rent, utilities, maintenance
-  EQUIPMENT = 'EQUIPMENT',       // Equipment depreciation
-  INSURANCE = 'INSURANCE',       // Insurance costs
+  FACILITY = 'FACILITY', // Rent, utilities, maintenance
+  EQUIPMENT = 'EQUIPMENT', // Equipment depreciation
+  INSURANCE = 'INSURANCE', // Insurance costs
   ADMINISTRATIVE = 'ADMINISTRATIVE', // Admin overhead
-  MANAGEMENT = 'MANAGEMENT',     // Management costs
-  IT = 'IT',                     // IT/technology costs
+  MANAGEMENT = 'MANAGEMENT', // Management costs
+  IT = 'IT', // IT/technology costs
   OTHER = 'OTHER',
 }
 
@@ -1492,16 +1514,16 @@ export enum ProfitEntityType {
   CUSTOMER = 'CUSTOMER',
   PRODUCT = 'PRODUCT',
   STATION = 'STATION',
-  PERIOD = 'PERIOD',             // Monthly/quarterly summary
+  PERIOD = 'PERIOD', // Monthly/quarterly summary
 }
 
 // Profitability classification
 export enum ProfitabilityTier {
-  EXCELLENT = 'EXCELLENT',       // > 40% margin
-  GOOD = 'GOOD',                 // 25-40% margin
-  ACCEPTABLE = 'ACCEPTABLE',     // 15-25% margin
-  MARGINAL = 'MARGINAL',         // 5-15% margin
-  LOSS = 'LOSS',                 // < 5% margin
+  EXCELLENT = 'EXCELLENT', // > 40% margin
+  GOOD = 'GOOD', // 25-40% margin
+  ACCEPTABLE = 'ACCEPTABLE', // 15-25% margin
+  MARGINAL = 'MARGINAL', // 5-15% margin
+  LOSS = 'LOSS', // < 5% margin
 }
 
 // ============================================================================
@@ -1510,23 +1532,23 @@ export enum ProfitabilityTier {
 
 /** Resource types for scheduling */
 export enum ResourceType {
-  EQUIPMENT = 'EQUIPMENT',         // Printers, cutters, etc.
-  WORKSTATION = 'WORKSTATION',     // Physical work areas
-  VEHICLE = 'VEHICLE',             // Installation vehicles
-  OPERATOR = 'OPERATOR',           // Human resources
-  TOOL = 'TOOL',                   // Specialized tools
+  EQUIPMENT = 'EQUIPMENT', // Printers, cutters, etc.
+  WORKSTATION = 'WORKSTATION', // Physical work areas
+  VEHICLE = 'VEHICLE', // Installation vehicles
+  OPERATOR = 'OPERATOR', // Human resources
+  TOOL = 'TOOL', // Specialized tools
 }
 
 /** Calendar event types */
 export enum CalendarEventType {
-  AVAILABLE = 'AVAILABLE',         // Normal working hours
-  UNAVAILABLE = 'UNAVAILABLE',     // Blocked time
-  MAINTENANCE = 'MAINTENANCE',     // Scheduled maintenance
-  HOLIDAY = 'HOLIDAY',             // Company holiday
-  VACATION = 'VACATION',           // Personal time off
-  TRAINING = 'TRAINING',           // Training/education
-  SETUP = 'SETUP',                 // Equipment setup
-  BUFFER = 'BUFFER',               // Buffer time between jobs
+  AVAILABLE = 'AVAILABLE', // Normal working hours
+  UNAVAILABLE = 'UNAVAILABLE', // Blocked time
+  MAINTENANCE = 'MAINTENANCE', // Scheduled maintenance
+  HOLIDAY = 'HOLIDAY', // Company holiday
+  VACATION = 'VACATION', // Personal time off
+  TRAINING = 'TRAINING', // Training/education
+  SETUP = 'SETUP', // Equipment setup
+  BUFFER = 'BUFFER', // Buffer time between jobs
 }
 
 /** Recurrence patterns for scheduling */
@@ -1558,11 +1580,11 @@ export enum CapacityPlanStatus {
 
 /** Skill levels for operator capabilities */
 export enum SkillLevel {
-  TRAINEE = 'TRAINEE',             // Learning
-  BASIC = 'BASIC',                 // Can perform under supervision
-  PROFICIENT = 'PROFICIENT',       // Can perform independently
-  ADVANCED = 'ADVANCED',           // Can handle complex work
-  EXPERT = 'EXPERT',               // Can train others
+  TRAINEE = 'TRAINEE', // Learning
+  BASIC = 'BASIC', // Can perform under supervision
+  PROFICIENT = 'PROFICIENT', // Can perform independently
+  ADVANCED = 'ADVANCED', // Can handle complex work
+  EXPERT = 'EXPERT', // Can train others
 }
 
 /** Schedule conflict types */
@@ -1593,24 +1615,24 @@ export enum ConflictResolutionStatus {
 
 /** Customer relationship types for hierarchy */
 export enum CustomerRelationType {
-  PARENT = 'PARENT',               // Parent company
-  SUBSIDIARY = 'SUBSIDIARY',       // Child company
-  FRANCHISE = 'FRANCHISE',         // Franchise location
-  AFFILIATE = 'AFFILIATE',         // Affiliated company
-  PARTNER = 'PARTNER',             // Business partner
-  BILLING = 'BILLING',             // Billing relationship
+  PARENT = 'PARENT', // Parent company
+  SUBSIDIARY = 'SUBSIDIARY', // Child company
+  FRANCHISE = 'FRANCHISE', // Franchise location
+  AFFILIATE = 'AFFILIATE', // Affiliated company
+  PARTNER = 'PARTNER', // Business partner
+  BILLING = 'BILLING', // Billing relationship
 }
 
 /** Contact roles */
 export enum ContactRole {
-  PRIMARY = 'PRIMARY',             // Main contact
-  BILLING = 'BILLING',             // Billing/accounts payable
-  SHIPPING = 'SHIPPING',           // Shipping/receiving
-  TECHNICAL = 'TECHNICAL',         // Technical/design contact
-  APPROVAL = 'APPROVAL',           // Approval authority
-  EXECUTIVE = 'EXECUTIVE',         // C-level / executive
+  PRIMARY = 'PRIMARY', // Main contact
+  BILLING = 'BILLING', // Billing/accounts payable
+  SHIPPING = 'SHIPPING', // Shipping/receiving
+  TECHNICAL = 'TECHNICAL', // Technical/design contact
+  APPROVAL = 'APPROVAL', // Approval authority
+  EXECUTIVE = 'EXECUTIVE', // C-level / executive
   PROJECT_MANAGER = 'PROJECT_MANAGER', // Project manager
-  PURCHASING = 'PURCHASING',       // Purchasing agent
+  PURCHASING = 'PURCHASING', // Purchasing agent
   OTHER = 'OTHER',
 }
 
@@ -1644,14 +1666,14 @@ export enum CommunicationChannel {
   SOCIAL_MEDIA = 'SOCIAL_MEDIA',
   MAIL = 'MAIL',
   FAX = 'FAX',
-  MEETING = 'MEETING',            // In-person/scheduled meeting
-  TEXT = 'TEXT',                  // Text/SMS message
+  MEETING = 'MEETING', // In-person/scheduled meeting
+  TEXT = 'TEXT', // Text/SMS message
 }
 
 /** Communication directions */
 export enum CommunicationDirection {
-  INBOUND = 'INBOUND',             // Customer contacted us
-  OUTBOUND = 'OUTBOUND',           // We contacted customer
+  INBOUND = 'INBOUND', // Customer contacted us
+  OUTBOUND = 'OUTBOUND', // We contacted customer
 }
 
 /** Communication sentiment */
@@ -1714,28 +1736,28 @@ export enum PerformanceCategory {
 
 /** Material substitution types */
 export enum SubstitutionType {
-  EQUIVALENT = 'EQUIVALENT',       // Functionally equivalent
-  ALTERNATIVE = 'ALTERNATIVE',     // Different but acceptable
-  UPGRADE = 'UPGRADE',             // Better than original
-  DOWNGRADE = 'DOWNGRADE',         // Lesser but acceptable
-  TEMPORARY = 'TEMPORARY',         // Short-term only
+  EQUIVALENT = 'EQUIVALENT', // Functionally equivalent
+  ALTERNATIVE = 'ALTERNATIVE', // Different but acceptable
+  UPGRADE = 'UPGRADE', // Better than original
+  DOWNGRADE = 'DOWNGRADE', // Lesser but acceptable
+  TEMPORARY = 'TEMPORARY', // Short-term only
 }
 
 /** Inventory transaction types */
 export enum InventoryTransactionType {
-  RECEIPT = 'RECEIPT',             // Goods received
-  ISSUE = 'ISSUE',                 // Issued to production
+  RECEIPT = 'RECEIPT', // Goods received
+  ISSUE = 'ISSUE', // Issued to production
   ADJUSTMENT_IN = 'ADJUSTMENT_IN', // Positive adjustment
   ADJUSTMENT_OUT = 'ADJUSTMENT_OUT', // Negative adjustment
-  TRANSFER = 'TRANSFER',           // Location transfer
+  TRANSFER = 'TRANSFER', // Location transfer
   RETURN_TO_VENDOR = 'RETURN_TO_VENDOR',
   RETURN_FROM_CUSTOMER = 'RETURN_FROM_CUSTOMER',
-  SCRAP = 'SCRAP',                 // Written off as scrap
-  CYCLE_COUNT = 'CYCLE_COUNT',     // Cycle count adjustment
+  SCRAP = 'SCRAP', // Written off as scrap
+  CYCLE_COUNT = 'CYCLE_COUNT', // Cycle count adjustment
   PHYSICAL_COUNT = 'PHYSICAL_COUNT',
-  CONSUMPTION = 'CONSUMPTION',     // Used in production
-  RESERVE = 'RESERVE',             // Reserved for order
-  UNRESERVE = 'UNRESERVE',         // Released reservation
+  CONSUMPTION = 'CONSUMPTION', // Used in production
+  RESERVE = 'RESERVE', // Reserved for order
+  UNRESERVE = 'UNRESERVE', // Released reservation
 }
 
 /** Inventory reservation status */
@@ -1821,9 +1843,9 @@ export enum NCRCategory {
 
 /** NCR severity levels */
 export enum NCRSeverity {
-  CRITICAL = 'CRITICAL',     // Safety hazard or complete failure
-  MAJOR = 'MAJOR',           // Significant impact on function
-  MINOR = 'MINOR',           // Cosmetic or minor deviation
+  CRITICAL = 'CRITICAL', // Safety hazard or complete failure
+  MAJOR = 'MAJOR', // Significant impact on function
+  MINOR = 'MINOR', // Cosmetic or minor deviation
   OBSERVATION = 'OBSERVATION', // Noted for improvement
 }
 
@@ -1862,10 +1884,10 @@ export enum NCRDisposition {
 
 /** Types of corrective actions */
 export enum CorrectiveActionType {
-  CORRECTION = 'CORRECTION',       // Fix the immediate issue
-  CORRECTIVE = 'CORRECTIVE',       // Eliminate root cause
-  PREVENTIVE = 'PREVENTIVE',       // Prevent recurrence
-  IMPROVEMENT = 'IMPROVEMENT',     // Continuous improvement
+  CORRECTION = 'CORRECTION', // Fix the immediate issue
+  CORRECTIVE = 'CORRECTIVE', // Eliminate root cause
+  PREVENTIVE = 'PREVENTIVE', // Prevent recurrence
+  IMPROVEMENT = 'IMPROVEMENT', // Continuous improvement
 }
 
 /** Corrective action priority */
@@ -1908,21 +1930,21 @@ export enum EffectivenessResult {
 
 /** Quality measurement types */
 export enum QualityMeasurementType {
-  CONTINUOUS = 'CONTINUOUS',       // Measurements (length, weight)
-  ATTRIBUTE = 'ATTRIBUTE',         // Pass/fail counts
-  DEFECTS = 'DEFECTS',             // Number of defects per unit
-  PERCENTAGE = 'PERCENTAGE',       // Percentage values
+  CONTINUOUS = 'CONTINUOUS', // Measurements (length, weight)
+  ATTRIBUTE = 'ATTRIBUTE', // Pass/fail counts
+  DEFECTS = 'DEFECTS', // Number of defects per unit
+  PERCENTAGE = 'PERCENTAGE', // Percentage values
 }
 
 /** SPC chart types */
 export enum SPCChartType {
-  X_BAR_R = 'X_BAR_R',             // Average and Range
-  X_BAR_S = 'X_BAR_S',             // Average and Std Dev
-  I_MR = 'I_MR',                   // Individual and Moving Range
-  P_CHART = 'P_CHART',             // Proportion defective
-  NP_CHART = 'NP_CHART',           // Number defective
-  C_CHART = 'C_CHART',             // Defects per unit
-  U_CHART = 'U_CHART',             // Defects per unit (variable sample)
+  X_BAR_R = 'X_BAR_R', // Average and Range
+  X_BAR_S = 'X_BAR_S', // Average and Std Dev
+  I_MR = 'I_MR', // Individual and Moving Range
+  P_CHART = 'P_CHART', // Proportion defective
+  NP_CHART = 'NP_CHART', // Number defective
+  C_CHART = 'C_CHART', // Defects per unit
+  U_CHART = 'U_CHART', // Defects per unit (variable sample)
 }
 
 // ============================================================================
@@ -1941,28 +1963,28 @@ export enum DocumentVersionStatus {
 
 /** Document template types */
 export enum TemplateType {
-  FORM = 'FORM',                    // Fillable form
-  REPORT = 'REPORT',                // Report template
-  LETTER = 'LETTER',                // Letter/correspondence
-  CERTIFICATE = 'CERTIFICATE',      // Certificate of conformance
-  LABEL = 'LABEL',                  // Labels/tags
-  CHECKLIST = 'CHECKLIST',          // Inspection checklist
-  CONTRACT = 'CONTRACT',            // Contract template
-  INVOICE = 'INVOICE',              // Invoice template
-  QUOTE = 'QUOTE',                  // Quote template
+  FORM = 'FORM', // Fillable form
+  REPORT = 'REPORT', // Report template
+  LETTER = 'LETTER', // Letter/correspondence
+  CERTIFICATE = 'CERTIFICATE', // Certificate of conformance
+  LABEL = 'LABEL', // Labels/tags
+  CHECKLIST = 'CHECKLIST', // Inspection checklist
+  CONTRACT = 'CONTRACT', // Contract template
+  INVOICE = 'INVOICE', // Invoice template
+  QUOTE = 'QUOTE', // Quote template
   WORK_INSTRUCTION = 'WORK_INSTRUCTION', // SOPs
   OTHER = 'OTHER',
 }
 
 /** Approval types for document review */
 export enum ApprovalType {
-  REVIEW = 'REVIEW',                // General review
-  TECHNICAL = 'TECHNICAL',          // Technical review
-  QUALITY = 'QUALITY',              // Quality approval
-  MANAGEMENT = 'MANAGEMENT',        // Management approval
-  CUSTOMER = 'CUSTOMER',            // Customer approval
-  LEGAL = 'LEGAL',                  // Legal review
-  FINAL = 'FINAL',                  // Final sign-off
+  REVIEW = 'REVIEW', // General review
+  TECHNICAL = 'TECHNICAL', // Technical review
+  QUALITY = 'QUALITY', // Quality approval
+  MANAGEMENT = 'MANAGEMENT', // Management approval
+  CUSTOMER = 'CUSTOMER', // Customer approval
+  LEGAL = 'LEGAL', // Legal review
+  FINAL = 'FINAL', // Final sign-off
 }
 
 /** Approval workflow status */
@@ -1986,11 +2008,11 @@ export enum ApprovalDecision {
 
 /** Document access types */
 export enum DocumentAccessType {
-  USER = 'USER',                    // Specific user
-  ROLE = 'ROLE',                    // Role-based
-  DEPARTMENT = 'DEPARTMENT',        // Department-based
-  PUBLIC = 'PUBLIC',                // Public access
-  CUSTOMER = 'CUSTOMER',            // Customer portal
+  USER = 'USER', // Specific user
+  ROLE = 'ROLE', // Role-based
+  DEPARTMENT = 'DEPARTMENT', // Department-based
+  PUBLIC = 'PUBLIC', // Public access
+  CUSTOMER = 'CUSTOMER', // Customer portal
 }
 
 /** Document access action types */
@@ -2010,20 +2032,20 @@ export enum DocumentAccessAction {
 
 /** Metric snapshot types */
 export enum MetricSnapshotType {
-  OVERALL = 'OVERALL',             // Company-wide
-  STATION = 'STATION',             // Per station
-  USER = 'USER',                   // Per operator
-  CUSTOMER = 'CUSTOMER',           // Per customer
-  PRODUCT_LINE = 'PRODUCT_LINE',   // Per product category
+  OVERALL = 'OVERALL', // Company-wide
+  STATION = 'STATION', // Per station
+  USER = 'USER', // Per operator
+  CUSTOMER = 'CUSTOMER', // Per customer
+  PRODUCT_LINE = 'PRODUCT_LINE', // Per product category
 }
 
 /** Metric scope types */
 export enum MetricScopeType {
-  GLOBAL = 'GLOBAL',               // No specific scope
-  STATION = 'STATION',             // Station-level
-  USER = 'USER',                   // User-level
-  CUSTOMER = 'CUSTOMER',           // Customer-level
-  DEPARTMENT = 'DEPARTMENT',       // Department-level
+  GLOBAL = 'GLOBAL', // No specific scope
+  STATION = 'STATION', // Station-level
+  USER = 'USER', // User-level
+  CUSTOMER = 'CUSTOMER', // Customer-level
+  DEPARTMENT = 'DEPARTMENT', // Department-level
 }
 
 /** Throughput measurement periods */
@@ -2036,39 +2058,39 @@ export enum ThroughputPeriod {
 
 /** Bottleneck resource types */
 export enum BottleneckResource {
-  EQUIPMENT = 'EQUIPMENT',         // Printer, cutter, etc.
-  LABOR = 'LABOR',                 // Operator availability
-  MATERIAL = 'MATERIAL',           // Material shortage
-  SPACE = 'SPACE',                 // Physical space constraint
-  TOOLING = 'TOOLING',             // Tools, dies, etc.
+  EQUIPMENT = 'EQUIPMENT', // Printer, cutter, etc.
+  LABOR = 'LABOR', // Operator availability
+  MATERIAL = 'MATERIAL', // Material shortage
+  SPACE = 'SPACE', // Physical space constraint
+  TOOLING = 'TOOLING', // Tools, dies, etc.
 }
 
 /** Bottleneck types */
 export enum BottleneckType {
-  CAPACITY = 'CAPACITY',           // Max capacity reached
+  CAPACITY = 'CAPACITY', // Max capacity reached
   EQUIPMENT_DOWN = 'EQUIPMENT_DOWN', // Equipment not working
   STAFF_SHORTAGE = 'STAFF_SHORTAGE', // Not enough operators
-  MATERIAL_OUT = 'MATERIAL_OUT',   // Material stockout
-  QUALITY_HOLD = 'QUALITY_HOLD',   // QC holding up work
-  DEPENDENCY = 'DEPENDENCY',       // Waiting on upstream
-  EXTERNAL = 'EXTERNAL',           // Customer delay, vendor, etc.
+  MATERIAL_OUT = 'MATERIAL_OUT', // Material stockout
+  QUALITY_HOLD = 'QUALITY_HOLD', // QC holding up work
+  DEPENDENCY = 'DEPENDENCY', // Waiting on upstream
+  EXTERNAL = 'EXTERNAL', // Customer delay, vendor, etc.
 }
 
 /** Bottleneck severity levels */
 export enum BottleneckSeverity {
-  CRITICAL = 'CRITICAL',           // Production stopped
-  HIGH = 'HIGH',                   // Significant delay
-  MEDIUM = 'MEDIUM',               // Moderate impact
-  LOW = 'LOW',                     // Minor inconvenience
+  CRITICAL = 'CRITICAL', // Production stopped
+  HIGH = 'HIGH', // Significant delay
+  MEDIUM = 'MEDIUM', // Moderate impact
+  LOW = 'LOW', // Minor inconvenience
 }
 
 /** Bottleneck resolution types */
 export enum BottleneckResolution {
-  CLEARED = 'CLEARED',             // Natural resolution
-  OVERTIME = 'OVERTIME',           // Added overtime
-  RESEQUENCED = 'RESEQUENCED',     // Changed priorities
-  OUTSOURCED = 'OUTSOURCED',       // Sent to subcontractor
-  ESCALATED = 'ESCALATED',         // Escalated to management
+  CLEARED = 'CLEARED', // Natural resolution
+  OVERTIME = 'OVERTIME', // Added overtime
+  RESEQUENCED = 'RESEQUENCED', // Changed priorities
+  OUTSOURCED = 'OUTSOURCED', // Sent to subcontractor
+  ESCALATED = 'ESCALATED', // Escalated to management
   EQUIPMENT_FIXED = 'EQUIPMENT_FIXED', // Repaired equipment
   MATERIAL_RECEIVED = 'MATERIAL_RECEIVED', // Received materials
   OTHER = 'OTHER',
@@ -2094,9 +2116,9 @@ export enum GoalType {
 
 /** Goal direction - is higher or lower better */
 export enum GoalDirection {
-  HIGHER = 'HIGHER',               // Higher is better
-  LOWER = 'LOWER',                 // Lower is better
-  TARGET = 'TARGET',               // Closest to target
+  HIGHER = 'HIGHER', // Higher is better
+  LOWER = 'LOWER', // Lower is better
+  TARGET = 'TARGET', // Closest to target
 }
 
 /** Goal time periods */
@@ -2124,96 +2146,96 @@ export enum GoalStatus {
 
 /** Defect severity classification */
 export enum DefectSeverity {
-  COSMETIC = 'COSMETIC',           // Visual only, no functionality impact
-  MINOR = 'MINOR',                 // Minor impact, can be used with notes
-  MAJOR = 'MAJOR',                 // Significant impact, may need rework
-  CRITICAL = 'CRITICAL',           // Cannot be used/shipped, must be fixed
-  SAFETY = 'SAFETY',               // Safety hazard, immediate action required
+  COSMETIC = 'COSMETIC', // Visual only, no functionality impact
+  MINOR = 'MINOR', // Minor impact, can be used with notes
+  MAJOR = 'MAJOR', // Significant impact, may need rework
+  CRITICAL = 'CRITICAL', // Cannot be used/shipped, must be fixed
+  SAFETY = 'SAFETY', // Safety hazard, immediate action required
 }
 
 /** Defect disposition decisions */
 export enum DefectDisposition {
-  PENDING = 'PENDING',             // Awaiting decision
-  USE_AS_IS = 'USE_AS_IS',         // Accept with deviation
-  REWORK = 'REWORK',               // Repair/fix the defect
-  SCRAP = 'SCRAP',                 // Cannot be salvaged
+  PENDING = 'PENDING', // Awaiting decision
+  USE_AS_IS = 'USE_AS_IS', // Accept with deviation
+  REWORK = 'REWORK', // Repair/fix the defect
+  SCRAP = 'SCRAP', // Cannot be salvaged
   RETURN_TO_VENDOR = 'RETURN_TO_VENDOR', // Supplier issue
-  DOWNGRADE = 'DOWNGRADE',         // Use for lesser purpose
+  DOWNGRADE = 'DOWNGRADE', // Use for lesser purpose
 }
 
 /** Where defect was discovered */
 export enum DefectSource {
-  INCOMING = 'INCOMING',           // Incoming inspection (materials)
-  IN_PROCESS = 'IN_PROCESS',       // Found during production
-  FINAL_QC = 'FINAL_QC',           // Final inspection before shipping
-  CUSTOMER = 'CUSTOMER',           // Customer complaint/return
+  INCOMING = 'INCOMING', // Incoming inspection (materials)
+  IN_PROCESS = 'IN_PROCESS', // Found during production
+  FINAL_QC = 'FINAL_QC', // Final inspection before shipping
+  CUSTOMER = 'CUSTOMER', // Customer complaint/return
   INTERNAL_AUDIT = 'INTERNAL_AUDIT', // Internal quality audit
-  EQUIPMENT = 'EQUIPMENT',         // Equipment-caused defect
+  EQUIPMENT = 'EQUIPMENT', // Equipment-caused defect
 }
 
 /** Evidence/attachment types for QC */
 export enum EvidenceType {
-  PHOTO = 'PHOTO',                 // Image evidence
-  VIDEO = 'VIDEO',                 // Video evidence
-  DOCUMENT = 'DOCUMENT',           // Document/PDF
-  MEASUREMENT = 'MEASUREMENT',     // Measurement data
-  TEST_RESULT = 'TEST_RESULT',     // Test results
+  PHOTO = 'PHOTO', // Image evidence
+  VIDEO = 'VIDEO', // Video evidence
+  DOCUMENT = 'DOCUMENT', // Document/PDF
+  MEASUREMENT = 'MEASUREMENT', // Measurement data
+  TEST_RESULT = 'TEST_RESULT', // Test results
   CUSTOMER_REPORT = 'CUSTOMER_REPORT', // Customer complaint
-  AUDIO = 'AUDIO',                 // Audio recording
+  AUDIO = 'AUDIO', // Audio recording
 }
 
 /** Root cause analysis categories */
 export enum RootCauseCategoryQC {
-  OPERATOR_ERROR = 'OPERATOR_ERROR',   // Human error
-  EQUIPMENT = 'EQUIPMENT',             // Machine/equipment failure
-  MATERIAL = 'MATERIAL',               // Material defect
-  PROCESS = 'PROCESS',                 // Process issue
-  DESIGN = 'DESIGN',                   // Design flaw
-  ENVIRONMENTAL = 'ENVIRONMENTAL',     // Temperature, humidity, etc.
-  MAINTENANCE = 'MAINTENANCE',         // Maintenance-related
-  TRAINING = 'TRAINING',               // Training deficiency
-  VENDOR = 'VENDOR',                   // Supplier issue
-  UNKNOWN = 'UNKNOWN',                 // Under investigation
+  OPERATOR_ERROR = 'OPERATOR_ERROR', // Human error
+  EQUIPMENT = 'EQUIPMENT', // Machine/equipment failure
+  MATERIAL = 'MATERIAL', // Material defect
+  PROCESS = 'PROCESS', // Process issue
+  DESIGN = 'DESIGN', // Design flaw
+  ENVIRONMENTAL = 'ENVIRONMENTAL', // Temperature, humidity, etc.
+  MAINTENANCE = 'MAINTENANCE', // Maintenance-related
+  TRAINING = 'TRAINING', // Training deficiency
+  VENDOR = 'VENDOR', // Supplier issue
+  UNKNOWN = 'UNKNOWN', // Under investigation
 }
 
 /** Supplier quality rating tiers */
 export enum SupplierQualityTier {
-  PREFERRED = 'PREFERRED',         // Excellent quality history
-  APPROVED = 'APPROVED',           // Meets quality standards
-  CONDITIONAL = 'CONDITIONAL',     // On probation/watch
-  RESTRICTED = 'RESTRICTED',       // Limited use only
-  BLOCKED = 'BLOCKED',             // Quality issues, cannot use
+  PREFERRED = 'PREFERRED', // Excellent quality history
+  APPROVED = 'APPROVED', // Meets quality standards
+  CONDITIONAL = 'CONDITIONAL', // On probation/watch
+  RESTRICTED = 'RESTRICTED', // Limited use only
+  BLOCKED = 'BLOCKED', // Quality issues, cannot use
 }
 
 /** Customer feedback types */
 export enum FeedbackType {
-  COMPLIMENT = 'COMPLIMENT',       // Positive feedback
-  COMPLAINT = 'COMPLAINT',         // Quality issue
-  SUGGESTION = 'SUGGESTION',       // Improvement idea
+  COMPLIMENT = 'COMPLIMENT', // Positive feedback
+  COMPLAINT = 'COMPLAINT', // Quality issue
+  SUGGESTION = 'SUGGESTION', // Improvement idea
   WARRANTY_CLAIM = 'WARRANTY_CLAIM', // Warranty-related
-  RETURN = 'RETURN',               // Return request
-  QUESTION = 'QUESTION',           // Quality question
+  RETURN = 'RETURN', // Return request
+  QUESTION = 'QUESTION', // Quality question
 }
 
 /** Customer feedback status */
 export enum FeedbackStatus {
-  RECEIVED = 'RECEIVED',           // Just received
-  ACKNOWLEDGED = 'ACKNOWLEDGED',   // Customer contacted
+  RECEIVED = 'RECEIVED', // Just received
+  ACKNOWLEDGED = 'ACKNOWLEDGED', // Customer contacted
   INVESTIGATING = 'INVESTIGATING', // Under investigation
-  RESOLVED = 'RESOLVED',           // Issue resolved
-  CLOSED = 'CLOSED',               // Feedback closed
-  ESCALATED = 'ESCALATED',         // Escalated to management
+  RESOLVED = 'RESOLVED', // Issue resolved
+  CLOSED = 'CLOSED', // Feedback closed
+  ESCALATED = 'ESCALATED', // Escalated to management
 }
 
 /** Quality trend metric types */
 export enum QualityTrendType {
   FIRST_PASS_YIELD = 'FIRST_PASS_YIELD', // Percentage passing on first try
-  DEFECT_RATE = 'DEFECT_RATE',     // Defects per 100 units
+  DEFECT_RATE = 'DEFECT_RATE', // Defects per 100 units
   CUSTOMER_RETURNS = 'CUSTOMER_RETURNS', // Return rate
-  REWORK_RATE = 'REWORK_RATE',     // Rework percentage
-  SCRAP_RATE = 'SCRAP_RATE',       // Scrap percentage
+  REWORK_RATE = 'REWORK_RATE', // Rework percentage
+  SCRAP_RATE = 'SCRAP_RATE', // Scrap percentage
   INSPECTION_TIME = 'INSPECTION_TIME', // Average inspection time
-  ESCAPE_RATE = 'ESCAPE_RATE',     // Defects that reach customer
+  ESCAPE_RATE = 'ESCAPE_RATE', // Defects that reach customer
 }
 
 // ============================================================================
@@ -2222,62 +2244,62 @@ export enum QualityTrendType {
 
 /** Project lifecycle status */
 export enum ProjectStatus {
-  PLANNING = 'PLANNING',           // Initial planning phase
-  APPROVED = 'APPROVED',           // Budget approved, ready to start
-  IN_PROGRESS = 'IN_PROGRESS',     // Active work in progress
-  ON_HOLD = 'ON_HOLD',             // Temporarily paused
-  COMPLETED = 'COMPLETED',         // All work finished
-  CANCELLED = 'CANCELLED',         // Project cancelled
-  ARCHIVED = 'ARCHIVED',           // Archived for records
+  PLANNING = 'PLANNING', // Initial planning phase
+  APPROVED = 'APPROVED', // Budget approved, ready to start
+  IN_PROGRESS = 'IN_PROGRESS', // Active work in progress
+  ON_HOLD = 'ON_HOLD', // Temporarily paused
+  COMPLETED = 'COMPLETED', // All work finished
+  CANCELLED = 'CANCELLED', // Project cancelled
+  ARCHIVED = 'ARCHIVED', // Archived for records
 }
 
 /** Project priority levels */
 export enum ProjectPriority {
-  CRITICAL = 'CRITICAL',           // Highest priority, immediate attention
-  HIGH = 'HIGH',                   // High priority
-  MEDIUM = 'MEDIUM',               // Normal priority
-  LOW = 'LOW',                     // Low priority, as time permits
+  CRITICAL = 'CRITICAL', // Highest priority, immediate attention
+  HIGH = 'HIGH', // High priority
+  MEDIUM = 'MEDIUM', // Normal priority
+  LOW = 'LOW', // Low priority, as time permits
 }
 
 /** Milestone status */
 export enum MilestoneStatus {
-  NOT_STARTED = 'NOT_STARTED',     // Milestone not yet begun
-  IN_PROGRESS = 'IN_PROGRESS',     // Milestone work underway
-  COMPLETED = 'COMPLETED',         // Milestone achieved
-  OVERDUE = 'OVERDUE',             // Past due date
-  SKIPPED = 'SKIPPED',             // Milestone skipped/not applicable
+  NOT_STARTED = 'NOT_STARTED', // Milestone not yet begun
+  IN_PROGRESS = 'IN_PROGRESS', // Milestone work underway
+  COMPLETED = 'COMPLETED', // Milestone achieved
+  OVERDUE = 'OVERDUE', // Past due date
+  SKIPPED = 'SKIPPED', // Milestone skipped/not applicable
 }
 
 /** Budget line item types */
 export enum BudgetLineType {
-  MATERIAL = 'MATERIAL',           // Material costs
-  LABOR = 'LABOR',                 // Labor costs
-  EQUIPMENT = 'EQUIPMENT',         // Equipment/machine time
-  SUBCONTRACT = 'SUBCONTRACT',     // Subcontractor costs
-  SHIPPING = 'SHIPPING',           // Shipping/freight costs
-  OVERHEAD = 'OVERHEAD',           // Overhead allocation
-  OTHER = 'OTHER',                 // Miscellaneous costs
+  MATERIAL = 'MATERIAL', // Material costs
+  LABOR = 'LABOR', // Labor costs
+  EQUIPMENT = 'EQUIPMENT', // Equipment/machine time
+  SUBCONTRACT = 'SUBCONTRACT', // Subcontractor costs
+  SHIPPING = 'SHIPPING', // Shipping/freight costs
+  OVERHEAD = 'OVERHEAD', // Overhead allocation
+  OTHER = 'OTHER', // Miscellaneous costs
 }
 
 /** Budget status */
 export enum BudgetStatus {
-  DRAFT = 'DRAFT',                 // Budget not finalized
-  APPROVED = 'APPROVED',           // Budget approved
-  OVER_BUDGET = 'OVER_BUDGET',     // Exceeded approved amount
-  UNDER_BUDGET = 'UNDER_BUDGET',   // Under approved amount
-  CLOSED = 'CLOSED',               // Budget closed out
+  DRAFT = 'DRAFT', // Budget not finalized
+  APPROVED = 'APPROVED', // Budget approved
+  OVER_BUDGET = 'OVER_BUDGET', // Exceeded approved amount
+  UNDER_BUDGET = 'UNDER_BUDGET', // Under approved amount
+  CLOSED = 'CLOSED', // Budget closed out
 }
 
 /** Job template categories */
 export enum JobTemplateCategory {
-  SIGNAGE = 'SIGNAGE',             // Standard signage templates
-  VEHICLE_WRAP = 'VEHICLE_WRAP',   // Vehicle wrap templates
-  BANNER = 'BANNER',               // Banner templates
-  DISPLAY = 'DISPLAY',             // Display/trade show templates
-  WAYFINDING = 'WAYFINDING',       // Wayfinding system templates
+  SIGNAGE = 'SIGNAGE', // Standard signage templates
+  VEHICLE_WRAP = 'VEHICLE_WRAP', // Vehicle wrap templates
+  BANNER = 'BANNER', // Banner templates
+  DISPLAY = 'DISPLAY', // Display/trade show templates
+  WAYFINDING = 'WAYFINDING', // Wayfinding system templates
   CHANNEL_LETTER = 'CHANNEL_LETTER', // Channel letter templates
-  MONUMENT = 'MONUMENT',           // Monument sign templates
-  CUSTOM = 'CUSTOM',               // Custom/other templates
+  MONUMENT = 'MONUMENT', // Monument sign templates
+  CUSTOM = 'CUSTOM', // Custom/other templates
 }
 
 // ============================================================================
@@ -2286,49 +2308,49 @@ export enum JobTemplateCategory {
 
 /** Nesting job status */
 export enum NestingStatus {
-  DRAFT = 'DRAFT',                 // Being created
-  PENDING = 'PENDING',             // Waiting to be nested
-  PROCESSING = 'PROCESSING',       // Nesting algorithm running
-  COMPLETED = 'COMPLETED',         // Nesting done
-  APPROVED = 'APPROVED',           // Approved for cutting
+  DRAFT = 'DRAFT', // Being created
+  PENDING = 'PENDING', // Waiting to be nested
+  PROCESSING = 'PROCESSING', // Nesting algorithm running
+  COMPLETED = 'COMPLETED', // Nesting done
+  APPROVED = 'APPROVED', // Approved for cutting
   IN_PRODUCTION = 'IN_PRODUCTION', // Currently being cut
-  FINISHED = 'FINISHED',           // All cuts complete
-  CANCELLED = 'CANCELLED',         // Cancelled
+  FINISHED = 'FINISHED', // All cuts complete
+  CANCELLED = 'CANCELLED', // Cancelled
 }
 
 /** Individual cut status */
 export enum CutStatus {
-  PENDING = 'PENDING',             // Not yet cut
-  IN_PROGRESS = 'IN_PROGRESS',     // Currently cutting
-  COMPLETED = 'COMPLETED',         // Cut finished
-  FAILED = 'FAILED',               // Cut failed
-  SKIPPED = 'SKIPPED',             // Skipped/not needed
+  PENDING = 'PENDING', // Not yet cut
+  IN_PROGRESS = 'IN_PROGRESS', // Currently cutting
+  COMPLETED = 'COMPLETED', // Cut finished
+  FAILED = 'FAILED', // Cut failed
+  SKIPPED = 'SKIPPED', // Skipped/not needed
 }
 
 /** Waste/scrap category */
 export enum WasteCategory {
-  USABLE_REMNANT = 'USABLE_REMNANT',   // Large enough to reuse
-  EDGE_TRIM = 'EDGE_TRIM',             // Edge waste, recyclable
-  SCRAP = 'SCRAP',                     // Too small to reuse
-  DEFECTIVE = 'DEFECTIVE',             // Material defect
-  SETUP_WASTE = 'SETUP_WASTE',         // Calibration/setup cuts
+  USABLE_REMNANT = 'USABLE_REMNANT', // Large enough to reuse
+  EDGE_TRIM = 'EDGE_TRIM', // Edge waste, recyclable
+  SCRAP = 'SCRAP', // Too small to reuse
+  DEFECTIVE = 'DEFECTIVE', // Material defect
+  SETUP_WASTE = 'SETUP_WASTE', // Calibration/setup cuts
 }
 
 /** Material sheet/panel status */
 export enum SheetStatus {
-  AVAILABLE = 'AVAILABLE',         // Ready to use
-  RESERVED = 'RESERVED',           // Reserved for a job
-  IN_USE = 'IN_USE',               // Currently being cut
-  DEPLETED = 'DEPLETED',           // Fully used
-  DAMAGED = 'DAMAGED',             // Damaged, cannot use
+  AVAILABLE = 'AVAILABLE', // Ready to use
+  RESERVED = 'RESERVED', // Reserved for a job
+  IN_USE = 'IN_USE', // Currently being cut
+  DEPLETED = 'DEPLETED', // Fully used
+  DAMAGED = 'DAMAGED', // Damaged, cannot use
 }
 
 /** Nesting algorithm type */
 export enum NestingAlgorithm {
-  BOTTOM_LEFT = 'BOTTOM_LEFT',     // Simple bottom-left fill
-  BEST_FIT = 'BEST_FIT',           // Best fit decreasing
-  GENETIC = 'GENETIC',             // Genetic algorithm optimization
-  GUILLOTINE = 'GUILLOTINE',       // Guillotine cutting
+  BOTTOM_LEFT = 'BOTTOM_LEFT', // Simple bottom-left fill
+  BEST_FIT = 'BEST_FIT', // Best fit decreasing
+  GENETIC = 'GENETIC', // Genetic algorithm optimization
+  GUILLOTINE = 'GUILLOTINE', // Guillotine cutting
 }
 
 // ============================================================================
@@ -2337,48 +2359,48 @@ export enum NestingAlgorithm {
 
 /** Notification delivery channel */
 export enum NotificationChannel {
-  IN_APP = 'IN_APP',               // In-application notification
-  EMAIL = 'EMAIL',                 // Email delivery
-  SMS = 'SMS',                     // SMS text message
-  PUSH = 'PUSH',                   // Push notification
-  SLACK = 'SLACK',                 // Slack integration
-  TEAMS = 'TEAMS',                 // Microsoft Teams
-  WEBHOOK = 'WEBHOOK',             // Custom webhook
+  IN_APP = 'IN_APP', // In-application notification
+  EMAIL = 'EMAIL', // Email delivery
+  SMS = 'SMS', // SMS text message
+  PUSH = 'PUSH', // Push notification
+  SLACK = 'SLACK', // Slack integration
+  TEAMS = 'TEAMS', // Microsoft Teams
+  WEBHOOK = 'WEBHOOK', // Custom webhook
 }
 
 /** Notification priority */
 export enum NotificationPriorityLevel {
-  LOW = 'LOW',                     // Can wait, batch delivery OK
-  NORMAL = 'NORMAL',               // Standard delivery
-  HIGH = 'HIGH',                   // Deliver promptly
-  URGENT = 'URGENT',               // Immediate delivery required
+  LOW = 'LOW', // Can wait, batch delivery OK
+  NORMAL = 'NORMAL', // Standard delivery
+  HIGH = 'HIGH', // Deliver promptly
+  URGENT = 'URGENT', // Immediate delivery required
 }
 
 /** Notification delivery status */
 export enum NotificationDeliveryStatus {
-  PENDING = 'PENDING',             // Queued for delivery
-  SENDING = 'SENDING',             // Currently being sent
-  DELIVERED = 'DELIVERED',         // Successfully delivered
-  FAILED = 'FAILED',               // Delivery failed
-  BOUNCED = 'BOUNCED',             // Email bounced
-  READ = 'READ',                   // User has read it
-  DISMISSED = 'DISMISSED',         // User dismissed without reading
+  PENDING = 'PENDING', // Queued for delivery
+  SENDING = 'SENDING', // Currently being sent
+  DELIVERED = 'DELIVERED', // Successfully delivered
+  FAILED = 'FAILED', // Delivery failed
+  BOUNCED = 'BOUNCED', // Email bounced
+  READ = 'READ', // User has read it
+  DISMISSED = 'DISMISSED', // User dismissed without reading
 }
 
 /** Message thread status */
 export enum ThreadStatus {
-  OPEN = 'OPEN',                   // Active conversation
-  RESOLVED = 'RESOLVED',           // Issue resolved
-  ARCHIVED = 'ARCHIVED',           // Archived for records
+  OPEN = 'OPEN', // Active conversation
+  RESOLVED = 'RESOLVED', // Issue resolved
+  ARCHIVED = 'ARCHIVED', // Archived for records
 }
 
 /** Announcement target scope */
 export enum AnnouncementScope {
-  ALL = 'ALL',                     // All users
-  ROLE = 'ROLE',                   // Specific roles
-  DEPARTMENT = 'DEPARTMENT',       // Specific departments
-  USER = 'USER',                   // Specific users
-  CUSTOMER = 'CUSTOMER',           // Customer portal users
+  ALL = 'ALL', // All users
+  ROLE = 'ROLE', // Specific roles
+  DEPARTMENT = 'DEPARTMENT', // Specific departments
+  USER = 'USER', // Specific users
+  CUSTOMER = 'CUSTOMER', // Customer portal users
 }
 
 // ============================================================================
@@ -2387,42 +2409,42 @@ export enum AnnouncementScope {
 
 /** Calibration type */
 export enum CalibrationType {
-  INITIAL = 'INITIAL',             // First calibration after purchase/install
-  PERIODIC = 'PERIODIC',           // Regular scheduled calibration
-  AFTER_REPAIR = 'AFTER_REPAIR',   // Calibration following repair
-  AFTER_MOVE = 'AFTER_MOVE',       // Calibration after equipment relocation
-  VERIFICATION = 'VERIFICATION',   // Quick verification check
-  ADJUSTMENT = 'ADJUSTMENT',       // Adjustment-only calibration
+  INITIAL = 'INITIAL', // First calibration after purchase/install
+  PERIODIC = 'PERIODIC', // Regular scheduled calibration
+  AFTER_REPAIR = 'AFTER_REPAIR', // Calibration following repair
+  AFTER_MOVE = 'AFTER_MOVE', // Calibration after equipment relocation
+  VERIFICATION = 'VERIFICATION', // Quick verification check
+  ADJUSTMENT = 'ADJUSTMENT', // Adjustment-only calibration
 }
 
 /** Calibration result */
 export enum CalibrationResult {
-  PASS = 'PASS',                   // Passed all tests within tolerance
+  PASS = 'PASS', // Passed all tests within tolerance
   PASS_WITH_ADJUSTMENT = 'PASS_WITH_ADJUSTMENT', // Passed after adjustment
-  FAIL = 'FAIL',                   // Failed calibration
-  CONDITIONAL = 'CONDITIONAL',     // Conditionally passed with limitations
-  DEFERRED = 'DEFERRED',           // Calibration deferred
+  FAIL = 'FAIL', // Failed calibration
+  CONDITIONAL = 'CONDITIONAL', // Conditionally passed with limitations
+  DEFERRED = 'DEFERRED', // Calibration deferred
 }
 
 /** Equipment certification type */
 export enum CertificationType {
-  SAFETY = 'SAFETY',               // Safety certification
-  QUALITY = 'QUALITY',             // Quality certification
+  SAFETY = 'SAFETY', // Safety certification
+  QUALITY = 'QUALITY', // Quality certification
   ENVIRONMENTAL = 'ENVIRONMENTAL', // Environmental compliance
   CALIBRATION_CERT = 'CALIBRATION_CERT', // Calibration certificate
-  OPERATOR = 'OPERATOR',           // Operator certification for equipment
-  WARRANTY = 'WARRANTY',           // Warranty documentation
-  INSURANCE = 'INSURANCE',         // Insurance certificate
-  REGULATORY = 'REGULATORY',       // Regulatory compliance
+  OPERATOR = 'OPERATOR', // Operator certification for equipment
+  WARRANTY = 'WARRANTY', // Warranty documentation
+  INSURANCE = 'INSURANCE', // Insurance certificate
+  REGULATORY = 'REGULATORY', // Regulatory compliance
 }
 
 /** Certification status */
 export enum CertificationStatus {
-  VALID = 'VALID',                 // Currently valid
+  VALID = 'VALID', // Currently valid
   EXPIRING_SOON = 'EXPIRING_SOON', // Expiring within reminder period
-  EXPIRED = 'EXPIRED',             // Has expired
-  SUSPENDED = 'SUSPENDED',         // Temporarily suspended
-  REVOKED = 'REVOKED',             // Permanently revoked
+  EXPIRED = 'EXPIRED', // Has expired
+  SUSPENDED = 'SUSPENDED', // Temporarily suspended
+  REVOKED = 'REVOKED', // Permanently revoked
   PENDING_RENEWAL = 'PENDING_RENEWAL', // Renewal in progress
 }
 
@@ -2850,7 +2872,7 @@ export enum RecyclabilityRating {
 
 /** Environmental certification types */
 export enum EnvironmentalCertificationType {
-  FSC = 'FSC',                     // Forest Stewardship Council
+  FSC = 'FSC', // Forest Stewardship Council
   GREENGUARD = 'GREENGUARD',
   ENERGY_STAR = 'ENERGY_STAR',
   CRADLE_TO_CRADLE = 'CRADLE_TO_CRADLE',
@@ -2903,9 +2925,9 @@ export enum EnergySource {
 
 /** Carbon emission scopes */
 export enum EmissionScope {
-  SCOPE_1 = 'SCOPE_1',             // Direct emissions from owned sources
-  SCOPE_2 = 'SCOPE_2',             // Indirect from purchased energy
-  SCOPE_3 = 'SCOPE_3',             // Other indirect (supply chain, etc.)
+  SCOPE_1 = 'SCOPE_1', // Direct emissions from owned sources
+  SCOPE_2 = 'SCOPE_2', // Indirect from purchased energy
+  SCOPE_3 = 'SCOPE_3', // Other indirect (supply chain, etc.)
 }
 
 /** Sustainability goal types */
@@ -2935,22 +2957,22 @@ export enum GoalTimeframe {
 
 /** Pricing strategies */
 export enum PricingStrategy {
-  COST_PLUS = 'COST_PLUS',                 // Cost + markup percentage
-  MARKET_BASED = 'MARKET_BASED',           // Based on market rates
-  VALUE_BASED = 'VALUE_BASED',             // Based on perceived value
-  COMPETITIVE = 'COMPETITIVE',             // Match/beat competitors
-  DYNAMIC = 'DYNAMIC',                     // Real-time based on demand
-  TIERED = 'TIERED',                       // Volume-based tiers
-  PROMOTIONAL = 'PROMOTIONAL',             // Special pricing
-  CUSTOM = 'CUSTOM',                       // Custom calculation
+  COST_PLUS = 'COST_PLUS', // Cost + markup percentage
+  MARKET_BASED = 'MARKET_BASED', // Based on market rates
+  VALUE_BASED = 'VALUE_BASED', // Based on perceived value
+  COMPETITIVE = 'COMPETITIVE', // Match/beat competitors
+  DYNAMIC = 'DYNAMIC', // Real-time based on demand
+  TIERED = 'TIERED', // Volume-based tiers
+  PROMOTIONAL = 'PROMOTIONAL', // Special pricing
+  CUSTOM = 'CUSTOM', // Custom calculation
 }
 
 /** Quote confidence levels */
 export enum QuoteConfidenceLevel {
-  LOW = 'LOW',                             // < 50% likely to close
-  MEDIUM = 'MEDIUM',                       // 50-70% likely
-  HIGH = 'HIGH',                           // 70-90% likely
-  VERY_HIGH = 'VERY_HIGH',                 // > 90% likely
+  LOW = 'LOW', // < 50% likely to close
+  MEDIUM = 'MEDIUM', // 50-70% likely
+  HIGH = 'HIGH', // 70-90% likely
+  VERY_HIGH = 'VERY_HIGH', // > 90% likely
 }
 
 /** Price adjustment types */
@@ -3182,14 +3204,15 @@ export const WATCH_RULE_OPERATOR_LABELS: Record<WatchRuleOperator, string> = {
 };
 
 /** Metric fields available per data source */
-export const WATCH_RULE_METRICS: Record<WatchRuleDataSource, Array<{ field: string; label: string; unit: string }>> = {
+export const WATCH_RULE_METRICS: Record<
+  WatchRuleDataSource,
+  Array<{ field: string; label: string; unit: string }>
+> = {
   [WatchRuleDataSource.VUTEK_INK]: [
     { field: 'estimatedPercentRemaining', label: 'Estimated % Remaining', unit: '%' },
     { field: 'microlitersUsed', label: 'Microliters Used', unit: 'µL' },
   ],
-  [WatchRuleDataSource.HP_INK]: [
-    { field: 'levelPercent', label: 'Cartridge Level', unit: '%' },
-  ],
+  [WatchRuleDataSource.HP_INK]: [{ field: 'levelPercent', label: 'Cartridge Level', unit: '%' }],
   [WatchRuleDataSource.HP_PRINTHEAD]: [
     { field: 'healthGaugeLevel', label: 'Health Gauge Level', unit: '%' },
   ],
@@ -3238,22 +3261,22 @@ export enum ProductionListSection {
 /** Cell style applied to a row in the production list (col A:C) */
 export enum ProductionListStyle {
   NORMAL = 'NORMAL',
-  ATTENTION = 'ATTENTION',           // Rush / Must Ship / Redo / Sample
+  ATTENTION = 'ATTENTION', // Rush / Must Ship / Redo / Sample
   INNER_WORKINGS = 'INNER_WORKINGS', // HH Global / InnerWorkings
-  MUST_SHIP = 'MUST_SHIP',          // Yellow-highlighted, reached Must Ship date
+  MUST_SHIP = 'MUST_SHIP', // Yellow-highlighted, reached Must Ship date
 }
 
 /** Printing station codes used in the Excel sub-lists (col J) */
 export enum ProductionListPrintStation {
-  RR = 'RR',   // Roll-to-Roll
-  FB = 'FB',   // Flatbed
-  Z = 'Z',     // Zund
+  RR = 'RR', // Roll-to-Roll
+  FB = 'FB', // Flatbed
+  Z = 'Z', // Zund
 }
 
 /** Sync direction for production list integration */
 export enum ProductionListSyncDirection {
-  IMPORT = 'IMPORT',           // Excel → ERP
-  EXPORT = 'EXPORT',           // ERP → Excel
+  IMPORT = 'IMPORT', // Excel → ERP
+  EXPORT = 'EXPORT', // ERP → Excel
   BIDIRECTIONAL = 'BIDIRECTIONAL', // Merge both
 }
 
@@ -3263,53 +3286,53 @@ export enum ProductionListSyncStatus {
   IN_PROGRESS = 'IN_PROGRESS',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
-  PARTIAL = 'PARTIAL',        // Some rows synced, some failed
+  PARTIAL = 'PARTIAL', // Some rows synced, some failed
 }
 
 // ============ File Chain & Print-Cut Linking ============
 
 /** Status of a print-to-cut file link */
 export enum FileChainStatus {
-  DESIGN = 'DESIGN',             // File exists in design, not yet sent anywhere
-  SENT_TO_RIP = 'SENT_TO_RIP',   // Sent to RIP hotfolder
-  RIPPING = 'RIPPING',           // RIP is processing
+  DESIGN = 'DESIGN', // File exists in design, not yet sent anywhere
+  SENT_TO_RIP = 'SENT_TO_RIP', // Sent to RIP hotfolder
+  RIPPING = 'RIPPING', // RIP is processing
   READY_TO_PRINT = 'READY_TO_PRINT', // RIP done, queued for printer
-  PRINTING = 'PRINTING',         // Currently printing
-  PRINTED = 'PRINTED',           // Print complete
-  CUT_PENDING = 'CUT_PENDING',   // Has a cut file queued/waiting
-  CUTTING = 'CUTTING',           // Zund is actively cutting
+  PRINTING = 'PRINTING', // Currently printing
+  PRINTED = 'PRINTED', // Print complete
+  CUT_PENDING = 'CUT_PENDING', // Has a cut file queued/waiting
+  CUTTING = 'CUTTING', // Zund is actively cutting
   CUT_COMPLETE = 'CUT_COMPLETE', // Cut complete
-  FINISHED = 'FINISHED',         // Print+cut both done, entering finishing
-  FAILED = 'FAILED',             // Error at any stage
+  FINISHED = 'FINISHED', // Print+cut both done, entering finishing
+  FAILED = 'FAILED', // Error at any stage
 }
 
 /** How a cut file was linked to its print file */
 export enum LinkConfidence {
-  EXACT = 'EXACT',         // WO# + filename exact match
-  HIGH = 'HIGH',           // WO# match + customer match
-  MEDIUM = 'MEDIUM',       // WO# match only
-  PARTIAL = 'PARTIAL',     // Substring/normalized match
-  NESTING = 'NESTING',     // Nesting pattern detected
-  MANUAL = 'MANUAL',       // Manually linked by operator
-  NONE = 'NONE',           // Auto-detected, low confidence
+  EXACT = 'EXACT', // WO# + filename exact match
+  HIGH = 'HIGH', // WO# match + customer match
+  MEDIUM = 'MEDIUM', // WO# match only
+  PARTIAL = 'PARTIAL', // Substring/normalized match
+  NESTING = 'NESTING', // Nesting pattern detected
+  MANUAL = 'MANUAL', // Manually linked by operator
+  NONE = 'NONE', // Auto-detected, low confidence
 }
 
 /** Source system that generated the cut file */
 export enum CutFileSource {
-  THRIVE = 'THRIVE',       // Thrive Onyx Cut Center XML
-  FIERY = 'FIERY',         // EFI Fiery .zcc contour file
-  MANUAL = 'MANUAL',       // Manually imported cut file
+  THRIVE = 'THRIVE', // Thrive Onyx Cut Center XML
+  FIERY = 'FIERY', // EFI Fiery .zcc contour file
+  MANUAL = 'MANUAL', // Manually imported cut file
   ZUND_CENTER = 'ZUND_CENTER', // Created in Zund Cut Center directly
 }
 
 /** Type of production file */
 export enum ProductionFileType {
-  DESIGN_SOURCE = 'DESIGN_SOURCE',   // .ai, .psd, .indd source files
-  PRINT_READY = 'PRINT_READY',       // Print-ready PDF/TIFF
-  RIP_OUTPUT = 'RIP_OUTPUT',         // RIP raster output (RTL, etc.)
-  CUT_FILE = 'CUT_FILE',             // .zcc, .xml, .dxf cut files
-  PROOF = 'PROOF',                   // Customer proof PDF/image
-  PHOTO = 'PHOTO',                   // Install/QC photos
+  DESIGN_SOURCE = 'DESIGN_SOURCE', // .ai, .psd, .indd source files
+  PRINT_READY = 'PRINT_READY', // Print-ready PDF/TIFF
+  RIP_OUTPUT = 'RIP_OUTPUT', // RIP raster output (RTL, etc.)
+  CUT_FILE = 'CUT_FILE', // .zcc, .xml, .dxf cut files
+  PROOF = 'PROOF', // Customer proof PDF/image
+  PHOTO = 'PHOTO', // Install/QC photos
   SHIPPING_LABEL = 'SHIPPING_LABEL', // Shipping label PDF/ZPL
 }
 
@@ -3317,7 +3340,7 @@ export enum ProductionFileType {
 export enum ShopFloorStation {
   DESIGN = 'DESIGN',
   PRINTING = 'PRINTING',
-  PRODUCTION = 'PRODUCTION',   // Zund/finishing
+  PRODUCTION = 'PRODUCTION', // Zund/finishing
   SHIPPING = 'SHIPPING',
   INSTALLATION = 'INSTALLATION',
   ORDER_ENTRY = 'ORDER_ENTRY',

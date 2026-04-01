@@ -36,6 +36,15 @@ interface InstallJob {
   stationProgress: StationProgress[];
 }
 
+async function ensureOk(response: Response): Promise<void> {
+  if (response.ok) {
+    return;
+  }
+
+  const body = await response.text().catch(() => '');
+  throw new Error(body || `API ${response.status}`);
+}
+
 /** Check if all stations before this one in the routing are COMPLETED */
 function isCurrentStation(order: InstallJob, station: string): boolean {
   const idx = order.routing.indexOf(station);
@@ -50,7 +59,7 @@ function isCurrentStation(order: InstallJob, station: string): boolean {
 
 export function InstallationStation() {
   const { config } = useConfigStore();
-  const { token, user } = useAuthStore();
+  const { token } = useAuthStore();
   const [jobs, setJobs] = useState<InstallJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,11 +78,12 @@ export function InstallationStation() {
 
   // WebSocket for real-time updates
   const { subscribe } = useWebSocket();
+  const fetchJobsRef = useRef<() => void | Promise<void>>(() => {});
 
   useEffect(() => {
     const unsub = subscribe((msg) => {
       if (['STATION_COMPLETED', 'ORDER_CREATED'].includes(msg.type)) {
-        fetchJobs();
+        void fetchJobsRef.current();
       }
     });
     return unsub;
@@ -83,33 +93,20 @@ export function InstallationStation() {
     if (!token) return;
     try {
       // Fetch only orders that have INSTALLATION in their routing
+      // and are either pending or in progress.
       const params = new URLSearchParams({
-        status: 'PENDING',
+        status: 'PENDING,IN_PROGRESS',
         station: 'INSTALLATION',
         limit: '100',
         lightweight: 'true',
       });
-      // Also fetch IN_PROGRESS orders with INSTALLATION
-      const params2 = new URLSearchParams({
-        status: 'IN_PROGRESS',
-        station: 'INSTALLATION',
-        limit: '100',
-        lightweight: 'true',
+      const response = await fetch(`${config.apiUrl}/orders?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      const [res1, res2] = await Promise.all([
-        fetch(`${config.apiUrl}/orders?${params}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch(`${config.apiUrl}/orders?${params2}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-      ]);
-      if (!res1.ok) throw new Error(`API ${res1.status}`);
-      if (!res2.ok) throw new Error(`API ${res2.status}`);
-      const [json1, json2] = await Promise.all([res1.json(), res2.json()]);
-      const items1 = json1.data?.items ?? json1.data ?? [];
-      const items2 = json2.data?.items ?? json2.data ?? [];
-      const allItems: InstallJob[] = [...(Array.isArray(items1) ? items1 : []), ...(Array.isArray(items2) ? items2 : [])];
+      if (!response.ok) throw new Error(`API ${response.status}`);
+      const json = await response.json();
+      const items = json.data?.items ?? json.data ?? [];
+      const allItems: InstallJob[] = Array.isArray(items) ? items : [];
       // Client-side: only show orders where INSTALLATION is the current active station
       const installJobs = allItems.filter(order => isCurrentStation(order, 'INSTALLATION'));
       setJobs(installJobs);
@@ -120,6 +117,7 @@ export function InstallationStation() {
       setLoading(false);
     }
   }, [config.apiUrl, token]);
+  fetchJobsRef.current = fetchJobs;
 
   useEffect(() => {
     fetchJobs();
@@ -166,20 +164,26 @@ export function InstallationStation() {
     if (!activeJob) return;
 
     try {
-      await fetch(`${config.apiUrl}/install-sessions`, {
+      const endedAt = new Date();
+      const startedAt = new Date(endedAt.getTime() - elapsed * 1000);
+      const notesWithPhotoCount = photos.length > 0
+        ? [notes.trim(), `Captured photos locally: ${photos.length}`].filter(Boolean).join('\n')
+        : notes.trim();
+
+      const logTimeResponse = await fetch(`${config.apiUrl}/orders/${activeJob.id}/time`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          orderId: activeJob.id,
-          durationSeconds: elapsed,
-          notes,
-          photoCount: photos.length,
-          userId: user?.id,
+          station: 'INSTALLATION',
+          startTime: startedAt.toISOString(),
+          endTime: endedAt.toISOString(),
+          notes: notesWithPhotoCount || null,
         }),
       });
+      await ensureOk(logTimeResponse);
       toast.success(`Session logged: ${formatTime(elapsed)}`);
     } catch {
       toast.error('Failed to save session — will retry when online');
@@ -225,17 +229,20 @@ export function InstallationStation() {
     if (!window.confirm(`Mark ${orderNumber} installation complete?`)) return;
     try {
       // Mark INSTALLATION station completed
-      await fetch(`${config.apiUrl}/orders/${orderId}/station-progress`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ station: 'INSTALLATION', status: 'COMPLETED' }),
-      });
+      const completeStationResponse = await fetch(
+        `${config.apiUrl}/orders/${orderId}/stations/INSTALLATION/complete`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      await ensureOk(completeStationResponse);
       // Mark order complete
       const res = await fetch(`${config.apiUrl}/orders/${orderId}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error(`API ${res.status}`);
+      await ensureOk(res);
       toast.success(`${orderNumber} installation complete`);
       setActiveJob(null);
       fetchJobs();

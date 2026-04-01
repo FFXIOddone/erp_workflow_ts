@@ -12,7 +12,15 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
-    dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom', '@tanstack/react-query', '@tanstack/react-virtual', 'zustand'],
+    dedupe: [
+      'react',
+      'react-dom',
+      'react-router',
+      'react-router-dom',
+      '@tanstack/react-query',
+      '@tanstack/react-virtual',
+      'zustand',
+    ],
   },
   optimizeDeps: {
     include: [
@@ -36,7 +44,9 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true, // Expose to all network interfaces (0.0.0.0)
-    allowedHosts: ['localhost', '.ngrok-free.dev', '.ngrok.io', '.loca.lt'],
+    // Allow LAN devices (including the shop Mac) to hit the dev server by
+    // hostname or IP instead of only localhost/tunnel domains.
+    allowedHosts: true,
     fs: {
       // Allow serving deps from temp cache dir outside workspace
       strict: false,
@@ -50,6 +60,10 @@ export default defineConfig({
         target: 'ws://127.0.0.1:8001',
         ws: true,
       },
+      '/shop-floor': {
+        target: 'http://127.0.0.1:8001',
+        changeOrigin: true,
+      },
     },
   },
   build: {
@@ -58,8 +72,13 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-query': ['@tanstack/react-query', '@tanstack/react-virtual'],
+          'vendor-react': [
+            'react',
+            'react-dom',
+            'react-router-dom',
+            '@tanstack/react-query',
+            '@tanstack/react-virtual',
+          ],
           'vendor-ui': ['lucide-react', 'react-hot-toast', 'clsx', 'tailwind-merge'],
           'vendor-utils': ['axios', 'date-fns', 'zustand', 'zod'],
           // framer-motion excluded from vendor chunks — lazy-loaded with pages that use it

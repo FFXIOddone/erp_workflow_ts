@@ -11,6 +11,26 @@ cd ..\..
 :: Create logs directory
 if not exist "logs" mkdir logs
 
+:: Install dependencies if this workspace has not been bootstrapped yet
+if not exist "node_modules" (
+    echo Installing dependencies...
+    call pnpm install
+    if errorlevel 1 (
+        echo ERROR: Dependency install failed.
+        pause
+        exit /b 1
+    )
+)
+
+:: Ensure native addons match the active Node runtime before starting PM2
+echo Checking native modules...
+node packages\server\scripts\ensure-better-sqlite3.mjs
+if errorlevel 1 (
+    echo ERROR: better-sqlite3 preflight failed for the active Node runtime.
+    pause
+    exit /b 1
+)
+
 :: Check if Docker/PostgreSQL is running
 echo Checking PostgreSQL...
 docker compose ps --services --filter "status=running" 2>nul | findstr "db" >nul

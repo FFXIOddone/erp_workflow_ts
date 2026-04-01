@@ -2,7 +2,7 @@
 // When running in browser (not Tauri), provides no-op fallbacks
 
 function isTauri(): boolean {
-  return !!(window as any).__TAURI_INTERNALS__;
+  return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__;
 }
 
 export async function invoke<T = any>(

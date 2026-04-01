@@ -454,7 +454,9 @@ export function buildAlertEmailHtml(
  * scheduled minute AND the current day-of-week matches AND the rule
  * hasn't already sent today → evaluate and send.
  */
-export async function processEquipmentWatchRules(): Promise<{ evaluated: number; sent: number }> {
+let equipmentWatchRulesPromise: Promise<{ evaluated: number; sent: number }> | null = null;
+
+async function processEquipmentWatchRulesInternal(): Promise<{ evaluated: number; sent: number }> {
   const now = new Date();
   const currentHH = String(now.getHours()).padStart(2, '0');
   const currentMM = String(now.getMinutes()).padStart(2, '0');
@@ -593,6 +595,18 @@ export async function processEquipmentWatchRules(): Promise<{ evaluated: number;
   }
 
   return { evaluated, sent };
+}
+
+export async function processEquipmentWatchRules(): Promise<{ evaluated: number; sent: number }> {
+  if (equipmentWatchRulesPromise) {
+    return equipmentWatchRulesPromise;
+  }
+
+  equipmentWatchRulesPromise = processEquipmentWatchRulesInternal().finally(() => {
+    equipmentWatchRulesPromise = null;
+  });
+
+  return equipmentWatchRulesPromise;
 }
 
 /**

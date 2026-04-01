@@ -158,14 +158,17 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
   return (
     <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6">
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <Truck className="h-5 w-5 text-primary-600" />
-          <h2 className="text-lg font-semibold text-gray-900">Shipping</h2>
+        <div className="flex items-start gap-2">
+          <Truck className="mt-0.5 h-5 w-5 text-primary-600" />
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Shipping</h2>
+            <p className="text-xs text-gray-500">Order #{orderNumber}</p>
+          </div>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
           className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-primary-600 transition-colors"
-          title="Create Shipment"
+          title={`Create shipment for order #${orderNumber}`}
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -176,7 +179,9 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
           <div className="animate-spin h-6 w-6 border-2 border-primary-500 border-t-transparent rounded-full mx-auto"></div>
         </div>
       ) : shipments?.length === 0 ? (
-        <p className="text-sm text-gray-500 text-center py-4">No shipments yet</p>
+        <p className="text-sm text-gray-500 text-center py-4">
+          No shipments linked to this order yet
+        </p>
       ) : (
         <div className="space-y-3">
           {shipments?.map((shipment) => {
@@ -249,6 +254,18 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
                         {shipment.packages.length > 1 ? 's' : ''}
                       </div>
                     )}
+
+                    {shipment.createdBy?.displayName && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        Created by {shipment.createdBy.displayName}
+                      </div>
+                    )}
+
+                    {shipment.notes && (
+                      <div className="text-xs text-gray-600 mt-1">
+                        Notes: {shipment.notes}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex flex-col items-end gap-2">
@@ -279,7 +296,7 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
           />
           <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Create Shipment</h3>
+              <h3 className="text-lg font-semibold">Create shipment for order #{orderNumber}</h3>
               <button
                 onClick={() => setShowCreateModal(false)}
                 className="p-1 rounded hover:bg-gray-100"

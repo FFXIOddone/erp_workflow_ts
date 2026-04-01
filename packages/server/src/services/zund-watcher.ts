@@ -18,8 +18,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { XMLParser } from 'fast-xml-parser';
 import { prisma } from '../db/client.js';
-import { extractCutId, normalizeJobName } from './zund-match.js';
-import { findThriveJobByCutId, parseJobInfo, type ThriveJobLogEntry } from './thrive.js';
+import { extractCutId } from './zund-match.js';
+import { findThriveJobByCutId, parseJobInfo } from './thrive.js';
 import { getAllFieryJobs, type FieryJob } from './fiery.js';
 import { logChainEvent, createPrintCutLink } from './file-chain.js';
 import { broadcast } from '../ws/server.js';
@@ -68,6 +68,7 @@ function parseZccHeader(content: string): ZccMetadata {
 const seenFiles = new Set<string>();
 let initialised = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollInFlight: Promise<void> | null = null;
 
 // ─── Core Pipeline ─────────────────────────────────────
 
@@ -130,7 +131,7 @@ async function processNewZccFile(fileName: string, fullPath: string): Promise<st
       matchedPrintJob = {
         source: 'THRIVE',
         jobName: thriveEntry.fileName,
-        filePath: thriveEntry.customizedName || thriveEntry.fileName,
+        filePath: thriveEntry.sourceFilePath || thriveEntry.fileName || thriveEntry.customizedName,
         printer: thriveEntry.printer,
       };
     }
@@ -369,6 +370,18 @@ async function pollOnce(): Promise<void> {
   }
 }
 
+async function pollIfIdle(): Promise<void> {
+  if (pollInFlight) {
+    return pollInFlight;
+  }
+
+  pollInFlight = pollOnce().finally(() => {
+    pollInFlight = null;
+  });
+
+  return pollInFlight;
+}
+
 // ─── Public API ────────────────────────────────────────
 
 /**
@@ -382,10 +395,10 @@ export function startZundWatcher(intervalMs = POLL_INTERVAL_MS): void {
   }
 
   // First poll immediately (async, fire-and-forget)
-  pollOnce().catch(err => console.error('Zund watcher init error:', err));
+  pollIfIdle().catch(err => console.error('Zund watcher init error:', err));
 
   pollTimer = setInterval(() => {
-    pollOnce().catch(err => console.error('Zund watcher poll error:', err));
+    pollIfIdle().catch(err => console.error('Zund watcher poll error:', err));
   }, intervalMs);
 
   console.log(`👁️  Zund queue watcher started (poll every ${intervalMs / 1000}s)`);

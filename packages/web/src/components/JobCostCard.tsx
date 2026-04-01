@@ -38,7 +38,7 @@ interface JobCost {
   totalCost: number;
   grossProfit: number;
   grossMargin: number;
-  calculatedAt: string;
+  calculatedAt?: string | null;
 }
 
 interface JobCostCardProps {
@@ -73,6 +73,19 @@ function toNumber(value: any): number {
 function formatHours(value: any): string {
   const num = toNumber(value);
   return `${num.toFixed(1)} hrs`;
+}
+
+function formatCalculatedAt(value: string | null | undefined): string {
+  if (!value) {
+    return 'Pending first saved calculation';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Pending first saved calculation';
+  }
+
+  return parsed.toLocaleString();
 }
 
 export function JobCostCard({ workOrderId, orderNumber }: JobCostCardProps) {
@@ -462,7 +475,7 @@ export function JobCostCard({ workOrderId, orderNumber }: JobCostCardProps) {
           {/* Last Calculated */}
           <p className="text-xs text-gray-400 pt-2 border-t border-gray-100">
             Last calculated:{' '}
-            {new Date(jobCost.calculatedAt).toLocaleString()}
+            {formatCalculatedAt(jobCost.calculatedAt)}
           </p>
         </div>
       )}

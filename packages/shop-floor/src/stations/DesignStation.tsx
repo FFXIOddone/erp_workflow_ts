@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Palette,
   FolderOpen,
@@ -13,16 +13,30 @@ import {
   ThumbsUp,
 } from 'lucide-react';
 import { invoke } from '../lib/tauri-bridge';
+import { openExternalPath, resolveOrderFolderPath } from '../lib/order-files';
 import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import { useWebSocket } from '../lib/useWebSocket';
 import toast from 'react-hot-toast';
+import { inferRoutingFromOrderDetails, isDesignOnlyOrder, stripOrderCategoryTags } from '@erp/shared';
 
 interface ProofInfo {
   id: string;
   revision: number;
   status: string;
   requestedAt: string;
+}
+
+interface RevisionRequest {
+  id: string;
+  reason: string;
+  notes?: string | null;
+  status: string;
+  createdAt: string;
+  requestedBy?: {
+    id: string;
+    displayName: string;
+  } | null;
 }
 
 interface DesignOrder {
@@ -32,11 +46,28 @@ interface DesignOrder {
   description: string;
   status: string;
   dueDate: string;
+  notes?: string | null;
+  routing?: string[];
   stationProgress?: Array<{
     station: string;
     status: string;
   }>;
   proofApprovals?: ProofInfo[];
+  revisionRequests?: RevisionRequest[];
+}
+
+interface DesignOrderDetails extends DesignOrder {
+  companyId?: string | null;
+  contactId?: string | null;
+  customerId?: string | null;
+  priority?: number;
+  companyBrand?: string;
+  lineItems?: Array<{
+    itemMasterId?: string | null;
+    description?: string;
+    quantity?: number | string;
+    unitPrice?: number | string;
+  }>;
 }
 
 export function DesignStation() {
@@ -52,16 +83,17 @@ export function DesignStation() {
 
   // WebSocket for real-time alerts
   const { subscribe } = useWebSocket();
+  const fetchOrdersRef = useRef<() => void | Promise<void>>(() => {});
 
   useEffect(() => {
     const unsub = subscribe((msg) => {
       if (msg.type === 'ORDER_CREATED') {
         const p = msg.payload as any;
         toast.success(`New order: ${p.orderNumber} — ${p.customerName}`, { duration: 5000 });
-        fetchOrders();
+        void fetchOrdersRef.current();
       }
       if (msg.type === 'PROOF_STATUS_CHANGED' || msg.type === 'REVISION_REQUESTED') {
-        fetchOrders();
+        void fetchOrdersRef.current();
       }
     });
     return unsub;
@@ -71,7 +103,7 @@ export function DesignStation() {
     if (!token) return;
     try {
       const res = await fetch(
-        `${config.apiUrl}/orders?status=IN_PROGRESS,PENDING&limit=100`,
+        `${config.apiUrl}/orders?status=IN_PROGRESS,PENDING&limit=100&includeRevisionRequests=true`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (!res.ok) throw new Error(`API ${res.status}`);
@@ -81,20 +113,11 @@ export function DesignStation() {
       setOrders(orderList);
       setError(null);
 
-      // Fetch revisions for displayed orders
-      const revMap: Record<string, any[]> = {};
-      for (const order of orderList.slice(0, 20)) {
-        try {
-          const revRes = await fetch(
-            `${config.apiUrl}/orders/${order.id}/revision-requests`,
-            { headers: { Authorization: `Bearer ${token}` } },
-          );
-          if (revRes.ok) {
-            const revJson = await revRes.json();
-            const pending = (revJson.data || []).filter((r: any) => r.status === 'PENDING' || r.status === 'IN_PROGRESS');
-            if (pending.length > 0) revMap[order.id] = pending;
-          }
-        } catch {}
+      const revMap: Record<string, RevisionRequest[]> = {};
+      for (const order of orderList) {
+        if (order.revisionRequests && order.revisionRequests.length > 0) {
+          revMap[order.id] = order.revisionRequests;
+        }
       }
       setRevisions(revMap);
     } catch (err: any) {
@@ -103,6 +126,7 @@ export function DesignStation() {
       setLoading(false);
     }
   }, [config.apiUrl, token]);
+  fetchOrdersRef.current = fetchOrders;
 
   useEffect(() => {
     fetchOrders();
@@ -110,33 +134,28 @@ export function DesignStation() {
     return () => clearInterval(t);
   }, [fetchOrders]);
 
-  const handleOpenFolder = async (orderNumber: string, customerName: string) => {
+  const handleOpenFolder = async (order: DesignOrder) => {
     try {
-      // Mac support: use macNetworkDrivePath if on macOS
-      let basePath = config.networkDrivePath || '\\\\wildesigns-fs1\\Company Files';
 
-      // Detect OS via Tauri and swap path for Mac
-      try {
-        const os = await invoke<string>('get_os');
-        if (os === 'macos' && config.macNetworkDrivePath) {
-          basePath = config.macNetworkDrivePath;
-        }
-      } catch {
         // Not in Tauri or command unavailable — use default
+      const resolved = await resolveOrderFolderPath(order.id);
+      if (!resolved.configured) {
+        toast.error('Network drive path is not configured in ERP settings');
+        return;
+      }
+      if (!resolved.folderPath || resolved.exists === false) {
+        toast.error('Folder not found on network');
+        return;
       }
 
-      const folder = await invoke('find_wo_folder', {
-        basePath,
-        woNumber: orderNumber.replace(/^WO-/, ''),
-        customerName,
-      });
-      if (folder) {
-        await invoke('open_folder', { path: folder });
+      const result = await openExternalPath(resolved.folderPath, 'folder');
+      if (result === 'opened') {
+        toast.success('Order folder opened');
       } else {
-        toast.error('Folder not found on network');
+        toast.success('Order folder path copied');
       }
-    } catch {
-      toast.error('Failed to open folder');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to open folder');
     }
   };
 
@@ -158,14 +177,10 @@ export function DesignStation() {
       const fileType = isEmail ? 'EMAIL' : 'ARTWORK';
 
       try {
-        const basePath = config.networkDrivePath || '\\\\wildesigns-fs1\\Company Files';
-        const folder = await invoke('find_wo_folder', {
-          basePath,
-          woNumber: order.orderNumber.replace(/^WO-/, ''),
-          customerName: order.customerName,
-        });
+        const resolved = await resolveOrderFolderPath(order.id);
+        const folder = resolved.folderPath;
 
-        if (folder) {
+        if (resolved.configured && folder && resolved.exists !== false) {
           await invoke('send_to_hotfolder', { filePath, hotfolderPath: folder });
 
           try {
@@ -185,11 +200,13 @@ export function DesignStation() {
           } catch {}
 
           toast.success(`${file.name} ${isEmail ? 'attached' : 'copied'} to ${order.orderNumber}`);
+        } else if (!resolved.configured) {
+          toast.error('Network drive path is not configured in ERP settings');
         } else {
           toast.error('Work order folder not found');
         }
-      } catch {
-        toast.error(`Failed to copy ${file.name}`);
+      } catch (err: any) {
+        toast.error(err?.message || `Failed to copy ${file.name}`);
       }
     }
   };
@@ -204,7 +221,6 @@ export function DesignStation() {
       });
       if (!res.ok) throw new Error(`API ${res.status}`);
       toast.success(`Proof sent for ${orderNumber}`);
-      fetchOrders();
     } catch {
       toast.error('Failed to update proof status');
     }
@@ -219,25 +235,91 @@ export function DesignStation() {
       });
       if (!res.ok) throw new Error(`API ${res.status}`);
       toast.success(`Proof approved for ${orderNumber}`);
-      fetchOrders();
     } catch {
       toast.error('Failed to update proof status');
     }
   };
 
-  const handleDesignComplete = async (orderId: string, orderNumber: string) => {
-    if (!window.confirm(`Mark design complete for ${orderNumber}? This moves it to Printing.`)) return;
+  const createFollowOnOrder = async (orderId: string): Promise<string> => {
+    const sourceRes = await fetch(`${config.apiUrl}/orders/${orderId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!sourceRes.ok) throw new Error(`Failed to load source order (${sourceRes.status})`);
+
+    const sourceJson = await sourceRes.json();
+    const source = sourceJson.data as DesignOrderDetails;
+    if (!source?.companyId) {
+      throw new Error('Cannot create a follow-on order because the original order has no company.');
+    }
+
+    const description =
+      stripOrderCategoryTags(source.description || '').trim() || `Follow-up for ${source.orderNumber}`;
+    const routing = inferRoutingFromOrderDetails({
+      description,
+      notes: source.notes,
+    }).filter((station) => station !== 'DESIGN');
+    const lineItems = (source.lineItems || [])
+      .map((item) => ({
+        itemMasterId: item.itemMasterId || undefined,
+        description: item.description || 'Item',
+        quantity: Math.max(1, Math.round(Number(item.quantity) || 1)),
+        unitPrice: Math.max(0, Number(item.unitPrice) || 0),
+      }))
+      .filter((item) => Boolean(item.itemMasterId));
+
+    const followOnNote = `Follow-up order created from design-only order ${source.orderNumber}.`;
+    const createRes = await fetch(`${config.apiUrl}/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        customerName: source.customerName,
+        customerId: source.customerId || undefined,
+        companyId: source.companyId,
+        contactId: source.contactId || undefined,
+        description,
+        priority: source.priority ?? 3,
+        companyBrand: source.companyBrand ?? 'WILDE_SIGNS',
+        dueDate: source.dueDate || null,
+        notes: source.notes ? `${source.notes}\n\n${followOnNote}` : followOnNote,
+        routing,
+        lineItems,
+      }),
+    });
+    if (!createRes.ok) {
+      const errorBody = await createRes.json().catch(() => ({}));
+      throw new Error(errorBody.error || errorBody.message || `Failed to create follow-on order (${createRes.status})`);
+    }
+
+    const createdJson = await createRes.json();
+    return createdJson.data?.orderNumber || 'new order';
+  };
+
+  const handleDesignComplete = async (order: DesignOrder) => {
+    const designOnly = isDesignOnlyOrder({ description: order.description, routing: order.routing ?? [] });
+    const confirmationMessage = designOnly
+      ? `Mark design complete for ${order.orderNumber}? This will close the design-only order.`
+      : `Mark design complete for ${order.orderNumber}? This moves it to the next station.`;
+    if (!window.confirm(confirmationMessage)) return;
+
     try {
-      const res = await fetch(`${config.apiUrl}/orders/${orderId}/proof-status`, {
+      const res = await fetch(`${config.apiUrl}/orders/${order.id}/proof-status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status: 'COMPLETED' }),
       });
       if (!res.ok) throw new Error(`API ${res.status}`);
-      toast.success(`${orderNumber} design complete — moved to Printing`);
-      fetchOrders();
-    } catch {
-      toast.error('Failed to complete design');
+
+      if (designOnly) {
+        toast.success(`${order.orderNumber} design complete`);
+        if (window.confirm(`Create a new work order from ${order.orderNumber} now?`)) {
+          const newOrderNumber = await createFollowOnOrder(order.id);
+          toast.success(`Created ${newOrderNumber} from ${order.orderNumber}`);
+        }
+      } else {
+        toast.success(`${order.orderNumber} design complete - moved to the next station`);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to complete design');
     }
   };
 
@@ -364,7 +446,7 @@ export function DesignStation() {
 
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleOpenFolder(order.orderNumber, order.customerName); }}
+                    onClick={(e) => { e.stopPropagation(); handleOpenFolder(order); }}
                     className="flex items-center gap-1 px-2.5 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
                     title="Open network folder"
                   >
@@ -387,7 +469,7 @@ export function DesignStation() {
                     Approved
                   </button>
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleDesignComplete(order.id, order.orderNumber); }}
+                    onClick={(e) => { e.stopPropagation(); handleDesignComplete(order); }}
                     className="flex items-center gap-1 px-2.5 py-1.5 text-sm text-green-600 hover:bg-green-50 rounded-lg"
                     title="Design complete — send to Printing"
                   >
@@ -419,7 +501,6 @@ export function DesignStation() {
                             );
                             if (!res.ok) throw new Error();
                             toast.success('Revision resolved');
-                            fetchOrders();
                           } catch {
                             toast.error('Failed to resolve revision');
                           }
@@ -449,3 +530,4 @@ export function DesignStation() {
     </div>
   );
 }
+

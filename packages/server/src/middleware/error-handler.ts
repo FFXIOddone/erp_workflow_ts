@@ -40,7 +40,12 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  console.error('Error:', err);
+  const statusCode = err.statusCode ?? 500;
+  const isRoutineClientError = statusCode >= 400 && statusCode < 500;
+
+  if (!isRoutineClientError) {
+    console.error('Error:', err);
+  }
 
   // Zod validation errors
   if (err instanceof ZodError) {
@@ -94,7 +99,6 @@ export function errorHandler(
   }
 
   // Custom API errors
-  const statusCode = err.statusCode ?? 500;
   logErrorToFile(_req, statusCode, err.message ?? 'Internal Server Error', err.details);
   res.status(statusCode).json({
     success: false,

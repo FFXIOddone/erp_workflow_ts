@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import * as fs from 'fs';
 import { prisma } from '../db/client.js';
 import { PrintingMethod } from '@erp/shared';
+import { resolveImportedRouting } from '../lib/routing-defaults.js';
 
 // ─── Types ─────────────────────────────────────────────────────
 export interface SpreadsheetRow {
@@ -35,6 +36,12 @@ export interface ImportRowResult {
   status: 'imported' | 'updated' | 'skipped' | 'error';
   reason?: string;
 }
+
+const PRINTING_STATIONS = new Set<PrintingMethod>([
+  PrintingMethod.ROLL_TO_ROLL,
+  PrintingMethod.FLATBED,
+  PrintingMethod.SCREEN_PRINT,
+]);
 
 // ─── Section/header detection ──────────────────────────────────
 const SECTION_HEADERS = [
@@ -136,6 +143,35 @@ function determineStatus(row: SpreadsheetRow): string {
 
   // Default: PENDING
   return 'PENDING';
+}
+
+function resolveSpreadsheetRowRouting(row: SpreadsheetRow): PrintingMethod[] {
+  return resolveImportedRouting({
+    routing: row.routing,
+    description: row.description,
+    section: row.section,
+    needsProof: Boolean(row.proofedDate || row.approvedDate || row.printSetupDate),
+  });
+}
+
+function getImportedStationStatus(
+  row: SpreadsheetRow,
+  station: PrintingMethod,
+  overallStatus: string,
+): 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' {
+  if (overallStatus === 'COMPLETED') {
+    return 'COMPLETED';
+  }
+
+  if (row.printSetupDate && PRINTING_STATIONS.has(station)) {
+    return 'IN_PROGRESS';
+  }
+
+  if ((row.proofedDate || row.approvedDate || row.printSetupDate) && station === PrintingMethod.DESIGN) {
+    return 'COMPLETED';
+  }
+
+  return 'NOT_STARTED';
 }
 
 // ─── WO number validation ──────────────────────────────────────
@@ -293,6 +329,8 @@ export async function importSpreadsheetOrders(
 
   for (const row of rows) {
     const existing = existingOrderMap.get(row.orderNumber);
+    const spreadsheetStatus = determineStatus(row);
+    const resolvedRouting = resolveSpreadsheetRowRouting(row);
 
     // ──── UPDATE existing order if it's missing data ────
     if (existing) {
@@ -326,14 +364,21 @@ export async function importSpreadsheetOrders(
           updatedFields.push('notes');
         }
 
-        // Update routing if empty
-        if ((!existing.routing || existing.routing.length === 0) && row.routing.length > 0) {
-          updateData.routing = row.routing;
-          updatedFields.push('routing');
+        // Heal incomplete routing without removing any stations already on the order.
+        const existingRouting = ((existing.routing as PrintingMethod[]) || []);
+        const mergedRouting = resolveImportedRouting({
+          routing: Array.from(new Set([...existingRouting, ...resolvedRouting])),
+          description: row.description || existing.description,
+          section: row.section,
+          needsProof: Boolean(row.proofedDate || row.approvedDate || row.printSetupDate),
+        });
+        const missingRouting = mergedRouting.filter(station => !existingRouting.includes(station));
+        if (missingRouting.length > 0) {
+          updateData.routing = mergedRouting;
+          updatedFields.push(`routing(+${missingRouting.join(', ')})`);
         }
 
         // Update status if currently PENDING and spreadsheet shows further progress
-        const spreadsheetStatus = determineStatus(row);
         if (existing.status === 'PENDING' && spreadsheetStatus !== 'PENDING') {
           updateData.status = spreadsheetStatus;
           updatedFields.push(`status→${spreadsheetStatus}`);
@@ -405,8 +450,7 @@ export async function importSpreadsheetOrders(
               data: newStations.map((station: PrintingMethod) => ({
                 orderId: existing.id,
                 station,
-                status: spreadsheetStatus === 'COMPLETED' ? 'COMPLETED' :
-                       (row.printSetupDate ? 'IN_PROGRESS' : 'NOT_STARTED'),
+                status: getImportedStationStatus(row, station, spreadsheetStatus),
               })),
             });
           }
@@ -441,14 +485,14 @@ export async function importSpreadsheetOrders(
         orderNumber: row.orderNumber,
         customerName: row.customerName,
         status: 'imported',
-        reason: `Would import as ${determineStatus(row)}`,
+        reason: `Would import as ${spreadsheetStatus}`,
       });
-      existingOrderMap.set(row.orderNumber, { id: '', orderNumber: row.orderNumber, customerName: row.customerName, description: row.description, status: 'PENDING' as const, dueDate: row.dueDate, notes: row.notes, routing: row.routing, companyId: null });
+      existingOrderMap.set(row.orderNumber, { id: '', orderNumber: row.orderNumber, customerName: row.customerName, description: row.description, status: 'PENDING' as const, dueDate: row.dueDate, notes: row.notes, routing: resolvedRouting, companyId: null });
       continue;
     }
 
     try {
-      const status = determineStatus(row);
+      const status = spreadsheetStatus;
       const matchedCompany = findMatchingCompany(row.customerName);
 
       await prisma.workOrder.create({
@@ -461,16 +505,15 @@ export async function importSpreadsheetOrders(
           companyBrand: 'WILDE_SIGNS',
           dueDate: row.dueDate,
           notes: row.notes,
-          routing: row.routing,
+          routing: resolvedRouting,
           createdById: userId,
           isTempOrder: false, // Imported from spreadsheet, these are real orders
           createdAt: row.createdDate || new Date(),
           ...(matchedCompany ? { companyId: matchedCompany.id } : {}),
           stationProgress: {
-            create: row.routing.map((station) => ({
+            create: resolvedRouting.map((station) => ({
               station,
-              status: status === 'COMPLETED' ? 'COMPLETED' : 
-                     (row.printSetupDate ? 'IN_PROGRESS' : 'NOT_STARTED'),
+              status: getImportedStationStatus(row, station, status),
             })),
           },
           events: {
@@ -484,7 +527,7 @@ export async function importSpreadsheetOrders(
       });
 
       result.imported++;
-      existingOrderMap.set(row.orderNumber, { id: '', orderNumber: row.orderNumber, customerName: row.customerName, description: row.description, status: 'PENDING' as const, dueDate: row.dueDate, notes: row.notes, routing: row.routing, companyId: matchedCompany?.id ?? null });
+      existingOrderMap.set(row.orderNumber, { id: '', orderNumber: row.orderNumber, customerName: row.customerName, description: row.description, status: 'PENDING' as const, dueDate: row.dueDate, notes: row.notes, routing: resolvedRouting, companyId: matchedCompany?.id ?? null });
       result.details.push({
         rowNumber: row.rowNumber,
         orderNumber: row.orderNumber,

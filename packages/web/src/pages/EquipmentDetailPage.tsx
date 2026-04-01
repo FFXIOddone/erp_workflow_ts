@@ -2391,10 +2391,12 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
                                     <span className="ml-1 text-gray-700">{fieryJob.dimensions.widthIn.toFixed(1)}" × {fieryJob.dimensions.heightIn.toFixed(1)}"</span>
                                   </div>
                                 )}
-                                {fieryJob?.media?.description && (
+                                {(fieryJob?.media?.vutekMedia || fieryJob?.media?.description) && (
                                   <div>
                                     <span className="text-gray-400">Media:</span>
-                                    <span className="ml-1 text-gray-700">{fieryJob.media.description}</span>
+                                    <span className="ml-1 text-gray-700">
+                                      {fieryJob.media.vutekMedia || fieryJob.media.description}
+                                    </span>
                                   </div>
                                 )}
                                 {fieryJob?.media?.brand && (
@@ -2521,8 +2523,8 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
                   {fieryJobs.map((job: any, idx: number) => {
                     const isExpanded = expandedJob === `fiery-${idx}`;
                     const dims = job.dimensions;
-                    const widthIn = dims ? (dims.width / 72).toFixed(1) : null;
-                    const heightIn = dims ? (dims.height / 72).toFixed(1) : null;
+                    const widthIn = dims?.widthIn;
+                    const heightIn = dims?.heightIn;
 
                     return (
                       <React.Fragment key={job.jobId || idx}>
@@ -2569,9 +2571,9 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
                             {job.timestamp ? fmtDate(job.timestamp) : '—'}
                           </td>
                           <td className="py-2 pr-3">
-                            {job.media?.description ? (
-                              <div className="text-xs text-gray-700 truncate max-w-[140px]" title={`${job.media.brand || ''} ${job.media.description}`}>
-                                {job.media.description}
+                            {(job.media?.vutekMedia || job.media?.description) ? (
+                              <div className="text-xs text-gray-700 truncate max-w-[140px]" title={job.media.vutekMedia || job.media.description}>
+                                {job.media.vutekMedia || job.media.description}
                               </div>
                             ) : (
                               <span className="text-xs text-gray-300">—</span>
@@ -2582,33 +2584,25 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
                           </td>
                           <td className="py-2 pr-3">
                             {job.hasZccCutFile ? (
-                              job.workOrder ? (
-                                <button
-                                  onClick={(e) => navigateToOrderZund(job.workOrder.orderNumber, e)}
-                                  className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 px-2 py-0.5 rounded font-medium hover:bg-green-100 transition-all"
-                                  title={job.zccFileName || 'ZCC cut file'}
-                                >
-                                  <Scissors className="h-3 w-3" /> ZCC
-                                </button>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 px-2 py-0.5 rounded font-medium">
-                                  <Scissors className="h-3 w-3" /> ZCC
-                                </span>
-                              )
+                              <span
+                                className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 px-2 py-0.5 rounded font-medium cursor-help"
+                                title={job.zccFileName || 'ZCC cut file'}
+                              >
+                                <Scissors className="h-3 w-3" /> {job.zccFileName || 'ZCC'}
+                              </span>
                             ) : (
                               <span className="text-xs text-gray-300">—</span>
                             )}
                           </td>
                           <td className="py-2 pr-3">
-                            {job.linkConfidence && job.linkConfidence !== 'none' && (
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                                job.linkConfidence === 'high' ? 'bg-green-100 text-green-700'
-                                : job.linkConfidence === 'medium' ? 'bg-yellow-100 text-yellow-700'
-                                : 'bg-gray-100 text-gray-600'
-                              }`}>
-                                {job.linkConfidence}
-                              </span>
-                            )}
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                              job.linkConfidence === 'high' ? 'bg-green-100 text-green-700'
+                              : job.linkConfidence === 'medium' ? 'bg-yellow-100 text-yellow-700'
+                              : job.linkConfidence === 'low' ? 'bg-orange-100 text-orange-700'
+                              : 'bg-gray-100 text-gray-400'
+                            }`}>
+                              {job.linkConfidence || 'none'}
+                            </span>
                           </td>
                           <td className="py-2 w-8 text-gray-400">
                             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -2618,27 +2612,15 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
                           <tr>
                             <td colSpan={8} className="px-4 py-3 bg-gray-50 border-l-4 border-indigo-300">
                               <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mb-3">
-                                {job.media?.brand && (
+                                {job.media?.vutekMedia && (
                                   <div>
-                                    <span className="text-gray-400">Media Brand:</span>
-                                    <span className="ml-1 text-gray-700">{job.media.brand}</span>
-                                  </div>
-                                )}
-                                {job.media?.description && (
-                                  <div>
-                                    <span className="text-gray-400">Media:</span>
-                                    <span className="ml-1 text-gray-700">{job.media.description}</span>
-                                  </div>
-                                )}
-                                {job.media?.type && (
-                                  <div>
-                                    <span className="text-gray-400">Media Type:</span>
-                                    <span className="ml-1 text-gray-700">{job.media.type}</span>
+                                    <span className="text-gray-400">VUTEk Media:</span>
+                                    <span className="ml-1 text-gray-700 font-medium">{job.media.vutekMedia}</span>
                                   </div>
                                 )}
                                 {widthIn && heightIn && (
                                   <div>
-                                    <span className="text-gray-400">Sheet Size:</span>
+                                    <span className="text-gray-400">Piece Size:</span>
                                     <span className="ml-1 text-gray-700">{widthIn}" × {heightIn}"</span>
                                   </div>
                                 )}
@@ -2656,7 +2638,7 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
                                 )}
                                 {job.thriveFilePath && (
                                   <div className="col-span-2">
-                                    <span className="text-gray-400">Thrive Path:</span>
+                                    <span className="text-gray-400">File Path:</span>
                                     <span className="ml-1 text-gray-700 font-mono text-[11px]">{job.thriveFilePath}</span>
                                   </div>
                                 )}

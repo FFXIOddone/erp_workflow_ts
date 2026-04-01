@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { 
+import {
   Search,
   Package,
   Users,
@@ -21,6 +21,7 @@ import {
   Command
 } from 'lucide-react';
 import { api } from '../lib/api';
+import { useDebounce } from '../hooks/useDebounce';
 
 interface QuickAction {
   id: string;
@@ -35,10 +36,19 @@ interface QuickAction {
 
 interface SearchResult {
   id: string;
-  type: 'order' | 'customer' | 'quote';
+  type: 'order' | 'customer' | 'quote' | 'inventory';
   label: string;
   description: string;
   path: string;
+}
+
+interface QuickSearchApiResult {
+  id: string;
+  entityType: 'workorder' | 'customer' | 'quote' | 'inventory';
+  title: string;
+  subtitle?: string;
+  description?: string;
+  url: string;
 }
 
 interface QuickActionsModalProps {
@@ -54,7 +64,7 @@ const QUICK_ACTIONS: QuickAction[] = [
   { id: 'nav-customers', label: 'Customers', icon: <Users className="h-5 w-5" />, category: 'navigation', path: '/customers', keywords: ['clients'] },
   { id: 'nav-quotes', label: 'Quotes', icon: <FileText className="h-5 w-5" />, category: 'navigation', path: '/quotes', keywords: ['estimates', 'proposals'] },
   { id: 'nav-calendar', label: 'Calendar', icon: <Calendar className="h-5 w-5" />, category: 'navigation', path: '/calendar', keywords: ['schedule'] },
-  { id: 'nav-print-queue', label: 'Print Queue', icon: <Printer className="h-5 w-5" />, category: 'navigation', path: '/print-queue', keywords: ['production'] },
+  { id: 'nav-print-queue', label: 'Print Queue', icon: <Printer className="h-5 w-5" />, category: 'navigation', path: '/rip-queue', keywords: ['production'] },
   { id: 'nav-installer', label: 'Installer Scheduling', icon: <Map className="h-5 w-5" />, category: 'navigation', path: '/installer-scheduling', keywords: ['dispatch', 'installation'] },
   { id: 'nav-reports', label: 'Reports', icon: <FileBarChart className="h-5 w-5" />, category: 'navigation', path: '/reports', keywords: ['analytics'] },
   { id: 'nav-activity', label: 'Activity Log', icon: <Activity className="h-5 w-5" />, category: 'navigation', path: '/activity', keywords: ['history', 'audit'] },
@@ -72,52 +82,29 @@ export function QuickActionsModal({ isOpen, onClose }: QuickActionsModalProps) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const debouncedQuery = useDebounce(query, 300);
   
   // Fetch search results when query has 2+ chars
-  const { data: searchResults = [] } = useQuery({
-    queryKey: ['quick-search', query],
+  const { data: searchResults = [] } = useQuery<SearchResult[]>({
+    queryKey: ['quick-search', debouncedQuery],
     queryFn: async () => {
-      const [ordersRes, customersRes, quotesRes] = await Promise.all([
-        api.get('/orders', { params: { search: query, pageSize: 3 } }),
-        api.get('/customers', { params: { search: query, pageSize: 3 } }),
-        api.get('/quotes', { params: { search: query, pageSize: 3 } }),
-      ]);
-      
-      const results: SearchResult[] = [];
-      
-      ordersRes.data.data.items?.forEach((o: any) => {
-        results.push({
-          id: `order-${o.id}`,
-          type: 'order',
-          label: o.orderNumber,
-          description: o.customerName,
-          path: `/orders/${o.id}`,
-        });
+      const response = await api.get('/search/quick', {
+        params: { q: debouncedQuery, limit: 6 },
       });
-      
-      customersRes.data.data.items?.forEach((c: any) => {
-        results.push({
-          id: `customer-${c.id}`,
-          type: 'customer',
-          label: c.name,
-          description: c.companyName || c.email || '',
-          path: `/customers/${c.id}`,
-        });
-      });
-      
-      quotesRes.data.data.items?.forEach((q: any) => {
-        results.push({
-          id: `quote-${q.id}`,
-          type: 'quote',
-          label: q.quoteNumber,
-          description: q.customerName || q.title || '',
-          path: `/quotes/${q.id}`,
-        });
-      });
-      
-      return results;
+
+      const results = Array.isArray(response.data?.data?.results)
+        ? response.data.data.results
+        : [];
+
+      return results.map((result: QuickSearchApiResult): SearchResult => ({
+        id: `${result.entityType}-${result.id}`,
+        type: result.entityType === 'workorder' ? 'order' : result.entityType,
+        label: result.title,
+        description: result.description || result.subtitle || '',
+        path: result.url,
+      }));
     },
-    enabled: query.length >= 2,
+    enabled: debouncedQuery.length >= 2,
   });
   
   // Filter actions based on query
@@ -143,7 +130,7 @@ export function QuickActionsModal({ isOpen, onClose }: QuickActionsModalProps) {
       combined.push({ type: 'action', item: action });
     });
     
-    searchResults.forEach(result => {
+    searchResults.forEach((result) => {
       combined.push({ type: 'result', item: result });
     });
     
@@ -215,6 +202,7 @@ export function QuickActionsModal({ isOpen, onClose }: QuickActionsModalProps) {
       case 'order': return <Package className="h-5 w-5 text-primary-500" />;
       case 'customer': return <Users className="h-5 w-5 text-emerald-500" />;
       case 'quote': return <FileText className="h-5 w-5 text-amber-500" />;
+      case 'inventory': return <Package className="h-5 w-5 text-violet-500" />;
       default: return <Search className="h-5 w-5 text-gray-400" />;
     }
   };
@@ -299,7 +287,7 @@ export function QuickActionsModal({ isOpen, onClose }: QuickActionsModalProps) {
                 <p className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Search Results
                 </p>
-                {searchResults.map((result, index) => {
+                {searchResults.map((result: SearchResult, index: number) => {
                   const resultIndex = filteredActions.length + index;
                   return (
                     <button

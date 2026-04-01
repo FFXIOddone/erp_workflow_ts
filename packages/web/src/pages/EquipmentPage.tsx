@@ -104,29 +104,29 @@ export default function EquipmentPage() {
     refetchInterval: 30000, // Live hardware status — no WS push for SNMP polls
   });
 
+  const liveStatusList = Array.isArray(liveStatuses) ? liveStatuses : [];
+
   // Build a map for O(1) lookup by equipment ID
   const liveStatusMap = useMemo(() => {
     const map = new Map<string, LiveStatus>();
-    if (liveStatuses) {
-      for (const s of liveStatuses) {
-        map.set(s.equipmentId, s);
-      }
+    for (const s of liveStatusList) {
+      map.set(s.equipmentId, s);
     }
     return map;
-  }, [liveStatuses]);
+  }, [liveStatusList]);
 
   // Network stats derived from live status
   const networkStats = useMemo(() => {
-    if (!liveStatuses) return null;
-    const total = liveStatuses.length;
-    const online = liveStatuses.filter(s => s.reachable).length;
+    if (liveStatusList.length === 0) return null;
+    const total = liveStatusList.length;
+    const online = liveStatusList.filter(s => s.reachable).length;
     const offline = total - online;
-    const printing = liveStatuses.filter(s => s.state === 'printing').length;
+    const printing = liveStatusList.filter(s => s.state === 'printing').length;
     return { total, online, offline, printing };
-  }, [liveStatuses]);
+  }, [liveStatusList]);
 
-  const equipment = data?.items || [];
-  const totalPages = data?.pages || 1;
+  const equipment = Array.isArray(data?.items) ? data.items : [];
+  const totalPages = typeof data?.pages === 'number' && data.pages > 0 ? data.pages : 1;
 
   const getStatusIcon = (status: string) => {
     switch (status) {

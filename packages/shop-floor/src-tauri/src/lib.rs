@@ -25,6 +25,11 @@ fn open_file_with(path: String, app: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_zund_cut_queue(cut_id: String) -> Result<(), String> {
+    file_ops::open_zund_cut_queue(&cut_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn send_to_hotfolder(file_path: String, hotfolder_path: String) -> Result<String, String> {
     file_ops::send_to_hotfolder(&PathBuf::from(file_path), &PathBuf::from(hotfolder_path))
         .map(|p| p.to_string_lossy().to_string())
@@ -107,6 +112,7 @@ pub fn run() {
             open_file,
             open_folder,
             open_file_with,
+            open_zund_cut_queue,
             send_to_hotfolder,
             list_files,
             find_wo_folder,

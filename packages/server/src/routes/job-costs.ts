@@ -145,7 +145,14 @@ router.get('/order/:workOrderId', async (req: AuthRequest, res) => {
   if (!jobCost) {
     // Calculate fresh
     const calculation = await calculateJobCost(workOrderId);
-    res.json({ success: true, data: { ...calculation, isCalculated: true } });
+    res.json({
+      success: true,
+      data: {
+        ...calculation,
+        calculatedAt: new Date().toISOString(),
+        isCalculated: true,
+      },
+    });
     return;
   }
 

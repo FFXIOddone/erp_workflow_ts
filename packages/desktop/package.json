@@ -4,8 +4,8 @@
   "private": true,
   "main": "dist/main.js",
   "scripts": {
-    "dev": "concurrently \"pnpm build:main --watch\" \"wait-on dist/main.js && electron .\"",
-    "build": "pnpm build:main",
+    "dev": "concurrently \"npm run build:main -- --watch\" \"wait-on dist/main.js && electron .\"",
+    "build": "npm run build:main",
     "build:main": "tsc -p tsconfig.main.json",
     "package": "electron-builder",
     "clean": "rimraf dist out"
@@ -21,7 +21,7 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "concurrently": "^8.2.2",
-    "electron": "^40.6.1",
+    "electron": "40.6.1",
     "electron-builder": "^26.8.1",
     "rimraf": "^5.0.5",
     "typescript": "^5.3.3",

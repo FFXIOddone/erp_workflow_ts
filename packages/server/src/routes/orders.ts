@@ -38,6 +38,7 @@ import {
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
 import { triggerEmail } from '../services/email-automation.js';
 import { bomAutomationService } from '../services/bom-automation.js';
+import { ensureShipmentRecordForWorkOrder } from '../services/shipment-linking.js';
 import { resolveCustomerId } from '../lib/customer-matching.js';
 import { updateStreak, checkAchievements } from '../services/gamification.js';
 import { applyRoutingDefaults } from '../lib/routing-defaults.js';
@@ -1587,6 +1588,18 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     }
   }
 
+  if (data.status === 'SHIPPED') {
+    try {
+      await ensureShipmentRecordForWorkOrder(order, {
+        createdById: userId,
+        shipDate: new Date(),
+        notes: `Auto-created from SHIPPED order ${order.orderNumber}`,
+      });
+    } catch (err) {
+      console.warn(`Failed to auto-create shipment record for order ${order.orderNumber}:`, err);
+    }
+  }
+
   res.json({ success: true, data: order });
 });
 
@@ -2794,4 +2807,3 @@ ordersRouter.post('/batch/fix-printing-routing', async (req: AuthRequest, res: R
 
   res.json({ success: true, data: { fixed: updated.length, orders: updated } });
 });
-

@@ -1,0 +1,159 @@
+import { Router, type NextFunction, type RequestHandler, type Response } from 'express';
+import { authenticate, type AuthRequest } from '../middleware/auth.js';
+import { BadRequestError } from '../middleware/error-handler.js';
+import {
+  getFedExSyncStatus,
+  listFedExShipmentRecords,
+  resolveFedExLogFile,
+  syncFedExShipmentRecords,
+} from '../services/fedex.js';
+
+export const fedexRouter = Router();
+
+// eslint-disable-next-line @typescript-eslint/no-misused-promises
+fedexRouter.use((req, res, next) => {
+  void authenticate(req as AuthRequest, res, next).catch(next);
+});
+
+type FedExSyncRequestBody = {
+  date?: unknown;
+  filePath?: unknown;
+  dryRun?: unknown;
+};
+
+function parseDateValue(value: unknown): Date | null {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getLocalDayRange(date = new Date()): { fromDate: Date; toDate: Date } {
+  const fromDate = new Date(date);
+  fromDate.setHours(0, 0, 0, 0);
+
+  const toDate = new Date(date);
+  toDate.setHours(23, 59, 59, 999);
+
+  return { fromDate, toDate };
+}
+
+function resolveFedExRecordFilters(req: AuthRequest): {
+  page: number;
+  pageSize: number;
+  search: string | undefined;
+  trackingNumber: string | undefined;
+  fromDate: Date;
+  toDate: Date;
+} {
+  const page = req.query.page ? Number(req.query.page) : 1;
+  const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 25;
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+  const trackingNumber =
+    typeof req.query.trackingNumber === 'string' ? req.query.trackingNumber.trim() : '';
+  const fromDate = parseDateValue(req.query.fromDate);
+  const toDate = parseDateValue(req.query.toDate);
+
+  if (fromDate && toDate) {
+    return {
+      page: Number.isFinite(page) ? page : 1,
+      pageSize: Number.isFinite(pageSize) ? pageSize : 25,
+      search: search || undefined,
+      trackingNumber: trackingNumber || undefined,
+      fromDate,
+      toDate,
+    };
+  }
+
+  const todayRange = getLocalDayRange();
+  return {
+    page: Number.isFinite(page) ? page : 1,
+    pageSize: Number.isFinite(pageSize) ? pageSize : 25,
+    search: search || undefined,
+    trackingNumber: trackingNumber || undefined,
+    fromDate: fromDate ?? todayRange.fromDate,
+    toDate: toDate ?? todayRange.toDate,
+  };
+}
+
+function wrapAsync(
+  handler: (req: AuthRequest, res: Response, next: NextFunction) => Promise<void>
+): RequestHandler {
+  return (req, res, next) => {
+    void handler(req as AuthRequest, res, next).catch(next);
+  };
+}
+
+// GET /fedex/status - Resolve today's log file and report the last sync summary
+fedexRouter.get('/status', wrapAsync(async (_req: AuthRequest, res: Response) => {
+  const resolved = await resolveFedExLogFile();
+  const syncStatus = getFedExSyncStatus();
+  const recordCount = resolved
+    ? await listFedExShipmentRecords({
+        fromDate: resolved.sourceFileDate,
+        toDate: resolved.sourceFileDate,
+        pageSize: 1,
+      }).then((result) => result.total)
+    : 0;
+
+  res.json({
+    success: true,
+    data: {
+      rootPaths: syncStatus.logRoots,
+      currentLog: resolved
+        ? {
+            fileName: resolved.fileName,
+            filePath: resolved.filePath,
+            sourceFileDate: resolved.sourceFileDate,
+            matchedBy: resolved.matchedBy,
+            recordCount,
+          }
+        : null,
+      lastSync: syncStatus.lastSync,
+    },
+  });
+}));
+
+async function handleFedExRecordList(req: AuthRequest, res: Response): Promise<void> {
+  const data = await listFedExShipmentRecords(resolveFedExRecordFilters(req));
+
+  res.json({
+    success: true,
+    data,
+  });
+}
+
+// GET /fedex/shipments - Browse stored FedEx shipment records (defaults to today)
+fedexRouter.get('/shipments', wrapAsync(handleFedExRecordList));
+
+// GET /fedex/records - Backward-compatible alias for the same data
+fedexRouter.get('/records', wrapAsync(handleFedExRecordList));
+
+// POST /fedex/sync - Force a sync from the current day's log file
+fedexRouter.post('/sync', wrapAsync(async (req: AuthRequest, res: Response) => {
+  const body = (req.body ?? {}) as FedExSyncRequestBody;
+  const date = parseDateValue(body.date);
+  const filePath = typeof body.filePath === 'string' ? body.filePath : undefined;
+  const dryRun = body.dryRun === true;
+
+  if (body.date !== undefined && body.date !== null && !date) {
+    throw BadRequestError('date must be a valid ISO date string');
+  }
+
+  if (body.filePath !== undefined && body.filePath !== null && typeof filePath !== 'string') {
+    throw BadRequestError('filePath must be a string');
+  }
+
+  const result = await syncFedExShipmentRecords({
+    date: date ?? undefined,
+    filePath,
+    dryRun,
+  });
+
+  res.json({
+    success: true,
+    data: result,
+  });
+}));

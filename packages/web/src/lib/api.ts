@@ -1,15 +1,13 @@
-import axios, { AxiosResponse, AxiosRequestConfig } from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
 import { 
-  API_BASE_PATH, 
   type ApiSuccessResponse, 
   type ApiErrorResponse,
   type PaginatedResponse 
 } from '@erp/shared';
+import { getApiBaseUrl } from './runtime-url';
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL
-    ? `${import.meta.env.VITE_API_URL}${API_BASE_PATH}`
-    : API_BASE_PATH,
+  baseURL: getApiBaseUrl(),
   headers: {
     'Content-Type': 'application/json',
   },

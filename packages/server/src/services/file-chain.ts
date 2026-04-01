@@ -9,6 +9,8 @@
  * Fiery exports, and Zund statistics to create/update PrintCutLink records.
  */
 
+import { promises as fs } from 'fs';
+import path from 'path';
 import { prisma } from '../db/client.js';
 import { 
   THRIVE_CONFIG, 
@@ -25,7 +27,8 @@ import {
   extractCutId,
   getZundCompletedJobs 
 } from './zund-match.js';
-import { getAllFieryJobs } from './fiery.js';
+import { FIERY_CONFIG, getAllFieryJobs } from './fiery.js';
+import { scanZundQueueFiles } from './zund-live.js';
 import type { Prisma, PrintCutLink } from '@prisma/client';
 
 // ─── Constants ─────────────────────────────────────────
@@ -49,6 +52,19 @@ const MATCH_LOOKBACK_DAYS = 90;
 /** Stale threshold — links stuck in one stage for this many hours */
 const STALE_THRESHOLD_HOURS = 48;
 
+let autoLinkingCyclePromise: Promise<{
+  linksCreated: number;
+  linksUpdated: number;
+  errors: string[];
+}> | null = null;
+
+type AutoLinkingSnapshot = {
+  thriveData: { printJobs: ThriveJob[]; cutJobs: ThriveCutJob[] } | null;
+  fieryJobs: Awaited<ReturnType<typeof getAllFieryJobs>>;
+  zundCompletedJobs: Awaited<ReturnType<typeof getZundCompletedJobs>>;
+  queueFiles: Awaited<ReturnType<typeof scanZundQueueFiles>>;
+};
+
 /** Check if a job has been dismissed by a user for a given work order */
 async function isJobDismissed(workOrderId: string, jobType: string, jobIdentifier: string): Promise<boolean> {
   const dismissed = await prisma.dismissedJobLink.findUnique({
@@ -63,13 +79,69 @@ async function isJobDismissed(workOrderId: string, jobType: string, jobIdentifie
   return !!dismissed;
 }
 
+function hasAbsolutePath(filePath: string | null | undefined): boolean {
+  if (!filePath) return false;
+  return path.isAbsolute(filePath) || filePath.startsWith('\\\\');
+}
+
+async function pathExists(filePath: string | null | undefined): Promise<boolean> {
+  if (!filePath) return false;
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveCutFilePath(
+  link: Pick<PrintCutLink, 'cutFileName' | 'cutFilePath' | 'cutFileSource'>,
+): Promise<string | null> {
+  const storedPath = link.cutFilePath?.trim() || null;
+
+  if (storedPath && hasAbsolutePath(storedPath)) {
+    return storedPath;
+  }
+
+  if (link.cutFileSource === 'FIERY' && link.cutFileName) {
+    const fieryPath = path.join(FIERY_CONFIG.exportPath, link.cutFileName);
+    if (await pathExists(fieryPath)) {
+      return fieryPath;
+    }
+  }
+
+  if (link.cutFileSource === 'THRIVE') {
+    const candidateNames = new Set<string>();
+    if (storedPath) {
+      const storedName = path.basename(storedPath);
+      if (/\.(xml|xml_tmp)$/i.test(storedName)) {
+        candidateNames.add(storedName);
+      }
+    }
+    if (link.cutFileName && /\.(xml|xml_tmp)$/i.test(link.cutFileName)) {
+      candidateNames.add(path.basename(link.cutFileName));
+    }
+
+    for (const machine of THRIVE_CONFIG.machines) {
+      for (const candidateName of candidateNames) {
+        const thrivePath = path.join(machine.cutterPath, candidateName);
+        if (await pathExists(thrivePath)) {
+          return thrivePath;
+        }
+      }
+    }
+  }
+
+  return storedPath;
+}
+
 // ─── Core Queries ──────────────────────────────────────
 
 /**
  * Get all print-cut links for a work order
  */
 export async function getOrderFileChain(workOrderId: string) {
-  return prisma.printCutLink.findMany({
+  const links = await prisma.printCutLink.findMany({
     where: { workOrderId },
     include: {
       workOrder: { select: { id: true, orderNumber: true, customerName: true } },
@@ -79,6 +151,13 @@ export async function getOrderFileChain(workOrderId: string) {
     },
     orderBy: { createdAt: 'desc' },
   });
+
+  return Promise.all(
+    links.map(async (link) => ({
+      ...link,
+      cutFilePath: await resolveCutFilePath(link),
+    })),
+  );
 }
 
 /**
@@ -270,7 +349,10 @@ export async function createPrintCutLink(input: {
   ripJobId?: string;
   status?: string;
 }) {
-  const isPrintCut = PRINT_CUT_PATTERNS.some(p => p.test(input.printFileName));
+  const extractedCutId =
+    extractCutId(input.printFileName) ||
+    extractCutId(path.basename(input.printFilePath || '')) ||
+    null;
   
   // Check for existing link with same print file for this order
   const existing = await prisma.printCutLink.findFirst({
@@ -289,6 +371,7 @@ export async function createPrintCutLink(input: {
         printFileSize: input.printFileSize ?? existing.printFileSize,
         ripJobId: input.ripJobId ?? existing.ripJobId,
         status: (input.status ?? 'SENT_TO_RIP') as any,
+        cutId: existing.cutId ?? extractedCutId ?? undefined,
       },
     });
   }
@@ -302,6 +385,7 @@ export async function createPrintCutLink(input: {
       ripJobId: input.ripJobId,
       status: (input.status ?? 'DESIGN') as any,
       linkConfidence: 'NONE',
+      cutId: extractedCutId,
     },
   });
 }
@@ -433,13 +517,283 @@ export async function dismissPrintCutLink(linkId: string, userId: string) {
  * Scans all sources and creates/updates PrintCutLink records.
  * Called on an interval from the server startup.
  */
-export async function runAutoLinkingCycle(): Promise<{
+async function selectBestPrintCutLinkForCutAttachment(input: {
+  workOrderId: string;
+  orderNumber: string;
+  cutId?: string | null;
+  cutFileName: string;
+}) {
+  const links = await prisma.printCutLink.findMany({
+    where: { workOrderId: input.workOrderId },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  const normalizedCutId = input.cutId?.toLowerCase() || null;
+  const normalizedCutName = input.cutFileName.toLowerCase();
+
+  const byCutId = normalizedCutId
+    ? links.find((link) => link.cutId?.toLowerCase() === normalizedCutId)
+    : null;
+  if (byCutId) return byCutId;
+
+  const byCutName = links.find((link) => link.cutFileName?.toLowerCase() === normalizedCutName);
+  if (byCutName) return byCutName;
+
+  const byUnlinkedPrint = links.find(
+    (link) => !link.cutFileName && link.printFileName !== input.orderNumber,
+  );
+  if (byUnlinkedPrint) return byUnlinkedPrint;
+
+  const byAnyUnlinked = links.find((link) => !link.cutFileName);
+  if (byAnyUnlinked) return byAnyUnlinked;
+
+  return createPrintCutLink({
+    workOrderId: input.workOrderId,
+    printFileName: input.orderNumber,
+    printFilePath: '',
+    status: 'PRINTED',
+  });
+}
+
+export async function ensureCutFileLinkedToOrder(input: {
+  workOrderId: string;
+  orderNumber: string;
+  cutFileName: string;
+  cutFilePath?: string | null;
+  cutFileSource: 'THRIVE' | 'FIERY' | 'MANUAL' | 'ZUND_CENTER';
+  cutFileFormat?: string | null;
+  cutId?: string | null;
+  linkedById?: string | null;
+  status?: 'CUT_PENDING' | 'CUTTING' | 'CUT_COMPLETE' | 'FINISHED';
+}) {
+  const target = await selectBestPrintCutLinkForCutAttachment(input);
+  const nextStatus =
+    target.status === 'CUT_COMPLETE' || target.status === 'FINISHED'
+      ? target.status
+      : (input.status ?? 'CUT_PENDING');
+
+  const data: Prisma.PrintCutLinkUpdateInput = {
+    cutFileName: input.cutFileName,
+    cutFilePath: input.cutFilePath ?? null,
+    cutFileSource: input.cutFileSource as any,
+    cutFileFormat: input.cutFileFormat ?? null,
+    cutId: target.cutId ?? input.cutId ?? undefined,
+    linkedAt: new Date(),
+    status: nextStatus as any,
+  };
+
+  if (input.linkedById) {
+    data.linkConfidence = 'MANUAL';
+    data.linkedBy = { connect: { id: input.linkedById } };
+    data.confirmed = true;
+    data.confirmedAt = new Date();
+    data.confirmedBy = { connect: { id: input.linkedById } };
+  }
+
+  return prisma.printCutLink.update({
+    where: { id: target.id },
+    data,
+  });
+}
+
+export async function clearManualCutFileLinkForOrder(input: {
+  workOrderId: string;
+  cutFileName?: string | null;
+  cutFilePath?: string | null;
+  cutId?: string | null;
+}) {
+  const links = await prisma.printCutLink.findMany({
+    where: {
+      workOrderId: input.workOrderId,
+      linkConfidence: 'MANUAL',
+    },
+  });
+
+  const normalizedCutId = input.cutId?.toLowerCase() || null;
+  const normalizedCutName = input.cutFileName?.toLowerCase() || null;
+  const normalizedCutPath = input.cutFilePath?.toLowerCase() || null;
+
+  const matchingLinks = links.filter((link) => {
+    if (normalizedCutId && link.cutId?.toLowerCase() === normalizedCutId) return true;
+    if (normalizedCutName && link.cutFileName?.toLowerCase() === normalizedCutName) return true;
+    if (normalizedCutPath && link.cutFilePath?.toLowerCase() === normalizedCutPath) return true;
+    return false;
+  });
+
+  let cleared = 0;
+  for (const link of matchingLinks) {
+    const resetStatus =
+      link.printCompletedAt || ['PRINTED', 'CUT_PENDING'].includes(link.status)
+        ? 'PRINTED'
+        : 'DESIGN';
+
+    await prisma.printCutLink.update({
+      where: { id: link.id },
+      data: {
+        cutFileName: null,
+        cutFilePath: null,
+        cutFileSize: null,
+        cutFileSource: null,
+        cutFileFormat: null,
+        linkedAt: null,
+        linkedById: null,
+        linkConfidence: 'NONE',
+        confirmed: false,
+        confirmedAt: null,
+        confirmedById: null,
+        status: resetStatus as any,
+      },
+    });
+    cleared++;
+  }
+
+  return cleared;
+}
+
+export async function syncManualJobLinksToPrintCutLinks(options?: {
+  workOrderId?: string;
+}, snapshot?: Partial<AutoLinkingSnapshot>) {
+  const manualLinks = await prisma.manualJobLink.findMany({
+    where: {
+      ...(options?.workOrderId ? { workOrderId: options.workOrderId } : {}),
+      jobType: { in: ['CUT_JOB', 'ZUND_QUEUE', 'ZUND_COMPLETED', 'FIERY_JOB'] as any },
+    },
+    include: {
+      workOrder: { select: { id: true, orderNumber: true } },
+    },
+  });
+
+  if (manualLinks.length === 0) return 0;
+
+  const hasThriveSnapshot = snapshot ? 'thriveData' in snapshot : false;
+  const hasQueueFilesSnapshot = snapshot ? 'queueFiles' in snapshot : false;
+  const hasFieryJobsSnapshot = snapshot ? 'fieryJobs' in snapshot : false;
+  const hasZundCompletedSnapshot = snapshot ? 'zundCompletedJobs' in snapshot : false;
+
+  let thriveData: { printJobs: ThriveJob[]; cutJobs: ThriveCutJob[] } | null = hasThriveSnapshot
+    ? snapshot?.thriveData ?? null
+    : null;
+  let queueFiles: Awaited<ReturnType<typeof scanZundQueueFiles>> = hasQueueFilesSnapshot
+    ? snapshot?.queueFiles ?? []
+    : [];
+  let fieryJobs: Awaited<ReturnType<typeof getAllFieryJobs>> = hasFieryJobsSnapshot
+    ? snapshot?.fieryJobs ?? []
+    : [];
+  let zundCompletedJobs: Awaited<ReturnType<typeof getZundCompletedJobs>> = hasZundCompletedSnapshot
+    ? snapshot?.zundCompletedJobs ?? []
+    : [];
+
+  if (!hasThriveSnapshot && manualLinks.some((link) => link.jobType === 'CUT_JOB')) {
+    try {
+      thriveData = await getAllThriveJobs();
+    } catch {
+      thriveData = null;
+    }
+  }
+
+  if (!hasQueueFilesSnapshot && manualLinks.some((link) => link.jobType === 'ZUND_QUEUE')) {
+    try {
+      queueFiles = await scanZundQueueFiles(200);
+    } catch {
+      queueFiles = [];
+    }
+  }
+
+  if (!hasFieryJobsSnapshot && manualLinks.some((link) => link.jobType === 'FIERY_JOB')) {
+    try {
+      fieryJobs = await getAllFieryJobs();
+    } catch {
+      fieryJobs = [];
+    }
+  }
+
+  if (!hasZundCompletedSnapshot && manualLinks.some((link) => link.jobType === 'ZUND_COMPLETED')) {
+    try {
+      zundCompletedJobs = await getZundCompletedJobs(MATCH_LOOKBACK_DAYS);
+    } catch {
+      zundCompletedJobs = [];
+    }
+  }
+
+  let synced = 0;
+
+  for (const link of manualLinks) {
+    let cutFileName: string | null = null;
+    let cutFilePath: string | null = null;
+    let cutFileFormat: string | null = null;
+    let cutFileSource: 'THRIVE' | 'FIERY' | 'MANUAL' | 'ZUND_CENTER' | null = null;
+    let cutId: string | null = null;
+
+    if (link.jobType === 'CUT_JOB') {
+      const cutJob = thriveData?.cutJobs.find(
+        (job) => job.guid?.toLowerCase() === link.jobIdentifier.toLowerCase(),
+      );
+      cutFileName = cutJob?.jobName || link.jobName;
+      cutFilePath = cutJob?.filePath || cutJob?.fileName || null;
+      cutFileFormat = cutJob?.fileName ? path.extname(cutJob.fileName) || '.xml' : '.xml';
+      cutFileSource = 'THRIVE';
+      cutId = extractCutId(cutJob?.jobName || cutJob?.fileName || link.jobName || '') || null;
+    } else if (link.jobType === 'ZUND_QUEUE') {
+      const queueFile = queueFiles.find((file) => file.fileName === link.jobIdentifier);
+      cutFileName = queueFile?.fileName || link.jobIdentifier;
+      cutFilePath = queueFile?.fullPath || null;
+      cutFileFormat = path.extname(cutFileName) || '.zcc';
+      cutFileSource = 'ZUND_CENTER';
+      cutId =
+        extractCutId(queueFile?.zccData.jobName || '') ||
+        extractCutId(queueFile?.fileName || '') ||
+        extractCutId(link.jobName || '') ||
+        null;
+    } else if (link.jobType === 'ZUND_COMPLETED') {
+      const jobId = Number(link.jobIdentifier);
+      const completedJob = zundCompletedJobs.find((job: any) => job.jobId === jobId);
+      cutFileName = completedJob?.jobName || link.jobName;
+      cutFilePath = null;
+      cutFileFormat = path.extname(cutFileName) || '.zcc';
+      cutFileSource = 'ZUND_CENTER';
+      cutId = extractCutId(completedJob?.jobName || link.jobName || '') || null;
+    } else if (link.jobType === 'FIERY_JOB') {
+      const fieryJob = fieryJobs.find((job: any) => job.jobId === link.jobIdentifier);
+      cutFileName = fieryJob?.zccFileName || link.jobName;
+      cutFilePath =
+        fieryJob?.zccFilePath ||
+        (fieryJob?.zccFileName ? path.join(FIERY_CONFIG.exportPath, fieryJob.zccFileName) : null);
+      cutFileFormat = cutFileName ? path.extname(cutFileName) || '.zcc' : '.zcc';
+      cutFileSource = 'FIERY';
+      cutId =
+        extractCutId(fieryJob?.zccFileName || '') ||
+        extractCutId(fieryJob?.jobName || '') ||
+        extractCutId(link.jobName || '') ||
+        null;
+    }
+
+    if (!cutFileName || !cutFileSource) continue;
+
+    await ensureCutFileLinkedToOrder({
+      workOrderId: link.workOrderId,
+      orderNumber: link.workOrder.orderNumber,
+      cutFileName,
+      cutFilePath,
+      cutFileSource,
+      cutFileFormat,
+      cutId,
+      linkedById: link.linkedById,
+      status: 'CUT_PENDING',
+    });
+    synced++;
+  }
+
+  return synced;
+}
+
+async function runAutoLinkingCycleInternal(): Promise<{
   linksCreated: number;
   linksUpdated: number;
   errors: string[];
 }> {
   const result = { linksCreated: 0, linksUpdated: 0, errors: [] as string[] };
   const SRC = 'AUTO_LINKER';
+  const snapshot: Partial<AutoLinkingSnapshot> = {};
 
   try {
     // Phase 1: Sync RIP job status → PrintCutLink status
@@ -450,10 +804,16 @@ export async function runAutoLinkingCycle(): Promise<{
     await logChainEvent({ level: 'ERROR', source: SRC, event: 'PHASE1_ERROR', message: err.message, success: false });
   }
 
+  [snapshot.thriveData, snapshot.fieryJobs, snapshot.zundCompletedJobs] = await Promise.all([
+    getAllThriveJobs().catch(() => null),
+    getAllFieryJobs().catch(() => [] as Awaited<ReturnType<typeof getAllFieryJobs>>),
+    getZundCompletedJobs(MATCH_LOOKBACK_DAYS).catch(() => [] as Awaited<ReturnType<typeof getZundCompletedJobs>>),
+  ]);
+
   try {
     // Phase 2: Discover new print-cut files from Thrive queues
     const beforeCreated = result.linksCreated;
-    await discoverThrivePrintCutFiles(result);
+    await discoverThrivePrintCutFiles(result, snapshot.thriveData ?? null);
     const newLinks = result.linksCreated - beforeCreated;
     if (newLinks > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE2_COMPLETE', message: `Thrive discovery: ${newLinks} new links created` });
   } catch (err: any) {
@@ -464,9 +824,28 @@ export async function runAutoLinkingCycle(): Promise<{
   }
 
   try {
+    // Phase 2.25: Promote manual equipment links into persistent file-chain rows
+    const beforeUpdated = result.linksUpdated;
+    const synced = await syncManualJobLinksToPrintCutLinks(undefined, snapshot);
+    result.linksUpdated += synced;
+    const matched = result.linksUpdated - beforeUpdated;
+    if (matched > 0) {
+      await logChainEvent({
+        level: 'INFO',
+        source: SRC,
+        event: 'PHASE2_25_COMPLETE',
+        message: `Manual link sync: ${matched} links updated`,
+      });
+    }
+  } catch (err: any) {
+    result.errors.push(`Manual link sync error: ${err.message}`);
+    await logChainEvent({ level: 'ERROR', source: SRC, event: 'PHASE2_25_ERROR', message: err.message, success: false });
+  }
+
+  try {
     // Phase 2.5: CutID-based linking (highest confidence matching)
     const beforeUpdated = result.linksUpdated;
-    await matchByCutId(result);
+    await matchByCutId(result, snapshot);
     const matched = result.linksUpdated - beforeUpdated;
     if (matched > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE2_5_COMPLETE', message: `CutID matching: ${matched} links matched` });
   } catch (err: any) {
@@ -477,7 +856,7 @@ export async function runAutoLinkingCycle(): Promise<{
   try {
     // Phase 3: Match Thrive cut files to existing links
     const beforeUpdated = result.linksUpdated;
-    await matchThriveCutFiles(result);
+    await matchThriveCutFiles(result, snapshot.thriveData ?? null);
     const matched = result.linksUpdated - beforeUpdated;
     if (matched > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE3_COMPLETE', message: `Thrive cut matching: ${matched} links updated` });
   } catch (err: any) {
@@ -490,7 +869,7 @@ export async function runAutoLinkingCycle(): Promise<{
   try {
     // Phase 4: Match Fiery .zcc cut files to existing links
     const beforeUpdated = result.linksUpdated;
-    await matchFieryCutFiles(result);
+    await matchFieryCutFiles(result, snapshot.fieryJobs ?? []);
     const matched = result.linksUpdated - beforeUpdated;
     if (matched > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE4_COMPLETE', message: `Fiery cut matching: ${matched} links updated` });
   } catch (err: any) {
@@ -503,7 +882,7 @@ export async function runAutoLinkingCycle(): Promise<{
   try {
     // Phase 5: Match Zund completed cuts to existing links
     const beforeUpdated = result.linksUpdated;
-    await matchZundCompletedCuts(result);
+    await matchZundCompletedCuts(result, snapshot.zundCompletedJobs ?? []);
     const matched = result.linksUpdated - beforeUpdated;
     if (matched > 0) await logChainEvent({ level: 'INFO', source: SRC, event: 'PHASE5_COMPLETE', message: `Zund completed matching: ${matched} links updated` });
   } catch (err: any) {
@@ -525,6 +904,22 @@ export async function runAutoLinkingCycle(): Promise<{
   }
 
   return result;
+}
+
+export async function runAutoLinkingCycle(): Promise<{
+  linksCreated: number;
+  linksUpdated: number;
+  errors: string[];
+}> {
+  if (autoLinkingCyclePromise) {
+    return autoLinkingCyclePromise;
+  }
+
+  autoLinkingCyclePromise = runAutoLinkingCycleInternal().finally(() => {
+    autoLinkingCyclePromise = null;
+  });
+
+  return autoLinkingCyclePromise;
 }
 
 /**
@@ -602,13 +997,11 @@ async function syncRipJobsToPrintCutLinks(result: { linksUpdated: number }) {
 /**
  * Phase 2: Discover PRINTCUT files from Thrive print queues and create links
  */
-async function discoverThrivePrintCutFiles(result: { linksCreated: number }) {
-  let thriveData: { printJobs: ThriveJob[]; cutJobs: ThriveCutJob[] };
-  try {
-    thriveData = await getAllThriveJobs();
-  } catch {
-    return; // Thrive offline
-  }
+async function discoverThrivePrintCutFiles(
+  result: { linksCreated: number },
+  thriveData: { printJobs: ThriveJob[]; cutJobs: ThriveCutJob[] } | null,
+) {
+  if (!thriveData) return;
 
   for (const job of thriveData.printJobs) {
     // Only process PRINTCUT files
@@ -619,8 +1012,23 @@ async function discoverThrivePrintCutFiles(result: { linksCreated: number }) {
     if (!job.workOrderNumber) continue;
     
     // Find the work order
+    const woNumber = job.workOrderNumber;
     const wo = await prisma.workOrder.findFirst({
-      where: { orderNumber: job.workOrderNumber },
+      where: woNumber.length === 4
+        ? {
+            OR: [
+              { orderNumber: woNumber },
+              { orderNumber: `WO${woNumber}` },
+              { orderNumber: { endsWith: woNumber } },
+            ],
+          }
+        : {
+            OR: [
+              { orderNumber: woNumber },
+              { orderNumber: `WO${woNumber}` },
+              { orderNumber: { contains: woNumber } },
+            ],
+          },
       select: { id: true },
     });
     if (!wo) continue;
@@ -628,18 +1036,9 @@ async function discoverThrivePrintCutFiles(result: { linksCreated: number }) {
     // Skip if this print job was dismissed by a user
     if (job.jobGuid && await isJobDismissed(wo.id, 'PRINT_JOB', job.jobGuid)) continue;
     
-    // Check if link already exists
-    const existing = await prisma.printCutLink.findFirst({
-      where: {
-        workOrderId: wo.id,
-        printFileName: job.jobName,
-      },
-    });
-    if (existing) continue;
-    
     // Determine status from Thrive status code
     const status = thriveStatusToChainStatus(job.statusCode);
-    
+
     // Find matching RipJob
     const ripJob = await prisma.ripJob.findFirst({
       where: {
@@ -651,6 +1050,46 @@ async function discoverThrivePrintCutFiles(result: { linksCreated: number }) {
       },
       select: { id: true },
     });
+
+    const cutId =
+      job.cutId ||
+      extractCutId(job.jobName) ||
+      extractCutId(path.basename(job.fileName || '')) ||
+      null;
+
+    // Reuse an existing chain row when Thrive is describing the same RIP-backed job.
+    const existing = await prisma.printCutLink.findFirst({
+      where: {
+        workOrderId: wo.id,
+        OR: [
+          { printFileName: job.jobName },
+          ...(ripJob?.id ? [{ ripJobId: ripJob.id }] : []),
+        ],
+      },
+    });
+    if (existing) {
+      const updateData: Prisma.PrintCutLinkUpdateInput = {
+        status: status as any,
+        printerName: job.printer,
+      };
+
+      if (ripJob?.id && ripJob.id !== existing.ripJobId) {
+        updateData.ripJob = { connect: { id: ripJob.id } };
+      }
+
+      if (!existing.cutId && cutId) {
+        updateData.cutId = cutId;
+      }
+      if (!existing.printFilePath && job.fileName) {
+        updateData.printFilePath = job.fileName;
+      }
+
+      await prisma.printCutLink.update({
+        where: { id: existing.id },
+        data: updateData,
+      });
+      continue;
+    }
     
     await prisma.printCutLink.create({
       data: {
@@ -662,7 +1101,7 @@ async function discoverThrivePrintCutFiles(result: { linksCreated: number }) {
         linkConfidence: 'NONE',
         printerName: job.printer,
         ripMachine: null,
-        cutId: extractCutId(job.jobName),
+        cutId,
       },
     });
     result.linksCreated++;
@@ -674,7 +1113,25 @@ async function discoverThrivePrintCutFiles(result: { linksCreated: number }) {
  * CutIDs (e.g. P1_T1_162_57_33277349) appear in both print and cut filenames.
  * This is the highest-confidence automatic match.
  */
-async function matchByCutId(result: { linksUpdated: number }) {
+async function matchByCutId(
+  result: { linksUpdated: number },
+  snapshot: Partial<AutoLinkingSnapshot> = {},
+) {
+  // Backfill cutId before matching so RIP/manual-created links are eligible immediately.
+  const linksMissingCutId = await prisma.printCutLink.findMany({
+    where: { cutId: null },
+    select: { id: true, printFileName: true, printFilePath: true },
+  });
+  for (const link of linksMissingCutId) {
+    const cid = extractCutId(link.printFileName) || extractCutId(path.basename(link.printFilePath || ''));
+    if (cid) {
+      await prisma.printCutLink.update({
+        where: { id: link.id },
+        data: { cutId: cid },
+      });
+    }
+  }
+
   // Find links that have a cutId but no cut file linked yet
   const linksWithCutId = await prisma.printCutLink.findMany({
     where: {
@@ -687,11 +1144,8 @@ async function matchByCutId(result: { linksUpdated: number }) {
   if (linksWithCutId.length === 0) return;
 
   // Gather cut files from Thrive and Fiery
-  let thriveData: { printJobs: ThriveJob[]; cutJobs: ThriveCutJob[] } | null = null;
-  try { thriveData = await getAllThriveJobs(); } catch { /* offline */ }
-  
-  let fieryJobs: any[] = [];
-  try { fieryJobs = await getAllFieryJobs(); } catch { /* offline */ }
+  const thriveData = snapshot.thriveData ?? null;
+  const fieryJobs = snapshot.fieryJobs ?? [];
 
   // Build cutID → cut file map from all sources
   const cutIdMap = new Map<string, { name: string; path: string; source: string; format: string; guid?: string }>();
@@ -699,14 +1153,14 @@ async function matchByCutId(result: { linksUpdated: number }) {
   if (thriveData) {
     for (const cj of thriveData.cutJobs) {
       const cid = extractCutId(cj.jobName);
-      if (cid) cutIdMap.set(cid, { name: cj.jobName, path: cj.fileName || '', source: 'THRIVE', format: '.xml', guid: cj.guid });
+      if (cid) cutIdMap.set(cid, { name: cj.jobName, path: cj.filePath || cj.fileName || '', source: 'THRIVE', format: '.xml', guid: cj.guid });
     }
   }
 
   for (const fj of fieryJobs) {
     if (!fj.hasZccCutFile || !fj.zccFileName) continue;
     const cid = extractCutId(fj.zccFileName) || extractCutId(fj.jobName || '');
-    if (cid) cutIdMap.set(cid, { name: fj.zccFileName, path: fj.fileName || '', source: 'FIERY', format: '.zcc' });
+    if (cid) cutIdMap.set(cid, { name: fj.zccFileName, path: fj.zccFilePath || (fj.zccFileName ? path.join(FIERY_CONFIG.exportPath, fj.zccFileName) : ''), source: 'FIERY', format: '.zcc' });
   }
 
   // Match by cutID
@@ -734,32 +1188,16 @@ async function matchByCutId(result: { linksUpdated: number }) {
     result.linksUpdated++;
   }
 
-  // Also backfill cutId on existing links that don't have one yet
-  const linksMissingCutId = await prisma.printCutLink.findMany({
-    where: { cutId: null },
-    select: { id: true, printFileName: true },
-  });
-  for (const link of linksMissingCutId) {
-    const cid = extractCutId(link.printFileName);
-    if (cid) {
-      await prisma.printCutLink.update({
-        where: { id: link.id },
-        data: { cutId: cid },
-      });
-    }
-  }
 }
 
 /**
  * Phase 3: Match Thrive Cut Center XML files to existing print links
  */
-async function matchThriveCutFiles(result: { linksUpdated: number }) {
-  let thriveData: { printJobs: ThriveJob[]; cutJobs: ThriveCutJob[] };
-  try {
-    thriveData = await getAllThriveJobs();
-  } catch {
-    return;
-  }
+async function matchThriveCutFiles(
+  result: { linksUpdated: number },
+  thriveData: { printJobs: ThriveJob[]; cutJobs: ThriveCutJob[] } | null,
+) {
+  if (!thriveData) return;
 
   // Get all unlinked print-cut links (no cut file yet)
   const unlinkedLinks = await prisma.printCutLink.findMany({
@@ -827,13 +1265,11 @@ async function matchThriveCutFiles(result: { linksUpdated: number }) {
 /**
  * Phase 4: Match Fiery .zcc contour files to existing print links
  */
-async function matchFieryCutFiles(result: { linksUpdated: number }) {
-  let fieryJobs: any[];
-  try {
-    fieryJobs = await getAllFieryJobs();
-  } catch {
-    return;
-  }
+async function matchFieryCutFiles(
+  result: { linksUpdated: number },
+  fieryJobs: Awaited<ReturnType<typeof getAllFieryJobs>>,
+) {
+  if (fieryJobs.length === 0) return;
 
   const unlinkedLinks = await prisma.printCutLink.findMany({
     where: {
@@ -864,7 +1300,7 @@ async function matchFieryCutFiles(result: { linksUpdated: number }) {
           where: { id: link.id },
           data: {
             cutFileName: fieryJob.zccFileName,
-            cutFilePath: fieryJob.fileName || '',
+            cutFilePath: fieryJob.zccFilePath || (fieryJob.zccFileName ? path.join(FIERY_CONFIG.exportPath, fieryJob.zccFileName) : ''),
             cutFileSource: 'FIERY',
             cutFileFormat: '.zcc',
             linkConfidence: 'EXACT',
@@ -889,7 +1325,7 @@ async function matchFieryCutFiles(result: { linksUpdated: number }) {
           where: { id: link.id },
           data: {
             cutFileName: fieryJob.zccFileName,
-            cutFilePath: fieryJob.fileName || '',
+            cutFilePath: fieryJob.zccFilePath || (fieryJob.zccFileName ? path.join(FIERY_CONFIG.exportPath, fieryJob.zccFileName) : ''),
             cutFileSource: 'FIERY',
             cutFileFormat: '.zcc',
             linkConfidence: confidence as any,
@@ -907,13 +1343,11 @@ async function matchFieryCutFiles(result: { linksUpdated: number }) {
 /**
  * Phase 5: Match Zund completed cuts → update links to CUT_COMPLETE
  */
-async function matchZundCompletedCuts(result: { linksUpdated: number }) {
-  let zundJobs: any[];
-  try {
-    zundJobs = await getZundCompletedJobs(MATCH_LOOKBACK_DAYS);
-  } catch {
-    return;
-  }
+async function matchZundCompletedCuts(
+  result: { linksUpdated: number },
+  zundJobs: Awaited<ReturnType<typeof getZundCompletedJobs>>,
+) {
+  if (zundJobs.length === 0) return;
 
   // Get links that are pending cut or cutting
   const pendingCutLinks = await prisma.printCutLink.findMany({
@@ -994,7 +1428,7 @@ async function linkCutToChain(
     where: { id: linkId },
     data: {
       cutFileName: cutJob.jobName,
-      cutFilePath: cutJob.fileName || '',
+      cutFilePath: cutJob.filePath || cutJob.fileName || '',
       cutFileSource: 'THRIVE',
       cutFileFormat: `.${ext}`,
       linkConfidence: confidence as any,
@@ -1109,13 +1543,15 @@ export async function logChainEvent(entry: {
   success?: boolean;
 }): Promise<void> {
   try {
+    const details = entry.details as Prisma.InputJsonValue | undefined;
+
     await prisma.fileChainLog.create({
       data: {
         level: entry.level,
         source: entry.source,
         event: entry.event,
         message: entry.message,
-        details: entry.details ?? undefined,
+        details,
         cutId: entry.cutId,
         zccFileName: entry.zccFileName,
         printFileName: entry.printFileName,

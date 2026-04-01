@@ -4,7 +4,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Trash2, Save, FileText, MapPin, Package, Search, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../lib/api';
-import { STATION_DISPLAY_NAMES, PRIORITY_LABELS, COMPANY_BRAND_DISPLAY_NAMES, CompanyBrand } from '@erp/shared';
+import {
+  STATION_DISPLAY_NAMES,
+  PRIORITY_LABELS,
+  COMPANY_BRAND_DISPLAY_NAMES,
+  CompanyBrand,
+  PrintingMethod,
+  inferRoutingFromOrderDetails,
+  isDesignOnlyOrder,
+} from '@erp/shared';
 import { ItemMasterAutocomplete, type ItemMasterOption } from '../components/ItemMasterAutocomplete';
 
 interface LineItemForm {
@@ -14,6 +22,13 @@ interface LineItemForm {
   quantity: number;
   unitPrice: number;
   notes: string;
+}
+
+interface CompanySearchResult {
+  id: string;
+  name: string;
+  legalName?: string | null;
+  email?: string | null;
 }
 
 const STATIONS = ['ROLL_TO_ROLL', 'SCREEN_PRINT', 'PRODUCTION', 'FLATBED', 'DESIGN', 'SALES', 'INSTALLATION', 'ORDER_ENTRY', 'SHIPPING_RECEIVING'] as const;
@@ -36,9 +51,9 @@ export function OrderFormPage() {
 
   const [orderNumber, setOrderNumber] = useState('');
   const [customerName, setCustomerName] = useState('');
-  const [customerId, setCustomerId] = useState<string | null>(null);
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const [companySearch, setCompanySearch] = useState('');
+  const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState(3);
   const [companyBrand, setCompanyBrand] = useState<CompanyBrand>(CompanyBrand.WILDE_SIGNS);
@@ -49,28 +64,29 @@ export function OrderFormPage() {
     { itemMasterId: null, description: '', quantity: 1, unitPrice: 0, notes: '' },
   ]);
 
-  // Fetch customers for autocomplete
-  const { data: customersData } = useQuery({
-    queryKey: ['customers-search', customerSearch],
+  // Fetch companies for autocomplete
+  const { data: companiesData } = useQuery({
+    queryKey: ['companies-search', companySearch],
     queryFn: async () => {
-      const response = await api.get('/customers', {
-        params: { search: customerSearch, pageSize: 10, isActive: true },
+      const response = await api.get('/companies', {
+        params: { search: companySearch, pageSize: 10, isActive: true },
       });
-      return response.data.data.items;
+      return response.data.data.items as CompanySearchResult[];
     },
-    enabled: customerSearch.length > 0 && showCustomerDropdown,
+    enabled: companySearch.trim().length > 0 && showCompanyDropdown,
   });
 
-  // Load customer from URL param
+  // Load company from URL param
   useEffect(() => {
-    const customerIdParam = searchParams.get('customerId');
-    if (customerIdParam && !isEditing) {
-      api.get(`/customers/${customerIdParam}`).then((response) => {
-        const customer = response.data.data;
-        setCustomerId(customer.id);
-        setCustomerName(customer.companyName || customer.name);
+    const companyIdParam = searchParams.get('companyId');
+    if (companyIdParam && !isEditing) {
+      api.get(`/companies/${companyIdParam}`).then((response) => {
+        const company = response.data.data as CompanySearchResult;
+        setCompanyId(company.id);
+        setCustomerName(company.name);
+        setCompanySearch(company.name);
       }).catch(() => {
-        // Ignore if customer not found
+        // Ignore if company not found
       });
     }
   }, [searchParams, isEditing]);
@@ -122,7 +138,8 @@ export function OrderFormPage() {
     if (existingOrder && isEditing) {
       setOrderNumber(existingOrder.orderNumber);
       setCustomerName(existingOrder.customerName);
-      setCustomerId(existingOrder.customerId || null);
+      setCompanyId(existingOrder.companyId || null);
+      setCompanySearch(existingOrder.customerName || '');
       setDescription(existingOrder.description || '');
       setPriority(existingOrder.priority);
       setCompanyBrand(existingOrder.companyBrand || CompanyBrand.WILDE_SIGNS);
@@ -175,25 +192,48 @@ export function OrderFormPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    const trimmedCustomerName = customerName.trim();
+    const trimmedDescription = description.trim();
+    const normalizedRouting = isDesignOnlyOrder({ description: trimmedDescription, routing })
+      ? [PrintingMethod.DESIGN]
+      : routing.length > 0
+        ? routing
+        : inferRoutingFromOrderDetails({ description: trimmedDescription });
+
+    if (!trimmedCustomerName) {
+      toast.error('Please select a company');
+      return;
+    }
+
+    if (!companyId && !isEditing) {
+      toast.error('Please select a company from the list');
+      return;
+    }
+
+    if (normalizedRouting.length === 0) {
+      toast.error('Please select at least one station for routing');
+      return;
+    }
+
     const data = {
       orderNumber,
-      customerName,
-      customerId: customerId || undefined,
-      description,
+      customerName: trimmedCustomerName,
+      companyId: companyId || undefined,
+      description: trimmedDescription,
       priority,
       companyBrand,
       dueDate: dueDate || null,
       notes: notes || null,
-      routing,
+      routing: normalizedRouting,
       lineItems: lineItems
-        .filter((item) => item.itemMasterId && item.description.trim())
+        .filter((item) => item.description.trim())
         .map((item) => ({
           id: item.id,
           itemMasterId: item.itemMasterId,
-          description: item.description,
+          description: item.description.trim(),
           quantity: item.quantity,
           unitPrice: item.unitPrice,
-          notes: item.notes,
+          notes: item.notes.trim() || null,
         })),
     };
 
@@ -248,11 +288,11 @@ export function OrderFormPage() {
   };
 
   const toggleStation = (station: string) => {
-    if (routing.includes(station)) {
-      setRouting(routing.filter((s) => s !== station));
-    } else {
-      setRouting([...routing, station]);
-    }
+    setRouting((currentRouting) =>
+      currentRouting.includes(station)
+        ? currentRouting.filter((currentStation) => currentStation !== station)
+        : [...currentRouting, station]
+    );
   };
 
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
@@ -350,7 +390,7 @@ export function OrderFormPage() {
             </div>
             <div className="relative">
               <label className="label-text">
-                Customer Name *
+                Company *
               </label>
               <div className="relative">
                 <input
@@ -360,21 +400,22 @@ export function OrderFormPage() {
                   value={customerName}
                   onChange={(e) => {
                     setCustomerName(e.target.value);
-                    setCustomerSearch(e.target.value);
-                    setCustomerId(null);
-                    setShowCustomerDropdown(true);
+                    setCompanySearch(e.target.value);
+                    setCompanyId(null);
+                    setShowCompanyDropdown(true);
                   }}
-                  onFocus={() => setShowCustomerDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
-                  placeholder="Search or enter customer name"
+                  onFocus={() => setShowCompanyDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowCompanyDropdown(false), 200)}
+                  placeholder="Search for a company"
                   className="input-field pr-10"
                 />
-                {customerId && (
+                {companyId && (
                   <button
                     type="button"
                     onClick={() => {
-                      setCustomerId(null);
+                      setCompanyId(null);
                       setCustomerName('');
+                      setCompanySearch('');
                       customerInputRef.current?.focus();
                     }}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
@@ -383,29 +424,30 @@ export function OrderFormPage() {
                   </button>
                 )}
               </div>
-              {showCustomerDropdown && customersData && customersData.length > 0 && !customerId && (
+              {showCompanyDropdown && companiesData && companiesData.length > 0 && !companyId && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
-                  {customersData.map((customer: { id: string; name: string; companyName: string | null }) => (
+                  {companiesData.map((company) => (
                     <button
-                      key={customer.id}
+                      key={company.id}
                       type="button"
                       onClick={() => {
-                        setCustomerId(customer.id);
-                        setCustomerName(customer.companyName || customer.name);
-                        setShowCustomerDropdown(false);
+                        setCompanyId(company.id);
+                        setCustomerName(company.name);
+                        setCompanySearch(company.name);
+                        setShowCompanyDropdown(false);
                       }}
                       className="w-full px-4 py-2 text-left hover:bg-gray-50 flex flex-col"
                     >
-                      <span className="font-medium text-gray-900">{customer.name}</span>
-                      {customer.companyName && (
-                        <span className="text-sm text-gray-500">{customer.companyName}</span>
+                      <span className="font-medium text-gray-900">{company.name}</span>
+                      {(company.legalName || company.email) && (
+                        <span className="text-sm text-gray-500">{company.legalName || company.email}</span>
                       )}
                     </button>
                   ))}
                 </div>
               )}
-              {customerId && (
-                <p className="mt-1 text-xs text-green-600">✓ Linked to customer record</p>
+              {companyId && (
+                <p className="mt-1 text-xs text-green-600">Linked to company record</p>
               )}
             </div>
             <div className="md:col-span-2">

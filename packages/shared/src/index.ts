@@ -9,3 +9,6 @@ export * from './schemas.js';
 
 // Constants
 export * from './constants.js';
+
+// Routing inference
+export * from './routing-inference.js';

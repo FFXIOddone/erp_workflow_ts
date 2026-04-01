@@ -11,6 +11,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { ensureBetterSqlite3Compatible } from './scripts/ensure-better-sqlite3.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // tsx lives in the workspace root node_modules/.bin (npm workspace hoisting)
@@ -77,6 +78,13 @@ function shutdown() {
 console.log('\x1b[36m[dev] Starting server with tsx watch...\x1b[0m');
 console.log('\x1b[36m[dev] Press Ctrl+R to restart, Ctrl+C to quit\x1b[0m\n');
 
+try {
+  await ensureBetterSqlite3Compatible();
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`\x1b[31m[dev] ${message}\x1b[0m`);
+  process.exit(1);
+}
 startServer();
 
 // Listen for keyboard input

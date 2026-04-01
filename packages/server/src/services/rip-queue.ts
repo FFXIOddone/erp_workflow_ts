@@ -15,11 +15,18 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { THRIVE_CONFIG, parseQueueFile, type ThriveJob } from './thrive.js';
 import { extractCutId } from './zund-match.js';
 import { broadcast } from '../ws/server.js';
-import { submitVutekJob, type VutekPrintSettings } from './fiery-jmf.js';
+import {
+  getAllFieryDownloadFiles,
+  getAllFieryJobs,
+  type FieryDownloadFile,
+  type FieryJob,
+} from './fiery.js';
+import { buildFieryJobTicketName } from './fiery-jmf.js';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -38,6 +45,8 @@ export interface SendToRipResult {
   success: boolean;
   ripJobId?: string;
   destinationPath?: string;
+  queueEntryId?: string;
+  submissionJobId?: string;
   error?: string;
 }
 
@@ -49,6 +58,160 @@ export interface RipStatusUpdate {
 }
 
 let ripStatusSyncPromise: Promise<RipStatusUpdate[]> | null = null;
+
+function normalizeJsonObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return { ...(value as Record<string, unknown>) };
+}
+
+function pickStringSetting(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function pickMeaningfulId(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== '0') {
+      return trimmed;
+    }
+  }
+
+  return undefined;
+}
+
+function deriveMediaDimensionFromSize(width?: number | null, height?: number | null): string | undefined {
+  if (!width || !height || width <= 0 || height <= 0) return undefined;
+  return `${Math.round(width * 72)} ${Math.round(height * 72)}`;
+}
+
+function normalizeRipMatchName(value: string | null | undefined): string {
+  return (value ?? '')
+    .replace(/\.[^.]+$/g, '')
+    .replace(/\.rtl(_\d+)?$/i, '')
+    .replace(/_P\d+_T\d+_\d+_\d+$/i, '')
+    .replace(/~\d+(_p\d+)?(_r\d+)?(_c\d+)?$/i, '')
+    .replace(/[&()[\]]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeWorkOrderNumber(value: string | null | undefined): string {
+  return (value ?? '')
+    .toLowerCase()
+    .replace(/^wo/i, '')
+    .replace(/[^0-9]/g, '');
+}
+
+function namesLooselyMatch(left: string, right: string): boolean {
+  if (!left || !right) return false;
+  return left === right || left.includes(right) || right.includes(left);
+}
+
+function toJsonValue(value: Record<string, unknown> | undefined): Prisma.InputJsonValue | undefined {
+  return value as Prisma.InputJsonValue | undefined;
+}
+
+function findMatchingFieryJob(
+  ripJob: {
+    sourceFileName: string;
+    sourceFilePath: string;
+    ripJobGuid?: string | null;
+    workOrder?: { orderNumber: string } | null;
+  },
+  fieryJobs: FieryJob[],
+  fierySettings?: Record<string, unknown>
+): FieryJob | undefined {
+  const ripWorkOrder = normalizeWorkOrderNumber(ripJob.workOrder?.orderNumber);
+  const ripSubmissionId = pickMeaningfulId(ripJob.ripJobGuid);
+  const ripNames = uniqueStrings([
+    normalizeRipMatchName(ripJob.sourceFileName),
+    normalizeRipMatchName(path.basename(ripJob.sourceFilePath || '')),
+    normalizeRipMatchName(getFieryImportedFileName(fierySettings ?? {})),
+  ]);
+
+  return fieryJobs
+    .filter((fieryJob) => {
+      const fierySubmissionId = pickMeaningfulId(fieryJob.jobId);
+      if (ripSubmissionId) {
+        return Boolean(fierySubmissionId && ripSubmissionId === fierySubmissionId);
+      }
+
+      const fieryWorkOrder = normalizeWorkOrderNumber(fieryJob.workOrderNumber);
+      if (ripWorkOrder && fieryWorkOrder && ripWorkOrder !== fieryWorkOrder) {
+        return false;
+      }
+
+      const fieryNames = uniqueStrings([
+        normalizeRipMatchName(fieryJob.jobName),
+        normalizeRipMatchName(fieryJob.fileName),
+        normalizeRipMatchName(fieryJob.thriveFilePath ? path.basename(fieryJob.thriveFilePath) : ''),
+      ]);
+
+      return ripNames.some((ripName) =>
+        fieryNames.some((fieryName) => namesLooselyMatch(ripName, fieryName))
+      );
+    })
+    .sort((left, right) => {
+      const leftTime = left.timestamp ? new Date(left.timestamp).getTime() : 0;
+      const rightTime = right.timestamp ? new Date(right.timestamp).getTime() : 0;
+      return rightTime - leftTime;
+    })[0];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function getFierySettingsFromPrintSettings(printSettingsJson: unknown): Record<string, unknown> {
+  const printSettings = normalizeJsonObject(printSettingsJson);
+  return normalizeJsonObject(printSettings.fiery);
+}
+
+function getFierySubmissionJobId(fierySettings: Record<string, unknown>, ripJobGuid?: string | null): string | undefined {
+  return pickMeaningfulId(fierySettings.submissionJobId, ripJobGuid);
+}
+
+async function readFierySubmissionJobIdFromJdfPath(
+  jdfPath: unknown
+): Promise<string | undefined> {
+  if (typeof jdfPath !== 'string' || !jdfPath.trim()) return undefined;
+
+  try {
+    const jdfContent = await fs.readFile(jdfPath, 'utf-8');
+    const match = jdfContent.match(/JobID="([^"]+)"/i);
+    return pickMeaningfulId(match?.[1]);
+  } catch {
+    return undefined;
+  }
+}
+
+function getFieryStagedPdfName(fierySettings: Record<string, unknown>): string | undefined {
+  const stagedPdfPath = typeof fierySettings.stagedPdfPath === 'string' ? fierySettings.stagedPdfPath : undefined;
+  return stagedPdfPath ? path.basename(stagedPdfPath) : undefined;
+}
+
+function getFieryImportedFileName(fierySettings: Record<string, unknown>): string | undefined {
+  const jobTicketName = typeof fierySettings.jobTicketName === 'string' ? fierySettings.jobTicketName : undefined;
+  const copiedFileName = typeof fierySettings.copiedFileName === 'string' ? fierySettings.copiedFileName : undefined;
+  const destinationPath = typeof fierySettings.destinationPath === 'string' ? fierySettings.destinationPath : undefined;
+
+  return jobTicketName ?? copiedFileName ?? (destinationPath ? path.basename(destinationPath) : undefined);
+}
+
+function normalizeFieryFileName(value: string): string {
+  return value.trim().toLowerCase();
+}
 
 // ─── Hotfolder Discovery ──────────────────────────────────────
 
@@ -102,17 +265,30 @@ export async function getHotfoldersWithEquipment(): Promise<HotfolderTarget[]> {
   const hotfolders = getAvailableHotfolders();
 
   const equipment = await prisma.equipment.findMany({
-    where: { type: { in: ['Printer', 'Large Format Printer'] } },
+    where: { type: { in: ['Printer', 'Large Format Printer', 'Workstation'] } },
     select: { id: true, name: true, ipAddress: true, station: true },
   });
 
   // Try to match equipment by name similarity
   for (const hf of hotfolders) {
-    const match = equipment.find((eq) => {
+    const nameMatch = equipment.find((eq) => {
       const eqName = eq.name.toLowerCase();
       const hfName = hf.name.toLowerCase();
-      return eqName === hfName || eqName.includes(hfName) || hfName.includes(eqName);
+      const machineName = hf.machineName.toLowerCase();
+      return (
+        eqName === hfName ||
+        eqName.includes(hfName) ||
+        hfName.includes(eqName) ||
+        eqName === machineName ||
+        eqName.includes(machineName) ||
+        machineName.includes(eqName)
+      );
     });
+    const fieryIpMatch =
+      hf.ripType === 'Fiery' && THRIVE_CONFIG.fiery?.ip
+        ? equipment.find((eq) => eq.ipAddress === THRIVE_CONFIG.fiery?.ip)
+        : undefined;
+    const match = nameMatch ?? fieryIpMatch;
     if (match) {
       hf.equipmentId = match.id;
     }
@@ -150,7 +326,8 @@ export async function validateSourceFile(filePath: string): Promise<{
  */
 export async function copyToHotfolder(
   sourceFilePath: string,
-  hotfolderPath: string
+  hotfolderPath: string,
+  targetFileName?: string
 ): Promise<{ success: boolean; destinationPath?: string; error?: string }> {
   try {
     // Validate source exists
@@ -166,7 +343,7 @@ export async function copyToHotfolder(
       return { success: false, error: `Hotfolder not accessible: ${hotfolderPath}` };
     }
 
-    const fileName = path.basename(sourceFilePath);
+    const fileName = path.basename(targetFileName?.trim() || sourceFilePath);
     const destinationPath = path.join(hotfolderPath, fileName);
 
     // Check if file already exists in hotfolder
@@ -219,6 +396,7 @@ export async function sendToRip(params: {
 }): Promise<SendToRipResult> {
   const { workOrderId, sourceFilePath, hotfolderTarget, printSettings, notes, priority, userId } =
     params;
+  const additionalSettings = normalizeJsonObject(printSettings?.additionalSettings);
 
   // Validate source file
   const fileValidation = await validateSourceFile(sourceFilePath);
@@ -226,27 +404,46 @@ export async function sendToRip(params: {
     return { success: false, error: fileValidation.error };
   }
 
-  // For Fiery/VUTEk targets, use JMF SubmitQueueEntry instead of plain file copy.
-  // This ensures Fiery XF applies the correct print settings (media profile, curing, etc.)
-  // rather than just dropping a raw file into a folder.
   let destinationPath: string | undefined;
+  let queueEntryId: string | undefined;
+  let submissionJobId: string | undefined;
+  let printSettingsJson = Object.keys(additionalSettings).length > 0 ? additionalSettings : undefined;
   if (hotfolderTarget.ripType === 'Fiery') {
-    // Only pass settings that are explicitly set — undefined values would override blade sign defaults
-    const vutekSettings: Partial<VutekPrintSettings> = {};
-    if (printSettings?.mediaProfile) vutekSettings.media = printSettings.mediaProfile;
-    if (printSettings?.whiteInk !== undefined)
-      vutekSettings.whiteInk = printSettings.whiteInk !== 'none';
-    if (printSettings?.mirror !== undefined) vutekSettings.mirror = printSettings.mirror;
-    if (printSettings?.copies !== undefined) vutekSettings.copies = printSettings.copies;
-    const jmfResult = await submitVutekJob({
-      jobId: workOrderId,
-      sourceFilePath,
-      settings: vutekSettings,
+    const fieryWorkOrder = await prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      select: { orderNumber: true, customerName: true, description: true },
     });
-    if (!jmfResult.success) {
-      return { success: false, error: jmfResult.error };
+    const jobTicketName = buildFieryJobTicketName({
+      workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
+      customerName: fieryWorkOrder?.customerName ?? null,
+      sourceFileName: path.basename(sourceFilePath),
+      jobDescription: fieryWorkOrder?.description ?? notes ?? null,
+    });
+    const targetFileName = `${jobTicketName}${path.extname(sourceFilePath)}`;
+
+    // Fiery now uses the same plain import flow as Thrive:
+    // copy the PDF into the watched hotfolder with a Thrive-style ticket name
+    // so the operator sees real job context without needing a JDF ticket.
+    const copyResult = await copyToHotfolder(sourceFilePath, hotfolderTarget.path, targetFileName);
+    if (!copyResult.success) {
+      return { success: false, error: copyResult.error };
     }
-    destinationPath = jmfResult.pdfDestPath;
+    destinationPath = copyResult.destinationPath;
+    printSettingsJson = {
+      ...additionalSettings,
+      fiery: {
+        importMode: 'hotfolder',
+        hotfolderPath: hotfolderTarget.path,
+        workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
+        customerName: fieryWorkOrder?.customerName ?? null,
+        jobDescription: fieryWorkOrder?.description ?? notes ?? null,
+        jobTicketName,
+        sourceFileName: path.basename(sourceFilePath),
+        copiedFileName: path.basename(destinationPath ?? sourceFilePath),
+        destinationPath,
+        importedAt: new Date().toISOString(),
+      },
+    };
   } else {
     // Standard Onyx Thrive hotfolder — plain file copy
     const copyResult = await copyToHotfolder(sourceFilePath, hotfolderTarget.path);
@@ -267,23 +464,24 @@ export async function sendToRip(params: {
       hotfolderName: hotfolderTarget.name,
       ripType: hotfolderTarget.ripType,
       status: 'QUEUED',
+      ripJobGuid: submissionJobId ?? queueEntryId ?? null,
       equipmentId: hotfolderTarget.equipmentId ?? null,
       colorProfile: printSettings?.colorProfile ?? null,
-      printResolution: printSettings?.printResolution ?? null,
-      printMode: printSettings?.printMode ?? null,
-      mediaProfile: printSettings?.mediaProfile ?? null,
-      mediaType: printSettings?.mediaType ?? null,
+      printResolution:
+        printSettings?.printResolution ?? null,
+      printMode:
+        printSettings?.printMode ?? null,
+      mediaProfile:
+        printSettings?.mediaProfile ?? null,
+      mediaType:
+        printSettings?.mediaType ?? null,
       mediaWidth: printSettings?.mediaWidth ?? null,
       mediaLength: printSettings?.mediaLength ?? null,
       copies: printSettings?.copies ?? 1,
       whiteInk: printSettings?.whiteInk ?? null,
       mirror: printSettings?.mirror ?? false,
       nestingEnabled: printSettings?.nestingEnabled ?? false,
-      printSettingsJson: printSettings?.additionalSettings
-        ? (printSettings.additionalSettings as Parameters<
-            typeof prisma.ripJob.create
-          >[0]['data']['printSettingsJson'])
-        : undefined,
+      printSettingsJson: toJsonValue(printSettingsJson),
       notes: notes ?? null,
       priority: priority ?? 3,
       createdById: userId,
@@ -301,6 +499,12 @@ export async function sendToRip(params: {
     payload: ripJob,
     timestamp: new Date(),
   });
+
+  if (hotfolderTarget.ripType === 'Fiery') {
+    void syncRipJobStatuses().catch((err) => {
+      console.warn('[RipQueue] Fiery post-submit sync failed:', err instanceof Error ? err.message : err);
+    });
+  }
 
   // Auto-create PrintCutLink for file chain tracking
   try {
@@ -343,6 +547,8 @@ export async function sendToRip(params: {
     success: true,
     ripJobId: ripJob.id,
     destinationPath,
+    queueEntryId,
+    submissionJobId,
   };
 }
 
@@ -387,25 +593,165 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
     where: {
       status: { in: ['QUEUED', 'PROCESSING', 'READY', 'SENDING', 'PRINTING'] },
     },
+    include: {
+      workOrder: { select: { orderNumber: true } },
+    },
   });
 
   if (activeJobs.length === 0) return updates;
 
-  // Parse all Thrive queue files
   const allThriveJobs: ThriveJob[] = [];
-  for (const machine of THRIVE_CONFIG.machines) {
-    for (const printer of machine.printers) {
-      try {
-        const jobs = await parseQueueFile(printer.queuePath);
-        allThriveJobs.push(...jobs);
-      } catch {
-        // Queue file not accessible — skip
+  const allFieryJobs: FieryJob[] = [];
+  const allFieryDownloads: FieryDownloadFile[] = [];
+  const activeThriveJobs = activeJobs.filter((job) => job.ripType !== 'Fiery');
+  const activeFieryJobs = activeJobs.filter((job) => job.ripType === 'Fiery');
+
+  if (activeThriveJobs.length > 0) {
+    for (const machine of THRIVE_CONFIG.machines) {
+      for (const printer of machine.printers) {
+        try {
+          const jobs = await parseQueueFile(printer.queuePath);
+          allThriveJobs.push(...jobs);
+        } catch {
+          // Queue file not accessible — skip
+        }
       }
+    }
+  }
+
+  if (activeFieryJobs.length > 0) {
+    try {
+      allFieryJobs.push(...(await getAllFieryJobs()));
+    } catch (err) {
+      console.warn('[RipQueue] Fiery sync scan failed:', err instanceof Error ? err.message : err);
+    }
+
+    try {
+      allFieryDownloads.push(...(await getAllFieryDownloadFiles()));
+    } catch (err) {
+      console.warn(
+        '[RipQueue] Fiery download scan failed:',
+        err instanceof Error ? err.message : err
+      );
     }
   }
 
   // Match and update
   for (const ripJob of activeJobs) {
+    if (ripJob.ripType === 'Fiery') {
+      const existingPrintSettings = normalizeJsonObject(ripJob.printSettingsJson);
+      const existingFierySettings = getFierySettingsFromPrintSettings(ripJob.printSettingsJson);
+      const jdfSubmissionJobId = await readFierySubmissionJobIdFromJdfPath(
+        existingFierySettings.jdfPath
+      );
+      const submissionJobId = getFierySubmissionJobId(
+        existingFierySettings,
+        ripJob.ripJobGuid
+      ) ?? jdfSubmissionJobId;
+      const stagedPdfName = getFieryStagedPdfName(existingFierySettings);
+      const downloadMatch = stagedPdfName
+        ? allFieryDownloads.find(
+            (file) =>
+              normalizeFieryFileName(file.fileName) === normalizeFieryFileName(stagedPdfName)
+          )
+        : undefined;
+
+      if (submissionJobId && ripJob.ripJobGuid !== submissionJobId) {
+        const backfilledPrintSettings = {
+          ...existingPrintSettings,
+          fiery: {
+            ...existingFierySettings,
+            submissionJobId,
+          },
+        };
+
+        await prisma.ripJob.update({
+          where: { id: ripJob.id },
+          data: {
+            ripJobGuid: submissionJobId,
+            printSettingsJson: toJsonValue(backfilledPrintSettings),
+          },
+        });
+
+        ripJob.ripJobGuid = submissionJobId;
+      }
+
+      const fieryJob = findMatchingFieryJob(ripJob, allFieryJobs, existingFierySettings);
+      if (fieryJob) {
+        const matchedAt = fieryJob.timestamp ? new Date(fieryJob.timestamp) : new Date();
+        const updatedPrintSettings = {
+          ...existingPrintSettings,
+          fiery: {
+            ...existingFierySettings,
+            submissionJobId: submissionJobId ?? existingFierySettings.submissionJobId ?? null,
+            exportedJobId: fieryJob.jobId,
+            exportedJobName: fieryJob.jobName,
+            exportedFileName: fieryJob.fileName,
+            exportedAt: fieryJob.timestamp ?? null,
+            exportedMedia: fieryJob.media?.description ?? fieryJob.media?.vutekMedia ?? null,
+            exportedInks: fieryJob.inks,
+          },
+        };
+
+        await prisma.ripJob.update({
+          where: { id: ripJob.id },
+          data: {
+            status: 'PRINTED',
+            rippedAt: ripJob.rippedAt ?? matchedAt,
+            sentToPrinterAt: ripJob.sentToPrinterAt ?? matchedAt,
+            printStartedAt: ripJob.printStartedAt ?? matchedAt,
+            printCompletedAt: ripJob.printCompletedAt ?? matchedAt,
+            printSettingsJson: toJsonValue(updatedPrintSettings),
+            errorMessage: null,
+          },
+        });
+
+        updates.push({
+          ripJobId: ripJob.id,
+          oldStatus: ripJob.status,
+          newStatus: 'PRINTED',
+        });
+        continue;
+      }
+
+      if (!downloadMatch) continue;
+
+      const matchedAt = downloadMatch.timestamp ? new Date(downloadMatch.timestamp) : new Date();
+      const updatedPrintSettings = {
+        ...existingPrintSettings,
+        fiery: {
+          ...existingFierySettings,
+          submissionJobId: submissionJobId ?? existingFierySettings.submissionJobId ?? null,
+          downloadedFileName: downloadMatch.fileName,
+          downloadedFilePath: downloadMatch.filePath,
+          downloadedAt: matchedAt.toISOString(),
+        },
+      };
+
+      if (
+        ripJob.status !== 'PROCESSING' ||
+        existingFierySettings.downloadedFileName !== downloadMatch.fileName ||
+        existingFierySettings.downloadedAt == null
+      ) {
+        await prisma.ripJob.update({
+          where: { id: ripJob.id },
+          data: {
+            status: 'PROCESSING',
+            sentToPrinterAt: ripJob.sentToPrinterAt ?? matchedAt,
+            printSettingsJson: toJsonValue(updatedPrintSettings),
+            errorMessage: null,
+          },
+        });
+
+        updates.push({
+          ripJobId: ripJob.id,
+          oldStatus: ripJob.status,
+          newStatus: 'PROCESSING',
+        });
+      }
+      continue;
+    }
+
     let thriveJob: ThriveJob | undefined;
 
     // Strategy 1: Match by GUID
@@ -535,7 +881,11 @@ export async function calculateKPIs(options?: {
       _count: true,
     }),
     prisma.ripJob.count({
-      where: { ...baseWhere, status: 'COMPLETED', printCompletedAt: { gte: today } },
+      where: {
+        ...baseWhere,
+        status: { in: ['PRINTED', 'COMPLETED'] },
+        printCompletedAt: { gte: today },
+      },
     }),
     prisma.ripJob.count({
       where: { ...baseWhere, status: 'FAILED', updatedAt: { gte: today } },

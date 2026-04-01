@@ -30,7 +30,12 @@ export function UpdateChecker() {
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState('');
   const currentVersion = useRef('');
+  const stateRef = useRef<UpdateState>('idle');
   const checkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   // Get current app version
   useEffect(() => {
@@ -47,7 +52,7 @@ export function UpdateChecker() {
 
   const checkForUpdate = useCallback(async () => {
     if (!isTauri()) return;
-    if (state === 'downloading' || state === 'installing') return;
+    if (stateRef.current === 'downloading' || stateRef.current === 'installing') return;
 
     setState('checking');
     setError('');
@@ -95,7 +100,7 @@ export function UpdateChecker() {
       console.warn('[UpdateChecker] Check failed:', err.message);
       setState('idle');
     }
-  }, [config.apiUrl, state]);
+  }, [config.apiUrl]);
 
   // Check on mount and periodically
   useEffect(() => {

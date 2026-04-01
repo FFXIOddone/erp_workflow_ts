@@ -147,7 +147,8 @@ export function TemplatesPage() {
     navigate('/orders/new');
   };
 
-  const templates = data?.items ?? [];
+  const templates = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+  const totalTemplates = typeof data?.total === 'number' ? data.total : templates.length;
 
   return (
     <div className="space-y-6">
@@ -159,7 +160,7 @@ export function TemplatesPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Order Templates</h1>
-              <p className="text-gray-500">{data?.total ?? 0} templates available</p>
+              <p className="text-gray-500">{totalTemplates} templates available</p>
             </div>
           </div>
         </div>

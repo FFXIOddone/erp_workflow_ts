@@ -1,10 +1,10 @@
 /**
  * RIP Queue Routes
- * 
+ *
  * API endpoints for the RIP Queue integration.
  * Manages the flow of print files from the ERP into RIP hotfolders
  * and tracks their lifecycle through to completion.
- * 
+ *
  * Endpoints:
  *   GET    /rip-queue/hotfolders         — List available RIP hotfolder targets
  *   GET    /rip-queue/jobs               — List RIP jobs with filters
@@ -19,7 +19,10 @@
  *   POST   /rip-queue/validate-file     — Validate a source file path
  */
 
-import { Router, type Response } from 'express';
+import path from 'path';
+import { createReadStream } from 'fs';
+import { promises as fs } from 'fs';
+import { Router, type Request, type Response } from 'express';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { prisma } from '../db/client.js';
@@ -33,9 +36,228 @@ import {
   calculateKPIs,
   validateSourceFile,
 } from '../services/rip-queue.js';
+import {
+  getHHGlobalBatches,
+  validateBatchFiles,
+} from '../services/batch-rip-hh-global.js';
+import {
+  discoverFieryCapabilities,
+  getEffectiveVutekSettings,
+  discoverVutekJmfUrl,
+  testVutekShareAccess,
+  getVutekQueueStatus,
+  discoverFieryWorkflows,
+  submitVutekJob,
+  VUTEK_JOB_DIR,
+} from '../services/fiery-jmf.js';
 
 export const ripQueueRouter = Router();
+
+/**
+ * GET /rip-queue/vutek-files/:filename
+ * Public (no auth) — serves staged VUTEk job files (PDF + JDF) to the VUTEk JDF Connector.
+ * The JDF Connector downloads these over HTTP as part of SubmitQueueEntry processing.
+ */
+ripQueueRouter.get('/vutek-files/:filename', async (req: Request, res: Response) => {
+  const { filename } = req.params;
+  // Prevent path traversal
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    res.status(400).send('Invalid filename');
+    return;
+  }
+  const filePath = path.join(VUTEK_JOB_DIR, filename);
+  try {
+    await fs.access(filePath);
+  } catch {
+    res.status(404).send('Not found');
+    return;
+  }
+  const stat = await fs.stat(filePath);
+  const ext = path.extname(filename).toLowerCase();
+  const contentType =
+    ext === '.pdf'
+      ? 'application/pdf'
+      : ext === '.jdf'
+        ? 'application/vnd.cip4-jdf+xml'
+        : 'application/octet-stream';
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Length', stat.size);
+  createReadStream(filePath).pipe(res);
+});
+
 ripQueueRouter.use(authenticate);
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
+const PRINT_FILE_PATTERN = /\.(pdf|eps|ai|psd|tif|tiff|png|jpg|jpeg)$/i;
+
+const LINK_CONFIDENCE_SCORES: Record<string, number> = {
+  NONE: 0,
+  LOW: 100,
+  MEDIUM: 200,
+  HIGH: 300,
+  CONFIRMED: 400,
+};
+
+const FILE_CHAIN_STATUS_SCORES: Record<string, number> = {
+  DESIGN: 10,
+  SENT_TO_RIP: 20,
+  RIPPING: 30,
+  READY_TO_PRINT: 40,
+  PRINTING: 50,
+  PRINTED: 60,
+};
+
+const ATTACHMENT_TYPE_SCORES: Record<string, number> = {
+  ARTWORK: 300,
+  PROOF: 200,
+  OTHER: 100,
+};
+
+function isAbsoluteOrUncPath(filePath: string): boolean {
+  return path.isAbsolute(filePath) || filePath.startsWith('\\\\');
+}
+
+function resolveStoredAttachmentPath(storedPath: string): string {
+  return isAbsoluteOrUncPath(storedPath)
+    ? storedPath
+    : path.resolve(UPLOAD_DIR, path.basename(storedPath));
+}
+
+async function resolveAttachmentSource(attachment: {
+  fileName: string | null;
+  filePath: string | null;
+}): Promise<{ sourceFilePath: string; displayFileName: string }> {
+  const storedPath = attachment.filePath?.trim();
+  if (!storedPath) {
+    throw BadRequestError('Attachment has no file path');
+  }
+
+  const resolvedPath = resolveStoredAttachmentPath(storedPath);
+  return {
+    sourceFilePath: resolvedPath,
+    displayFileName: attachment.fileName || path.basename(resolvedPath),
+  };
+}
+
+async function resolveAutoRipSourceFile(
+  workOrderId: string
+): Promise<{ sourceFilePath: string; displayFileName: string }> {
+  const [printCutLinks, attachments] = await Promise.all([
+    prisma.printCutLink.findMany({
+      where: { workOrderId },
+      select: {
+        printFileName: true,
+        printFilePath: true,
+        linkConfidence: true,
+        status: true,
+        confirmed: true,
+        ripJobId: true,
+        updatedAt: true,
+      },
+    }),
+    prisma.orderAttachment.findMany({
+      where: { orderId: workOrderId },
+      select: {
+        id: true,
+        fileName: true,
+        filePath: true,
+        fileType: true,
+        uploadedAt: true,
+      },
+    }),
+  ]);
+
+  const candidates = [
+    ...printCutLinks
+      .filter((link) => Boolean(link.printFilePath?.trim()))
+      .map((link) => ({
+        sourceFilePath: link.printFilePath.trim(),
+        displayFileName: link.printFileName?.trim() || path.basename(link.printFilePath.trim()),
+        score:
+          1000 +
+          (link.confirmed ? 500 : 0) +
+          (LINK_CONFIDENCE_SCORES[link.linkConfidence] || 0) +
+          (FILE_CHAIN_STATUS_SCORES[link.status] || 0) +
+          (link.ripJobId ? 25 : 0),
+        timestamp: link.updatedAt.getTime(),
+      })),
+    ...attachments
+      .filter((attachment) => {
+        const storedPath = attachment.filePath?.trim();
+        if (!storedPath) return false;
+        const fileName = attachment.fileName || path.basename(storedPath);
+        return (
+          Boolean(ATTACHMENT_TYPE_SCORES[attachment.fileType]) || PRINT_FILE_PATTERN.test(fileName)
+        );
+      })
+      .map((attachment) => {
+        const resolved = resolveStoredAttachmentPath(attachment.filePath.trim());
+        const fileName = attachment.fileName || path.basename(resolved);
+        return {
+          sourceFilePath: resolved,
+          displayFileName: fileName,
+          score:
+            (ATTACHMENT_TYPE_SCORES[attachment.fileType] || 0) +
+            (PRINT_FILE_PATTERN.test(fileName) ? 50 : 0) +
+            (isAbsoluteOrUncPath(attachment.filePath) ? 25 : 0),
+          timestamp: attachment.uploadedAt.getTime(),
+        };
+      }),
+  ].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.timestamp - a.timestamp;
+  });
+
+  for (const candidate of candidates) {
+    const validation = await validateSourceFile(candidate.sourceFilePath);
+    if (validation.valid) {
+      return {
+        sourceFilePath: candidate.sourceFilePath,
+        displayFileName: candidate.displayFileName,
+      };
+    }
+  }
+
+  throw BadRequestError('No accessible print files or attachments were found for this work order');
+}
+
+async function resolveRipSourceFile(params: {
+  workOrderId?: string;
+  sourceFilePath?: string | null;
+  attachmentId?: string | null;
+}): Promise<{ sourceFilePath: string; displayFileName: string }> {
+  const directPath = params.sourceFilePath?.trim();
+  if (directPath) {
+    return {
+      sourceFilePath: directPath,
+      displayFileName: path.basename(directPath),
+    };
+  }
+
+  if (!params.attachmentId) {
+    if (!params.workOrderId) {
+      throw BadRequestError('sourceFilePath, attachmentId, or workOrderId is required');
+    }
+    return resolveAutoRipSourceFile(params.workOrderId);
+  }
+
+  const attachment = await prisma.orderAttachment.findFirst({
+    where: {
+      id: params.attachmentId,
+      ...(params.workOrderId ? { orderId: params.workOrderId } : {}),
+    },
+    select: {
+      fileName: true,
+      filePath: true,
+    },
+  });
+
+  if (!attachment) {
+    throw NotFoundError('Attachment not found');
+  }
+
+  return resolveAttachmentSource(attachment);
+}
 
 // ─── Hotfolders ───────────────────────────────────────────────
 
@@ -100,7 +322,14 @@ ripQueueRouter.get('/jobs', async (req: AuthRequest, res: Response) => {
       where,
       include: {
         workOrder: {
-          select: { id: true, orderNumber: true, customerName: true, description: true, dueDate: true, status: true },
+          select: {
+            id: true,
+            orderNumber: true,
+            customerName: true,
+            description: true,
+            dueDate: true,
+            status: true,
+          },
         },
         equipment: { select: { id: true, name: true, station: true } },
         createdBy: { select: { id: true, username: true, displayName: true } },
@@ -129,8 +358,13 @@ ripQueueRouter.get('/jobs/:id', async (req: AuthRequest, res: Response) => {
     include: {
       workOrder: {
         select: {
-          id: true, orderNumber: true, customerName: true,
-          description: true, dueDate: true, status: true, companyBrand: true,
+          id: true,
+          orderNumber: true,
+          customerName: true,
+          description: true,
+          dueDate: true,
+          status: true,
+          companyBrand: true,
         },
       },
       equipment: { select: { id: true, name: true, station: true, status: true } },
@@ -145,16 +379,24 @@ ripQueueRouter.get('/jobs/:id', async (req: AuthRequest, res: Response) => {
   // Calculate timing KPIs for this job
   const timing: Record<string, number | null> = {};
   if (job.rippedAt && job.queuedAt) {
-    timing.queueToRipMinutes = Math.round((new Date(job.rippedAt).getTime() - new Date(job.queuedAt).getTime()) / 60000);
+    timing.queueToRipMinutes = Math.round(
+      (new Date(job.rippedAt).getTime() - new Date(job.queuedAt).getTime()) / 60000
+    );
   }
   if (job.printStartedAt && job.rippedAt) {
-    timing.ripToPrintMinutes = Math.round((new Date(job.printStartedAt).getTime() - new Date(job.rippedAt).getTime()) / 60000);
+    timing.ripToPrintMinutes = Math.round(
+      (new Date(job.printStartedAt).getTime() - new Date(job.rippedAt).getTime()) / 60000
+    );
   }
   if (job.printCompletedAt && job.printStartedAt) {
-    timing.printMinutes = Math.round((new Date(job.printCompletedAt).getTime() - new Date(job.printStartedAt).getTime()) / 60000);
+    timing.printMinutes = Math.round(
+      (new Date(job.printCompletedAt).getTime() - new Date(job.printStartedAt).getTime()) / 60000
+    );
   }
   if (job.printCompletedAt && job.queuedAt) {
-    timing.totalMinutes = Math.round((new Date(job.printCompletedAt).getTime() - new Date(job.queuedAt).getTime()) / 60000);
+    timing.totalMinutes = Math.round(
+      (new Date(job.printCompletedAt).getTime() - new Date(job.queuedAt).getTime()) / 60000
+    );
   }
 
   res.json({ success: true, data: { ...job, timing } });
@@ -167,7 +409,8 @@ ripQueueRouter.get('/jobs/:id', async (req: AuthRequest, res: Response) => {
 ripQueueRouter.post('/jobs', async (req: AuthRequest, res: Response) => {
   const {
     workOrderId,
-    sourceFilePath,
+    sourceFilePath: rawSourceFilePath,
+    attachmentId,
     hotfolderId,
     // Print settings
     colorProfile,
@@ -188,7 +431,9 @@ ripQueueRouter.post('/jobs', async (req: AuthRequest, res: Response) => {
   } = req.body;
 
   if (!workOrderId) throw BadRequestError('workOrderId is required');
-  if (!sourceFilePath) throw BadRequestError('sourceFilePath is required');
+  if (!rawSourceFilePath && !attachmentId && !workOrderId) {
+    throw BadRequestError('workOrderId is required');
+  }
   if (!hotfolderId) throw BadRequestError('hotfolderId is required');
 
   // Verify work order exists
@@ -200,8 +445,14 @@ ripQueueRouter.post('/jobs', async (req: AuthRequest, res: Response) => {
 
   // Find the hotfolder target
   const hotfolders = await getHotfoldersWithEquipment();
-  const hotfolder = hotfolders.find(hf => hf.id === hotfolderId);
+  const hotfolder = hotfolders.find((hf) => hf.id === hotfolderId);
   if (!hotfolder) throw BadRequestError(`Unknown hotfolder: ${hotfolderId}`);
+
+  const { sourceFilePath, displayFileName } = await resolveRipSourceFile({
+    workOrderId,
+    sourceFilePath: rawSourceFilePath,
+    attachmentId,
+  });
 
   // Send to RIP
   const result = await sendToRip({
@@ -237,7 +488,7 @@ ripQueueRouter.post('/jobs', async (req: AuthRequest, res: Response) => {
     entityType: EntityType.WORK_ORDER,
     entityId: result.ripJobId!,
     entityName: `RIP Job → ${hotfolder.name}`,
-    description: `Sent ${sourceFilePath.split(/[/\\]/).pop()} to ${hotfolder.name} (WO ${workOrder.orderNumber})`,
+    description: `Sent ${displayFileName} to ${hotfolder.name} (WO ${workOrder.orderNumber})`,
     userId: req.userId!,
     req,
   });
@@ -434,7 +685,7 @@ ripQueueRouter.post('/sync', async (_req: AuthRequest, res: Response) => {
     success: true,
     data: {
       updatedCount: updates.length,
-      updates: updates.map(u => ({
+      updates: updates.map((u) => ({
         ripJobId: u.ripJobId,
         oldStatus: u.oldStatus,
         newStatus: u.newStatus,
@@ -474,7 +725,15 @@ ripQueueRouter.get('/dashboard', async (_req: AuthRequest, res: Response) => {
     prisma.ripJob.findMany({
       where: { status: { in: ['QUEUED', 'PROCESSING', 'READY', 'SENDING', 'PRINTING'] } },
       include: {
-        workOrder: { select: { id: true, orderNumber: true, customerName: true, description: true, dueDate: true } },
+        workOrder: {
+          select: {
+            id: true,
+            orderNumber: true,
+            customerName: true,
+            description: true,
+            dueDate: true,
+          },
+        },
         equipment: { select: { id: true, name: true, station: true } },
         createdBy: { select: { id: true, username: true, displayName: true } },
       },
@@ -510,9 +769,274 @@ ripQueueRouter.get('/dashboard', async (_req: AuthRequest, res: Response) => {
  * Validate that a source file path is accessible.
  */
 ripQueueRouter.post('/validate-file', async (req: AuthRequest, res: Response) => {
-  const { filePath } = req.body;
-  if (!filePath) throw BadRequestError('filePath is required');
+  const { filePath, attachmentId, workOrderId } = req.body;
+  if (!filePath && !attachmentId && !workOrderId) {
+    throw BadRequestError('filePath, attachmentId, or workOrderId is required');
+  }
 
-  const result = await validateSourceFile(filePath);
+  const resolved = await resolveRipSourceFile({
+    workOrderId,
+    sourceFilePath: filePath,
+    attachmentId,
+  });
+  const result = await validateSourceFile(resolved.sourceFilePath);
+  res.json({
+    success: true,
+    data: {
+      ...result,
+      fileName: resolved.displayFileName,
+      resolvedPath: resolved.sourceFilePath,
+    },
+  });
+});
+
+/**
+ * POST /rip-queue/batches/hh-global
+ * Submit HH Global orders as batches grouped by material and size
+ */
+ripQueueRouter.post('/batches/hh-global', async (req: AuthRequest, res: Response) => {
+  try {
+    // Get all HH Global orders ready for FLATBED RIP
+    const batches = await getHHGlobalBatches();
+
+    if (batches.length === 0) {
+      return res.json({
+        success: true,
+        batchesSubmitted: 0,
+        jobsCreated: 0,
+        results: [],
+        message: 'No HH Global orders ready for RIP',
+      });
+    }
+
+    const fieryHotfolders = await getHotfoldersWithEquipment();
+    const fieryHotfolder = fieryHotfolders.find(
+      (h) => h.ripType === 'Fiery' && h.station === 'FLATBED'
+    );
+    if (!fieryHotfolder) {
+      throw NotFoundError('Fiery hotfolder not configured');
+    }
+
+    // Validate that all orders have printable files
+    const allOrderIds = batches.flatMap((b) => b.orderIds);
+    const { valid, missing } = await validateBatchFiles(allOrderIds);
+
+    if (missing.length > 0) {
+      return res.json({
+        success: false,
+        error: `${missing.length} orders missing PDF files`,
+        ordersWithoutFiles: missing,
+        batchesSubmitted: 0,
+        jobsCreated: 0,
+      });
+    }
+
+    // Submit each batch to RIP
+    const results: any[] = [];
+    let totalJobsCreated = 0;
+
+    for (const batch of batches) {
+      const batchResults: any[] = [];
+
+      for (const orderId of batch.orderIds) {
+        try {
+          // Resolve the best accessible print file for this order.
+          // resolveAutoRipSourceFile considers PrintCutLinks (highest priority),
+          // then attachments with proper path resolution, and validates each
+          // candidate is actually reachable on disk before selecting it.
+          const { sourceFilePath, displayFileName } = await resolveAutoRipSourceFile(orderId);
+
+          // Send to RIP
+          const jobResult = await sendToRip({
+            workOrderId: orderId,
+            sourceFilePath,
+            hotfolderTarget: fieryHotfolder,
+            printSettings: {
+              mediaProfile: batch.material,
+              mediaType: batch.material,
+              additionalSettings: {
+                batchGroup: `${batch.material}_${batch.size}`,
+                wobbler: batch.wobbler,
+              },
+            },
+            notes: `Batch: ${batch.description}`,
+            userId: req.user!.id,
+          });
+
+          if (jobResult.success) {
+            batchResults.push({
+              orderId,
+              status: 'submitted',
+              jobId: jobResult.ripJobId,
+            });
+            totalJobsCreated++;
+          } else {
+            batchResults.push({
+              orderId,
+              status: 'failed',
+              error: jobResult.error || 'Unknown error',
+            });
+          }
+        } catch (orderError) {
+          batchResults.push({
+            orderId,
+            status: 'failed',
+            error: orderError instanceof Error ? orderError.message : 'Unknown error',
+          });
+        }
+      }
+
+      results.push({
+        batchKey: `${batch.material}|${batch.size}${batch.wobbler ? '|wobbler' : ''}`,
+        description: batch.description,
+        orderCount: batch.orderIds.length,
+        jobsCreated: batchResults.filter((r) => r.status === 'submitted').length,
+        orderResults: batchResults,
+      });
+    }
+
+    // Log activity
+    await logActivity({
+      userId: req.user!.id,
+      entityType: EntityType.OTHER,
+      entityId: '',
+      action: ActivityAction.CREATE,
+      description: `Submitted ${batches.length} HH Global batches to RIP`,
+      details: {
+        batchesSubmitted: batches.length,
+        jobsCreated: totalJobsCreated,
+      },
+    });
+
+    // Broadcast update
+    broadcast({
+      type: 'RIP_BATCH_SUBMITTED',
+      payload: {
+        batchesSubmitted: batches.length,
+        jobsCreated: totalJobsCreated,
+        timestamp: new Date(),
+      },
+    });
+
+    res.json({
+      success: true,
+      batchesSubmitted: batches.length,
+      jobsCreated: totalJobsCreated,
+      results,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to submit HH Global batches';
+    res.status(500).json({
+      success: false,
+      error: message,
+    });
+  }
+});
+
+/**
+ * GET /rip-queue/fiery/diagnostics
+ * Run connectivity checks against the VUTEk/Fiery system.
+ * Returns share accessibility, JMF endpoint discovery, and queue status.
+ */
+ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response) => {
+  const [shareResult, discovery, queueStatus, workflowDiscovery, capabilities] = await Promise.all([
+    testVutekShareAccess(),
+    discoverVutekJmfUrl(),
+    getVutekQueueStatus(),
+    discoverFieryWorkflows(),
+    discoverFieryCapabilities(),
+  ]);
+  const effective = getEffectiveVutekSettings();
+
+  res.json({
+    success: true,
+    data: {
+      share: {
+        path: '\\\\192.168.254.57\\Users\\Public\\Documents\\VUTEk Jobs',
+        accessible: shareResult.accessible,
+        writable: shareResult.writable,
+        error: shareResult.error ?? null,
+      },
+      jmf: {
+        host: '192.168.254.57',
+        port: 8010,
+        discoveredUrl: discovery.url,
+        autoDiscovered: discovery.discovered,
+        discoveryRaw: discovery.raw ?? null,
+      },
+      queue: {
+        status: queueStatus.status,
+        queueSize: queueStatus.queueSize,
+        jobId: queueStatus.jobId ?? null,
+        queueEntryId: queueStatus.queueEntryId ?? null,
+        raw: queueStatus.raw ?? null,
+      },
+      workflow: {
+        outputChannelName: effective.outputChannelName,
+        colorMode: effective.colorMode,
+        inkType: effective.inkType,
+        whiteInkOptions: effective.whiteInkOptions,
+        discoveredWorkflows: workflowDiscovery.workflows,
+        discoverySource: workflowDiscovery.source,
+        discoveryError: workflowDiscovery.error ?? null,
+        hint:
+          workflowDiscovery.workflows.length > 0
+            ? `Found ${workflowDiscovery.workflows.length} workflow(s). Set VUTEK_OUTPUT_CHANNEL only if you want a specific workflow hint: ${workflowDiscovery.workflows.join(', ')}`
+            : 'Plain hotfolder imports still work with controller defaults. VUTEK_OUTPUT_CHANNEL is only needed if you want a specific workflow hint.',
+      },
+      media: {
+        media: effective.media,
+        mediaType: effective.mediaType,
+        mediaUnit: effective.mediaUnit,
+        mediaDimension: effective.mediaDimension,
+        resolution: effective.resolution,
+        whiteInkEnabled: effective.whiteInk,
+      },
+      capabilities: {
+        workflows: capabilities.workflows,
+        colorModes: capabilities.colorModes,
+        inkTypes: capabilities.inkTypes,
+        whiteInkOptions: capabilities.whiteInkOptions,
+        source: capabilities.source,
+        error: capabilities.error ?? null,
+      },
+    },
+  });
+});
+
+/**
+ * GET /rip-queue/fiery/queue-status
+ * Return the live VUTEk print queue status via JMF QueueStatus query.
+ */
+ripQueueRouter.get('/fiery/queue-status', async (_req: AuthRequest, res: Response) => {
+  const result = await getVutekQueueStatus();
   res.json({ success: true, data: result });
+});
+
+/**
+ * GET /rip-queue/fiery/workflows
+ * Scan ProgramData share + EFI Export Folder to discover Fiery XF workflow names.
+ */
+ripQueueRouter.get('/fiery/workflows', async (_req: AuthRequest, res: Response) => {
+  const result = await discoverFieryWorkflows();
+  res.json({ success: true, data: result });
+});
+
+/**
+ * POST /rip-queue/fiery/test-submit
+ * Legacy diagnostic: submit a test JDF job to the VUTEk using a PDF already on the VUTEk Jobs share.
+ * Body: { pdfFilename: string } — filename of an existing PDF in the VUTEk Jobs share
+ */
+ripQueueRouter.post('/fiery/test-submit', async (req: AuthRequest, res: Response) => {
+  const { pdfFilename } = req.body as { pdfFilename?: string };
+  if (!pdfFilename) {
+    throw BadRequestError('pdfFilename is required');
+  }
+  const shareRoot = '\\\\192.168.254.57\\Users\\Public\\Documents\\VUTEk Jobs';
+  const sourcePath = path.join(shareRoot, pdfFilename);
+  const result = await submitVutekJob({
+    jobId: `TEST-${Date.now()}`,
+    sourceFilePath: sourcePath,
+  });
+  res.json({ success: result.success, data: result });
 });

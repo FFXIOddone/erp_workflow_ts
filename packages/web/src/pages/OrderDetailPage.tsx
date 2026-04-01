@@ -6,8 +6,10 @@ import { useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatDate } from '../lib/date';
 import { STATUS_DISPLAY_NAMES, STATUS_COLORS, STATION_DISPLAY_NAMES, UserRole, PrintingMethod, SUB_STATION_PARENTS, PARENT_SUB_STATIONS } from '@erp/shared';
+import { buildDesignFollowOnPayload, buildDuplicateOrderPayload, isDesignOnlySource, type OrderRecreationSource } from '../lib/order-recreation';
 import { useAuthStore } from '../stores/auth';
 import { NetworkFileBrowser } from '../components/NetworkFileBrowser';
+import { ShippingPanel } from '../components/ShippingPanel';
 import { PrinterInfoCard } from '../components/PrinterInfoCard';
 import { ZundInfoCard } from '../components/ZundInfoCard';
 import { HorizontalActivityTimeline } from '../components/HorizontalActivityTimeline';
@@ -86,6 +88,46 @@ export function OrderDetailPage() {
     },
   });
 
+  const handleCompleteStation = async (station: string) => {
+    if (!order) return;
+
+    const isDesignOnlyDesignStation =
+      station === PrintingMethod.DESIGN && isDesignOnlySource(order as OrderRecreationSource);
+
+    if (isDesignOnlyDesignStation) {
+      const confirmed = window.confirm(
+        `Mark design complete for ${order.orderNumber}? This will close the design-only order.`,
+      );
+      if (!confirmed) return;
+    }
+
+    try {
+      await completeStationMutation.mutateAsync(station);
+    } catch {
+      return;
+    }
+
+    if (!isDesignOnlyDesignStation) {
+      return;
+    }
+
+    const shouldCreateFollowOn = window.confirm(
+      `Create a new work order from ${order.orderNumber} now?`,
+    );
+    if (!shouldCreateFollowOn) {
+      return;
+    }
+
+    try {
+      const response = await api.post('/orders', buildDesignFollowOnPayload(order as OrderRecreationSource));
+      const newOrder = response.data.data;
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast.success(`Created ${newOrder.orderNumber} from ${order.orderNumber}`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || err?.message || 'Failed to create follow-on order');
+    }
+  };
+
   const uncompleteStationMutation = useMutation({
     mutationFn: async (station: string) => {
       await api.post(`/orders/${id}/stations/${station}/uncomplete`);
@@ -117,40 +159,16 @@ export function OrderDetailPage() {
 
   const duplicateOrderMutation = useMutation({
     mutationFn: async () => {
-      // Generate a new temp order number
-      const tempOrderNumber = `TEMPWO-${Date.now().toString().slice(-6)}`;
-      
-      // Prepare line items - convert string values to numbers (Prisma Decimal fields come as strings)
-      const lineItems = (order.lineItems || []).map((item: { itemMasterId?: string; description?: string; quantity?: number | string; unitPrice?: number | string }) => ({
-        itemMasterId: item.itemMasterId || undefined,
-        description: item.description || 'Item',
-        quantity: Math.max(1, Math.round(Number(item.quantity) || 1)),
-        unitPrice: Math.max(0, parseFloat(String(item.unitPrice)) || 0),
-      })).filter((item: { itemMasterId?: string }) => !!item.itemMasterId);
-      
-      // Use routing directly from order (not from stationProgress)
-      const routing = Array.isArray(order.routing) ? order.routing : [];
-      
-      // Create new order with same data as current order
-      const newOrderData = {
-        orderNumber: tempOrderNumber,
-        customerName: order.customerName || 'Unknown Customer',
-        customerId: order.customerId || undefined,
-        description: `${order.description || 'Duplicated Order'} (Copy)`,
-        notes: order.notes || undefined,
-        priority: typeof order.priority === 'number' ? order.priority : 3,
-        routing,
-        lineItems,
-      };
-      const response = await api.post('/orders', newOrderData);
+      const response = await api.post('/orders', buildDuplicateOrderPayload(order as OrderRecreationSource));
       return response.data.data;
     },
     onSuccess: (newOrder) => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
       toast.success(`Order duplicated as #${newOrder.orderNumber}`);
       navigate(`/orders/${newOrder.id}`);
     },
-    onError: () => {
-      toast.error('Failed to duplicate order');
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.error || err?.message || 'Failed to duplicate order');
     },
   });
 
@@ -376,7 +394,7 @@ export function OrderDetailPage() {
                 <dd className="font-medium text-gray-900">
                   {order.dueDate
                     ? formatDate(order.dueDate)
-                    : '-'}
+                    : 'Not scheduled'}
                 </dd>
               </div>
               <div className="flex justify-between items-center">
@@ -401,6 +419,8 @@ export function OrderDetailPage() {
               </div>
             </dl>
           </div>
+
+          <ShippingPanel workOrderId={order.id} orderNumber={order.orderNumber} />
 
           {/* Station Progress */}
           <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6">
@@ -454,7 +474,7 @@ export function OrderDetailPage() {
                               onClick={() =>
                                 sp.status === 'COMPLETED'
                                   ? uncompleteStationMutation.mutate(sp.station)
-                                  : completeStationMutation.mutate(sp.station)
+                                  : handleCompleteStation(sp.station)
                               }
                               className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
                                 sp.status === 'COMPLETED'
@@ -505,7 +525,7 @@ export function OrderDetailPage() {
                                   onClick={() =>
                                     sub.status === 'COMPLETED'
                                       ? uncompleteStationMutation.mutate(sub.station)
-                                      : completeStationMutation.mutate(sub.station)
+                                      : handleCompleteStation(sub.station)
                                   }
                                   className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
                                     sub.status === 'COMPLETED'

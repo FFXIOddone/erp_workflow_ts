@@ -37,20 +37,22 @@ $ErrorActionPreference = 'Stop'
 $ROOT = $PSScriptRoot | Split-Path | Split-Path  # erp_workflow_ts root
 $SERVER_IP = "192.168.254.75"
 $ERP_SHARE = "\\$SERVER_IP\ERP\erp_workflow_ts"
+$ERP_SHARE_FALLBACK = "\\$SERVER_IP\C$\ERP\erp_workflow_ts"
 
-function Write-Step($n, $total, $msg) { Write-Host "`n━━━ [$n/$total] $msg ━━━" -ForegroundColor Cyan }
-function Write-Done($msg) { Write-Host "  ✓ $msg" -ForegroundColor Green }
-function Write-Fail($msg) { Write-Host "  ✗ $msg" -ForegroundColor Red }
+function Write-Step($n, $total, $msg) { Write-Host ("[step {0}/{1}] {2}" -f $n, $total, $msg) -ForegroundColor Cyan }
+function Write-Done($msg) { Write-Host ("[ok] {0}" -f $msg) -ForegroundColor Green }
+function Write-Fail($msg) { Write-Host ("[fail] {0}" -f $msg) -ForegroundColor Red }
 
 $totalSteps = if ($BuildOnly) { 3 } elseif ($DeployOnly) { 3 } else { 6 }
 
-Write-Host @"
+$banner = @"
 
 ╔══════════════════════════════════════════════════════════════╗
 ║        ERP Production Build & Deploy                         ║
 ╚══════════════════════════════════════════════════════════════╝
 
-"@ -ForegroundColor Magenta
+"@
+Write-Host $banner -ForegroundColor Magenta
 
 Set-Location $ROOT
 
@@ -93,13 +95,13 @@ if (-not $DeployOnly) {
             try {
                 pnpm build 2>&1 | Out-Null
                 if (Test-Path "$appDir\dist\index.html") {
-                    Write-Host " ✓" -ForegroundColor Green
+                    Write-Host " OK" -ForegroundColor Green
                 } else {
-                    Write-Host " ✗ (no dist/index.html)" -ForegroundColor Red
+                    Write-Host " FAIL (no dist/index.html)" -ForegroundColor Red
                     $failed += $app.Label
                 }
             } catch {
-                Write-Host " ✗ ($($_.Exception.Message))" -ForegroundColor Red
+                Write-Host (" FAIL ({0})" -f $_.Exception.Message) -ForegroundColor Red
                 $failed += $app.Label
             }
         }
@@ -138,7 +140,7 @@ if ($Local) {
     $env:SERVER_PORT = "8001"
     $env:SERVER_HOST = "0.0.0.0"
     
-    Write-Host @"
+    $localBanner = @"
 
   Starting ERP in production mode...
   
@@ -148,7 +150,8 @@ if ($Local) {
   
   Press Ctrl+C to stop.
 
-"@ -ForegroundColor Green
+"@
+    Write-Host $localBanner -ForegroundColor Green
     
     npx tsx src/index.ts
     exit 0
@@ -164,13 +167,17 @@ Write-Step $deployStep $totalSteps "Syncing files to WS-RACHEL"
 
 # Test share access
 if (-not (Test-Path $ERP_SHARE -ErrorAction SilentlyContinue)) {
-    # Try creating the share path
     if (-not (Test-Path "\\$SERVER_IP\ERP" -ErrorAction SilentlyContinue)) {
-        Write-Fail "Cannot access \\$SERVER_IP\ERP share"
-        Write-Host "  Run setup-server.ps1 on WS-RACHEL first to create the share." -ForegroundColor Yellow
-        Write-Host "  Or manually create C:\ERP and share it:" -ForegroundColor Yellow
-        Write-Host "    net share ERP=C:\ERP /grant:Everyone,FULL" -ForegroundColor White
-        exit 1
+        if (-not (Test-Path "\\$SERVER_IP\C$" -ErrorAction SilentlyContinue)) {
+            Write-Fail "Cannot access either \\$SERVER_IP\ERP or \\$SERVER_IP\C$"
+            Write-Host "  Run setup-server.ps1 on WS-RACHEL first to create the share." -ForegroundColor Yellow
+            Write-Host "  Or manually create C:\ERP and share it:" -ForegroundColor Yellow
+            Write-Host "    net share ERP=C:\ERP /grant:Everyone,FULL" -ForegroundColor White
+            exit 1
+        }
+
+        Write-Host "  ERP share not found, using admin C$ path instead." -ForegroundColor Yellow
+        $ERP_SHARE = $ERP_SHARE_FALLBACK
     }
     New-Item -Path $ERP_SHARE -ItemType Directory -Force | Out-Null
 }
@@ -244,6 +251,11 @@ set NODE_ENV=production
 set SERVER_PORT=8001
 set SERVER_HOST=0.0.0.0
 cd packages\server
+call node scripts\ensure-better-sqlite3.mjs
+if errorlevel 1 (
+    echo   ERROR: better-sqlite3 preflight failed for the active Node runtime.
+    exit /b 1
+)
 call npx tsx src/index.ts
 "@
 
@@ -288,7 +300,7 @@ Write-Done "PM2 production config created"
 $deployStep++
 Write-Step $deployStep $totalSteps "Summary"
 
-Write-Host @"
+$summaryBanner = @"
 
 ╔══════════════════════════════════════════════════════════════╗
 ║              Deployment Package Ready!                       ║
@@ -322,4 +334,5 @@ Write-Host @"
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 
-"@ -ForegroundColor Green
+"@
+Write-Host $summaryBanner -ForegroundColor Green

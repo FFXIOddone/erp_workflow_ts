@@ -1,13 +1,5 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
-import {
-  Warehouse,
-  LogOut,
-  ArrowLeft,
-  Settings,
-  RefreshCw,
-  Wifi,
-  WifiOff,
-} from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Warehouse, LogOut, ArrowLeft, Settings, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import { useAuthStore } from './stores/auth';
 import { useConfigStore, StationId } from './stores/config';
 import { isTauri, invoke } from './lib/tauri-bridge';
@@ -56,9 +48,7 @@ function StationView({ station }: { station: StationId }) {
       return <InstallationStation />;
     default:
       return (
-        <div className="flex items-center justify-center h-full text-gray-400">
-          Unknown station
-        </div>
+        <div className="flex items-center justify-center h-full text-gray-400">Unknown station</div>
       );
   }
 }
@@ -66,8 +56,8 @@ function StationView({ station }: { station: StationId }) {
 // Map StationId to PrintingMethod values for access control
 const STATION_TO_METHODS: Record<StationId, string[]> = {
   DESIGN: ['DESIGN'],
-  PRINTING: ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT'],
-  PRODUCTION: ['PRODUCTION'],
+  PRINTING: ['ROLL_TO_ROLL', 'FLATBED'],
+  PRODUCTION: ['PRODUCTION', 'SCREEN_PRINT'],
   SHIPPING: ['SHIPPING_RECEIVING'],
   ORDER_ENTRY: ['ORDER_ENTRY'],
   INSTALLATION: ['INSTALLATION'],
@@ -79,19 +69,55 @@ function App() {
   const [online, setOnline] = useState(navigator.onLine);
   const [version, setVersion] = useState('');
   const [showSettings, setShowSettings] = useState(false);
-  const { config, setApiUrl, setNetworkDrivePath, setDevMode, setDevFrontendUrl } = useConfigStore();
+  const { config, setApiUrl, setNetworkDrivePath, setDevMode, setDevFrontendUrl } =
+    useConfigStore();
 
   const userAllowedStations = user?.allowedStations;
-  const isStationAllowed = (station: StationId): boolean => {
-    if (!userAllowedStations || userAllowedStations.length === 0) return true; // Admin — show all
-    return STATION_TO_METHODS[station].some(m => userAllowedStations.includes(m));
-  };
+  const isAdmin =
+    user?.role === 'ADMIN' ||
+    user?.role === 'MANAGER' ||
+    !userAllowedStations ||
+    userAllowedStations.length === 0;
+  const wasAuthenticatedRef = useRef(isAuthenticated);
 
-  // Block access to forbidden stations
-  if (activeStation && !isStationAllowed(activeStation)) {
-    setActiveStation(null as any);
+  const isStationAllowed = (station: StationId): boolean => {
+    if (isAdmin) return true;
+    return STATION_TO_METHODS[station].some((m) => userAllowedStations!.includes(m));
+  };
+  const blockedStation = activeStation && !isStationAllowed(activeStation) ? activeStation : null;
+  const visibleStation = blockedStation ? null : activeStation;
+
+  // Clear station on logout so the next login always shows the picker
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setActiveStation(null);
+    }
+  }, [isAuthenticated, setActiveStation]);
+
+  // Admins should always choose their station — never silently restore a persisted one.
+  useEffect(() => {
+    if (isAuthenticated && isAdmin && activeStation) {
+      setActiveStation(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally mount-only
+
+  // If an admin logs in after the app has already mounted, clear any restored station once.
+  useEffect(() => {
+    const wasAuthenticated = wasAuthenticatedRef.current;
+    wasAuthenticatedRef.current = isAuthenticated;
+
+    if (!wasAuthenticated && isAuthenticated && isAdmin && activeStation) {
+      setActiveStation(null);
+    }
+  }, [activeStation, isAdmin, isAuthenticated, setActiveStation]);
+
+  // Block access to forbidden stations from persisted state or manual tampering.
+  useEffect(() => {
+    if (!blockedStation) return;
+    setActiveStation(null);
     toast.error('You do not have access to this station');
-  }
+  }, [blockedStation, setActiveStation]);
 
   // Dev mode: redirect the webview to the server-hosted frontend
   // This lets you iterate on frontend code without rebuilding the exe
@@ -123,7 +149,9 @@ function App() {
   useEffect(() => {
     if (isTauri()) {
       invoke<string>('get_app_version')
-        .then((v) => { if (v) setVersion(v); })
+        .then((v) => {
+          if (v) setVersion(v);
+        })
         .catch(() => setVersion('dev'));
     } else {
       setVersion('web');
@@ -136,7 +164,7 @@ function App() {
   }
 
   // Logged in but no station selected — show picker
-  if (!activeStation) {
+  if (!visibleStation) {
     return <StationPicker />;
   }
 
@@ -145,11 +173,11 @@ function App() {
     <div className="h-screen flex flex-col bg-gray-100">
       {/* Top bar */}
       <header
-        className={`${STATION_COLORS[activeStation]} text-white flex items-center px-4 py-2 gap-3 shadow-md select-none`}
+        className={`${STATION_COLORS[visibleStation]} text-white flex items-center px-4 py-2 gap-3 shadow-md select-none`}
         style={{ WebkitAppRegion: 'drag' } as any}
       >
         <button
-          onClick={() => setActiveStation(null as any)}
+          onClick={() => setActiveStation(null)}
           className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
           style={{ WebkitAppRegion: 'no-drag' } as any}
           title="Switch station"
@@ -158,26 +186,17 @@ function App() {
         </button>
 
         <Warehouse className="w-5 h-5" />
-        <span className="font-bold text-lg">
-          {STATION_LABELS[activeStation]}
-        </span>
+        <span className="font-bold text-lg">{STATION_LABELS[visibleStation]}</span>
 
         <div className="flex-1" />
 
         {/* Connection indicator */}
         <div className="flex items-center gap-1.5 text-sm opacity-80">
-          {online ? (
-            <Wifi className="w-4 h-4" />
-          ) : (
-            <WifiOff className="w-4 h-4 text-red-300" />
-          )}
+          {online ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4 text-red-300" />}
         </div>
 
         {/* User info */}
-        <div
-          className="text-sm opacity-90"
-          style={{ WebkitAppRegion: 'no-drag' } as any}
-        >
+        <div className="text-sm opacity-90" style={{ WebkitAppRegion: 'no-drag' } as any}>
           {user?.displayName || user?.username}
         </div>
 
@@ -195,7 +214,7 @@ function App() {
         <button
           onClick={() => {
             logout();
-            setActiveStation(null as any);
+            setActiveStation(null);
           }}
           className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
           style={{ WebkitAppRegion: 'no-drag' } as any}
@@ -205,9 +224,7 @@ function App() {
         </button>
 
         {/* Version badge */}
-        {version && (
-          <span className="text-xs opacity-50 ml-1">v{version}</span>
-        )}
+        {version && <span className="text-xs opacity-50 ml-1">v{version}</span>}
       </header>
 
       {/* Auto-update banner */}
@@ -227,9 +244,7 @@ function App() {
           <h3 className="font-semibold text-gray-900 text-sm">Settings</h3>
           <div className="grid grid-cols-2 gap-4 max-w-2xl">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                API URL
-              </label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">API URL</label>
               <input
                 type="text"
                 value={config.apiUrl}
@@ -282,8 +297,10 @@ function App() {
                   className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  App will load the frontend from this URL instead of the bundled files.
-                  Change code → run <code className="bg-gray-100 px-1 rounded">pnpm --filter shop-floor build</code> → relaunch app.
+                  App will load the frontend from this URL instead of the bundled files. Change code
+                  → run{' '}
+                  <code className="bg-gray-100 px-1 rounded">pnpm --filter shop-floor build</code> →
+                  relaunch app.
                 </p>
               </div>
             )}
@@ -303,7 +320,7 @@ function App() {
 
       {/* Station content */}
       <main className="flex-1 overflow-hidden">
-        <StationView station={activeStation} />
+        <StationView station={visibleStation} />
       </main>
     </div>
   );

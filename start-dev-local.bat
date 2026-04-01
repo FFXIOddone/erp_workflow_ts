@@ -15,6 +15,31 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+echo Using Node from:
+where node
+node -v
+echo.
+
+node -e "if (process.version !== 'v24.14.0') { console.error('ERROR: This repo is pinned to Node 24.14.0. Found ' + process.version + '.'); process.exit(1); }"
+if %errorlevel% neq 0 (
+    pause
+    exit /b 1
+)
+
+:: Ensure native addons match the active Node runtime
+echo Checking native modules...
+node -e "require('better-sqlite3'); console.log('better-sqlite3 OK for', process.version, 'ABI', process.versions.modules)" >nul 2>nul
+if %errorlevel% neq 0 (
+    echo Rebuilding better-sqlite3 for the active Node runtime...
+    call cmd /c npm rebuild better-sqlite3
+    if %errorlevel% neq 0 (
+        echo ERROR: better-sqlite3 rebuild failed for the active Node runtime.
+        echo Make sure you start this script with the same Node version you used for npm install.
+        pause
+        exit /b 1
+    )
+)
+
 :: Kill any existing processes on our ports
 echo Cleaning up old processes...
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8001 :8000 :5173 :5174 :5180 :5181 :5182 :5183 :5184 :5185 :5186" ^| findstr LISTENING 2^>nul') do taskkill /F /PID %%a >nul 2>nul

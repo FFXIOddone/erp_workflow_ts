@@ -1,40 +1,91 @@
 // Constants shared across the application
 
 export const STATION_DISPLAY_NAMES: Record<string, string> = {
+  // Primary stations
+  SALES: 'Sales',
+  DESIGN_ONLY: 'Design Only',
+  ORDER_ENTRY: 'Order Entry',
+  DESIGN: 'Design',
+  FLATBED: 'Flatbed',
   ROLL_TO_ROLL: 'Roll to Roll',
   SCREEN_PRINT: 'Screen Print',
   PRODUCTION: 'Production',
-  FLATBED: 'Flatbed',
-  DESIGN: 'Design',
-  SALES: 'Sales',
+  SHIPPING_RECEIVING: 'Shipping',
   INSTALLATION: 'Installation',
-  ORDER_ENTRY: 'Order Entry',
-  SHIPPING_RECEIVING: 'Shipping & Receiving',
-  // Sub-stations
-  FLATBED_PRINTING: 'Flatbed Printing',
-  ROLL_TO_ROLL_PRINTING: 'Roll to Roll Printing',
-  PRODUCTION_ZUND: 'Zund Cutting',
-  PRODUCTION_FINISHING: 'Finishing',
-  SHIPPING_QC: 'Quality Check',
-  SHIPPING_PACKAGING: 'Packaging',
+  COMPLETE: 'Complete',
+  // Design sub-stations
+  DESIGN_PROOF: 'Design - Proof',
+  DESIGN_APPROVAL: 'Design - Approval',
+  DESIGN_PRINT_READY: 'Design - Print Ready',
+  // Flatbed sub-stations
+  FLATBED_PRINTING: 'Flatbed - Printing',
+  // Roll to Roll sub-stations
+  ROLL_TO_ROLL_PRINTING: 'Roll to Roll - Printing',
+  // Screen Print sub-stations
+  SCREEN_PRINT_PRINTING: 'Screen Print - Printing',
+  SCREEN_PRINT_ASSEMBLY: 'Screen Print - Assembly',
+  // Production sub-stations
+  PRODUCTION_ZUND: 'Production - Zund',
+  PRODUCTION_FINISHING: 'Production - Finishing',
+  // Shipping sub-stations
+  SHIPPING_QC: 'Shipping - QC',
+  SHIPPING_PACKAGING: 'Shipping - Packaging',
+  SHIPPING_SHIPMENT: 'Shipping - Shipment',
+  SHIPPING_INSTALL_READY: 'Shipping - Install Ready',
+  // Installation sub-stations
+  INSTALLATION_REMOTE: 'Installation - Remote',
+  INSTALLATION_INHOUSE: 'Installation - InHouse',
+  // Complete sub-stations
+  COMPLETE_INSTALLED: 'Complete - Installed',
+  COMPLETE_SHIPPED: 'Complete - Shipped',
+  COMPLETE_DESIGN_ONLY: 'Complete - Design Only',
 };
 
 /** Maps sub-stations to their parent station */
 export const SUB_STATION_PARENTS: Record<string, string> = {
+  // Design
+  DESIGN_PROOF: 'DESIGN',
+  DESIGN_APPROVAL: 'DESIGN',
+  DESIGN_PRINT_READY: 'DESIGN',
+  // Flatbed
   FLATBED_PRINTING: 'FLATBED',
+  // Roll to Roll
   ROLL_TO_ROLL_PRINTING: 'ROLL_TO_ROLL',
+  // Screen Print
+  SCREEN_PRINT_PRINTING: 'SCREEN_PRINT',
+  SCREEN_PRINT_ASSEMBLY: 'SCREEN_PRINT',
+  // Production
   PRODUCTION_ZUND: 'PRODUCTION',
   PRODUCTION_FINISHING: 'PRODUCTION',
+  // Shipping
   SHIPPING_QC: 'SHIPPING_RECEIVING',
   SHIPPING_PACKAGING: 'SHIPPING_RECEIVING',
+  SHIPPING_SHIPMENT: 'SHIPPING_RECEIVING',
+  SHIPPING_INSTALL_READY: 'SHIPPING_RECEIVING',
+  // Installation
+  INSTALLATION_REMOTE: 'INSTALLATION',
+  INSTALLATION_INHOUSE: 'INSTALLATION',
+  // Complete
+  COMPLETE_INSTALLED: 'COMPLETE',
+  COMPLETE_SHIPPED: 'COMPLETE',
+  COMPLETE_DESIGN_ONLY: 'COMPLETE',
 };
 
 /** Maps parent stations to their sub-stations */
 export const PARENT_SUB_STATIONS: Record<string, string[]> = {
+  DESIGN: ['DESIGN_PROOF', 'DESIGN_APPROVAL', 'DESIGN_PRINT_READY'],
   FLATBED: ['FLATBED_PRINTING'],
   ROLL_TO_ROLL: ['ROLL_TO_ROLL_PRINTING'],
+  SCREEN_PRINT: ['SCREEN_PRINT_PRINTING', 'SCREEN_PRINT_ASSEMBLY'],
   PRODUCTION: ['PRODUCTION_ZUND', 'PRODUCTION_FINISHING'],
-  SHIPPING_RECEIVING: ['SHIPPING_QC', 'SHIPPING_PACKAGING'],
+  SHIPPING_RECEIVING: [
+    'SHIPPING_QC',
+    'SHIPPING_PACKAGING',
+    'SHIPPING_SHIPMENT',
+    'SHIPPING_INSTALL_READY',
+  ],
+  INSTALLATION: ['INSTALLATION_REMOTE', 'INSTALLATION_INHOUSE'],
+  COMPLETE: ['COMPLETE_INSTALLED', 'COMPLETE_SHIPPED', 'COMPLETE_DESIGN_ONLY'],
 };
 
 export const STATUS_DISPLAY_NAMES: Record<string, string> = {
@@ -47,12 +98,12 @@ export const STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const STATUS_COLORS: Record<string, string> = {
-  PENDING: '#f59e0b',      // amber
-  IN_PROGRESS: '#3b82f6',  // blue
-  ON_HOLD: '#ef4444',      // red
-  COMPLETED: '#22c55e',    // green
-  SHIPPED: '#8b5cf6',      // purple
-  CANCELLED: '#6b7280',    // gray
+  PENDING: '#f59e0b', // amber
+  IN_PROGRESS: '#3b82f6', // blue
+  ON_HOLD: '#ef4444', // red
+  COMPLETED: '#22c55e', // green
+  SHIPPED: '#8b5cf6', // purple
+  CANCELLED: '#6b7280', // gray
 };
 
 export const PRIORITY_LABELS: Record<number, string> = {
@@ -64,11 +115,11 @@ export const PRIORITY_LABELS: Record<number, string> = {
 };
 
 export const PRIORITY_COLORS: Record<number, string> = {
-  1: '#6b7280',  // gray
-  2: '#3b82f6',  // blue
-  3: '#22c55e',  // green
-  4: '#f59e0b',  // amber
-  5: '#ef4444',  // red
+  1: '#6b7280', // gray
+  2: '#3b82f6', // blue
+  3: '#22c55e', // green
+  4: '#f59e0b', // amber
+  5: '#ef4444', // red
 };
 
 // Company Brand Display Names
@@ -78,8 +129,8 @@ export const COMPANY_BRAND_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const COMPANY_BRAND_COLORS: Record<string, string> = {
-  WILDE_SIGNS: '#1e40af',   // blue
-  PORT_CITY_SIGNS: '#15803d',  // green
+  WILDE_SIGNS: '#1e40af', // blue
+  PORT_CITY_SIGNS: '#15803d', // green
 };
 
 export const DEFAULT_PAGE_SIZE = 20;
@@ -99,12 +150,12 @@ export const QUOTE_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const QUOTE_STATUS_COLORS: Record<string, string> = {
-  DRAFT: '#6b7280',      // gray
-  SENT: '#3b82f6',       // blue
-  APPROVED: '#22c55e',   // green
-  REJECTED: '#ef4444',   // red
-  EXPIRED: '#f59e0b',    // amber
-  CONVERTED: '#8b5cf6',  // purple
+  DRAFT: '#6b7280', // gray
+  SENT: '#3b82f6', // blue
+  APPROVED: '#22c55e', // green
+  REJECTED: '#ef4444', // red
+  EXPIRED: '#f59e0b', // amber
+  CONVERTED: '#8b5cf6', // purple
 };
 
 // Purchase Order Status Display Names
@@ -118,12 +169,12 @@ export const PO_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const PO_STATUS_COLORS: Record<string, string> = {
-  DRAFT: '#6b7280',      // gray
-  SUBMITTED: '#3b82f6',  // blue
-  CONFIRMED: '#22c55e',  // green
-  PARTIAL: '#f59e0b',    // amber
-  RECEIVED: '#8b5cf6',   // purple
-  CANCELLED: '#ef4444',  // red
+  DRAFT: '#6b7280', // gray
+  SUBMITTED: '#3b82f6', // blue
+  CONFIRMED: '#22c55e', // green
+  PARTIAL: '#f59e0b', // amber
+  RECEIVED: '#8b5cf6', // purple
+  CANCELLED: '#ef4444', // red
 };
 
 // Carrier Display Names
@@ -148,11 +199,11 @@ export const SHIPMENT_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const SHIPMENT_STATUS_COLORS: Record<string, string> = {
-  PENDING: '#6b7280',    // gray
-  PICKED_UP: '#3b82f6',  // blue
+  PENDING: '#6b7280', // gray
+  PICKED_UP: '#3b82f6', // blue
   IN_TRANSIT: '#f59e0b', // amber
-  DELIVERED: '#22c55e',  // green
-  EXCEPTION: '#ef4444',  // red
+  DELIVERED: '#22c55e', // green
+  EXCEPTION: '#ef4444', // red
 };
 
 // Material Unit Display Names
@@ -178,10 +229,10 @@ export const MATERIAL_UNIT_DISPLAY_NAMES: Record<string, string> = {
 };
 
 // Default labor rate for job costing
-export const DEFAULT_LABOR_RATE = 50.00;
+export const DEFAULT_LABOR_RATE = 50.0;
 
 // Default overhead percentage for job costing
-export const DEFAULT_OVERHEAD_PERCENT = 15.00;
+export const DEFAULT_OVERHEAD_PERCENT = 15.0;
 
 // ============ Quality Control Constants ============
 
@@ -195,10 +246,10 @@ export const QC_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const QC_STATUS_COLORS: Record<string, string> = {
-  PENDING: '#6b7280',         // gray
-  IN_PROGRESS: '#3b82f6',     // blue
-  PASSED: '#22c55e',          // green
-  FAILED: '#ef4444',          // red
+  PENDING: '#6b7280', // gray
+  IN_PROGRESS: '#3b82f6', // blue
+  PASSED: '#22c55e', // green
+  FAILED: '#ef4444', // red
   PASSED_WITH_NOTES: '#f59e0b', // amber
 };
 
@@ -216,13 +267,13 @@ export const EQUIPMENT_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const EQUIPMENT_STATUS_COLORS: Record<string, string> = {
-  OPERATIONAL: '#22c55e',     // green
-  DEGRADED: '#f59e0b',        // amber
-  MAINTENANCE: '#3b82f6',     // blue
-  DOWN: '#ef4444',            // red
-  WARMING_UP: '#f97316',      // orange
-  OFFLINE: '#6b7280',         // gray
-  RETIRED: '#6b7280',         // gray
+  OPERATIONAL: '#22c55e', // green
+  DEGRADED: '#f59e0b', // amber
+  MAINTENANCE: '#3b82f6', // blue
+  DOWN: '#ef4444', // red
+  WARMING_UP: '#f97316', // orange
+  OFFLINE: '#6b7280', // gray
+  RETIRED: '#6b7280', // gray
 };
 
 // Maintenance Frequency Display Names
@@ -250,14 +301,14 @@ export const DOWNTIME_REASON_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const DOWNTIME_REASON_COLORS: Record<string, string> = {
-  BREAKDOWN: '#ef4444',       // red
-  MAINTENANCE: '#3b82f6',     // blue
-  PARTS_SHORTAGE: '#f59e0b',  // amber
-  OPERATOR_ERROR: '#f97316',  // orange
-  POWER_OUTAGE: '#8b5cf6',    // purple
-  CALIBRATION: '#06b6d4',     // cyan
-  SOFTWARE_ISSUE: '#ec4899',  // pink
-  OTHER: '#6b7280',           // gray
+  BREAKDOWN: '#ef4444', // red
+  MAINTENANCE: '#3b82f6', // blue
+  PARTS_SHORTAGE: '#f59e0b', // amber
+  OPERATOR_ERROR: '#f97316', // orange
+  POWER_OUTAGE: '#8b5cf6', // purple
+  CALIBRATION: '#06b6d4', // cyan
+  SOFTWARE_ISSUE: '#ec4899', // pink
+  OTHER: '#6b7280', // gray
 };
 
 // Impact Level Display Names
@@ -269,10 +320,10 @@ export const IMPACT_LEVEL_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const IMPACT_LEVEL_COLORS: Record<string, string> = {
-  LOW: '#22c55e',             // green
-  MEDIUM: '#f59e0b',          // amber
-  HIGH: '#f97316',            // orange
-  CRITICAL: '#ef4444',        // red
+  LOW: '#22c55e', // green
+  MEDIUM: '#f59e0b', // amber
+  HIGH: '#f97316', // orange
+  CRITICAL: '#ef4444', // red
 };
 
 // Equipment Type Suggestions
@@ -305,14 +356,14 @@ export const INTERACTION_TYPE_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const INTERACTION_TYPE_COLORS: Record<string, string> = {
-  CALL: '#3b82f6',           // blue
-  EMAIL: '#8b5cf6',          // purple
-  MEETING: '#22c55e',        // green
-  NOTE: '#6b7280',           // gray
-  QUOTE_SENT: '#f59e0b',     // amber
+  CALL: '#3b82f6', // blue
+  EMAIL: '#8b5cf6', // purple
+  MEETING: '#22c55e', // green
+  NOTE: '#6b7280', // gray
+  QUOTE_SENT: '#f59e0b', // amber
   QUOTE_FOLLOWUP: '#f97316', // orange
-  SITE_VISIT: '#06b6d4',     // cyan
-  OTHER: '#64748b',          // slate
+  SITE_VISIT: '#06b6d4', // cyan
+  OTHER: '#64748b', // slate
 };
 
 export const INTERACTION_TYPE_ICONS: Record<string, string> = {
@@ -337,11 +388,11 @@ export const PROOF_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const PROOF_STATUS_COLORS: Record<string, string> = {
-  PENDING: '#f59e0b',           // amber
-  APPROVED: '#22c55e',          // green
-  REJECTED: '#ef4444',          // red
+  PENDING: '#f59e0b', // amber
+  APPROVED: '#22c55e', // green
+  REJECTED: '#ef4444', // red
   CHANGES_REQUESTED: '#3b82f6', // blue
-  EXPIRED: '#6b7280',           // gray
+  EXPIRED: '#6b7280', // gray
 };
 
 // Customer-friendly order status descriptions
@@ -362,9 +413,9 @@ export const CREDIT_APPROVAL_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const CREDIT_APPROVAL_STATUS_COLORS: Record<string, string> = {
-  PENDING: '#f59e0b',  // amber
+  PENDING: '#f59e0b', // amber
   APPROVED: '#22c55e', // green
-  DENIED: '#ef4444',   // red
+  DENIED: '#ef4444', // red
 };
 
 export const PAYMENT_TERMS_DISPLAY: Record<string, string> = {
@@ -377,7 +428,7 @@ export const PAYMENT_TERMS_DISPLAY: Record<string, string> = {
   'Net 90': 'Net 90 Days',
   'Due on Receipt': 'Due on Receipt',
   '50% Deposit': '50% Deposit Required',
-  'Prepaid': 'Prepaid',
+  Prepaid: 'Prepaid',
 };
 
 // ============ Subcontractor Constants ============
@@ -406,13 +457,13 @@ export const SUBCONTRACT_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const SUBCONTRACT_STATUS_COLORS: Record<string, string> = {
-  PENDING: '#6b7280',     // gray
-  SCHEDULED: '#3b82f6',   // blue
+  PENDING: '#6b7280', // gray
+  SCHEDULED: '#3b82f6', // blue
   IN_PROGRESS: '#f59e0b', // amber
-  COMPLETED: '#22c55e',   // green
-  INVOICED: '#8b5cf6',    // purple
-  PAID: '#10b981',        // emerald
-  CANCELLED: '#ef4444',   // red
+  COMPLETED: '#22c55e', // green
+  INVOICED: '#8b5cf6', // purple
+  PAID: '#10b981', // emerald
+  CANCELLED: '#ef4444', // red
 };
 
 export const RATE_TYPE_DISPLAY_NAMES: Record<string, string> = {
@@ -443,21 +494,21 @@ export const DOCUMENT_CATEGORY_DISPLAY_NAMES: Record<string, string> = {
 
 // Document Category Colors (for badges)
 export const DOCUMENT_CATEGORY_COLORS: Record<string, string> = {
-  DESIGN_FILE: '#8b5cf6',    // purple
-  PROOF: '#f59e0b',          // amber
-  CONTRACT: '#3b82f6',       // blue
-  LOGO: '#ec4899',           // pink
-  BRAND_GUIDE: '#14b8a6',    // teal
-  INVOICE: '#22c55e',        // green
+  DESIGN_FILE: '#8b5cf6', // purple
+  PROOF: '#f59e0b', // amber
+  CONTRACT: '#3b82f6', // blue
+  LOGO: '#ec4899', // pink
+  BRAND_GUIDE: '#14b8a6', // teal
+  INVOICE: '#22c55e', // green
   PURCHASE_ORDER: '#6366f1', // indigo
   DELIVERY_RECEIPT: '#84cc16', // lime
-  PHOTO: '#06b6d4',          // cyan
-  INSURANCE: '#f97316',      // orange
-  LICENSE: '#a855f7',        // violet
-  W9: '#64748b',             // slate
-  QUOTE: '#0ea5e9',          // sky
-  SPECIFICATION: '#78716c',  // stone
-  OTHER: '#6b7280',          // gray
+  PHOTO: '#06b6d4', // cyan
+  INSURANCE: '#f97316', // orange
+  LICENSE: '#a855f7', // violet
+  W9: '#64748b', // slate
+  QUOTE: '#0ea5e9', // sky
+  SPECIFICATION: '#78716c', // stone
+  OTHER: '#6b7280', // gray
 };
 
 // File type icons mapping
@@ -496,13 +547,13 @@ export const RECURRING_FREQUENCY_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const RECURRING_FREQUENCY_COLORS: Record<string, string> = {
-  WEEKLY: '#ef4444',       // red (high frequency)
-  BIWEEKLY: '#f97316',     // orange
-  MONTHLY: '#f59e0b',      // amber
-  QUARTERLY: '#22c55e',    // green
+  WEEKLY: '#ef4444', // red (high frequency)
+  BIWEEKLY: '#f97316', // orange
+  MONTHLY: '#f59e0b', // amber
+  QUARTERLY: '#22c55e', // green
   SEMIANNUALLY: '#3b82f6', // blue
-  YEARLY: '#8b5cf6',       // purple
-  CUSTOM: '#6b7280',       // gray
+  YEARLY: '#8b5cf6', // purple
+  CUSTOM: '#6b7280', // gray
 };
 
 export const RECURRING_ACTION_DISPLAY_NAMES: Record<string, string> = {
@@ -533,16 +584,16 @@ export const ALERT_TYPE_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const ALERT_TYPE_COLORS: Record<string, string> = {
-  INVENTORY_LOW: '#f59e0b',        // amber
+  INVENTORY_LOW: '#f59e0b', // amber
   EQUIPMENT_MAINTENANCE: '#3b82f6', // blue
-  ORDER_DEADLINE: '#ef4444',        // red
-  PAYMENT_OVERDUE: '#dc2626',       // red-600
-  APPROVAL_NEEDED: '#8b5cf6',       // purple
-  SYSTEM_ERROR: '#ef4444',          // red
-  CAPACITY_WARNING: '#f97316',      // orange
-  QUALITY_ISSUE: '#ec4899',         // pink
-  SCHEDULE_CONFLICT: '#6366f1',     // indigo
-  CUSTOM: '#6b7280',                // gray
+  ORDER_DEADLINE: '#ef4444', // red
+  PAYMENT_OVERDUE: '#dc2626', // red-600
+  APPROVAL_NEEDED: '#8b5cf6', // purple
+  SYSTEM_ERROR: '#ef4444', // red
+  CAPACITY_WARNING: '#f97316', // orange
+  QUALITY_ISSUE: '#ec4899', // pink
+  SCHEDULE_CONFLICT: '#6366f1', // indigo
+  CUSTOM: '#6b7280', // gray
 };
 
 export const ALERT_TYPE_ICONS: Record<string, string> = {
@@ -566,10 +617,10 @@ export const ALERT_SEVERITY_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const ALERT_SEVERITY_COLORS: Record<string, string> = {
-  INFO: '#3b82f6',      // blue
-  WARNING: '#f59e0b',   // amber
-  CRITICAL: '#ef4444',  // red
-  URGENT: '#dc2626',    // red-600 (darker red)
+  INFO: '#3b82f6', // blue
+  WARNING: '#f59e0b', // amber
+  CRITICAL: '#ef4444', // red
+  URGENT: '#dc2626', // red-600 (darker red)
 };
 
 export const ALERT_TRIGGER_TYPE_DISPLAY_NAMES: Record<string, string> = {
@@ -630,11 +681,11 @@ export const INTEGRATION_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const INTEGRATION_STATUS_COLORS: Record<string, string> = {
-  ACTIVE: '#22c55e',       // green
-  INACTIVE: '#6b7280',     // gray
-  ERROR: '#ef4444',        // red
+  ACTIVE: '#22c55e', // green
+  INACTIVE: '#6b7280', // gray
+  ERROR: '#ef4444', // red
   PENDING_SETUP: '#f59e0b', // amber
-  EXPIRED: '#f97316',      // orange
+  EXPIRED: '#f97316', // orange
 };
 
 export const CREDENTIAL_TYPE_DISPLAY_NAMES: Record<string, string> = {
@@ -677,11 +728,11 @@ export const SYNC_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const SYNC_STATUS_COLORS: Record<string, string> = {
-  SUCCESS: '#22c55e',     // green
-  PARTIAL: '#f59e0b',     // amber
-  FAILED: '#ef4444',      // red
+  SUCCESS: '#22c55e', // green
+  PARTIAL: '#f59e0b', // amber
+  FAILED: '#ef4444', // red
   IN_PROGRESS: '#3b82f6', // blue
-  CANCELLED: '#6b7280',   // gray
+  CANCELLED: '#6b7280', // gray
 };
 
 // ============ Filter System Constants ============
@@ -739,18 +790,18 @@ export const AUDIT_ACTION_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const AUDIT_ACTION_COLORS: Record<string, string> = {
-  CREATE: '#22c55e',       // green
-  UPDATE: '#3b82f6',       // blue
-  DELETE: '#ef4444',       // red
-  RESTORE: '#8b5cf6',      // purple
-  ARCHIVE: '#6b7280',      // gray
+  CREATE: '#22c55e', // green
+  UPDATE: '#3b82f6', // blue
+  DELETE: '#ef4444', // red
+  RESTORE: '#8b5cf6', // purple
+  ARCHIVE: '#6b7280', // gray
   STATUS_CHANGE: '#f59e0b', // amber
-  APPROVAL: '#22c55e',     // green
-  REJECTION: '#ef4444',    // red
-  ASSIGNMENT: '#06b6d4',   // cyan
+  APPROVAL: '#22c55e', // green
+  REJECTION: '#ef4444', // red
+  ASSIGNMENT: '#06b6d4', // cyan
   UNASSIGNMENT: '#64748b', // slate
-  COMMENT: '#8b5cf6',      // purple
-  ATTACHMENT: '#f97316',   // orange
+  COMMENT: '#8b5cf6', // purple
+  ATTACHMENT: '#f97316', // orange
 };
 
 export const AUDIT_ACTION_ICONS: Record<string, string> = {
@@ -808,18 +859,18 @@ export const PRINT_JOB_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const PRINT_JOB_STATUS_COLORS: Record<string, string> = {
-  PENDING: '#6b7280',     // gray
-  QUEUED: '#3b82f6',      // blue
+  PENDING: '#6b7280', // gray
+  QUEUED: '#3b82f6', // blue
   IN_PROGRESS: '#f59e0b', // amber
-  PRINTING: '#8b5cf6',    // purple
-  PAUSED: '#f97316',      // orange
-  COMPLETED: '#22c55e',   // green
-  FAILED: '#ef4444',      // red
-  CANCELLED: '#64748b',   // slate
-  ON_HOLD: '#dc2626',     // red-600
-  RIPPING: '#06b6d4',     // cyan
-  RIP_FAILED: '#ec4899',  // pink
-  REPRINTING: '#a855f7',  // violet
+  PRINTING: '#8b5cf6', // purple
+  PAUSED: '#f97316', // orange
+  COMPLETED: '#22c55e', // green
+  FAILED: '#ef4444', // red
+  CANCELLED: '#64748b', // slate
+  ON_HOLD: '#dc2626', // red-600
+  RIPPING: '#06b6d4', // cyan
+  RIP_FAILED: '#ec4899', // pink
+  REPRINTING: '#a855f7', // violet
 };
 
 export const PRINT_JOB_STATUS_ICONS: Record<string, string> = {
@@ -852,15 +903,15 @@ export const RIP_JOB_STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const RIP_JOB_STATUS_COLORS: Record<string, string> = {
-  QUEUED: '#6b7280',      // gray
-  PROCESSING: '#06b6d4',  // cyan
-  READY: '#3b82f6',       // blue
-  SENDING: '#f59e0b',     // amber
-  PRINTING: '#8b5cf6',    // purple
-  PRINTED: '#22c55e',     // green
-  COMPLETED: '#10b981',   // emerald
-  FAILED: '#ef4444',      // red
-  CANCELLED: '#64748b',   // slate
+  QUEUED: '#6b7280', // gray
+  PROCESSING: '#06b6d4', // cyan
+  READY: '#3b82f6', // blue
+  SENDING: '#f59e0b', // amber
+  PRINTING: '#8b5cf6', // purple
+  PRINTED: '#22c55e', // green
+  COMPLETED: '#10b981', // emerald
+  FAILED: '#ef4444', // red
+  CANCELLED: '#64748b', // slate
 };
 
 export const RIP_TYPE_DISPLAY_NAMES: Record<string, string> = {
@@ -875,7 +926,13 @@ export const RIP_TYPE_DISPLAY_NAMES: Record<string, string> = {
 
 export const WHITE_INK_OPTIONS = ['None', 'Underflood', 'Overflood', 'Spot'] as const;
 
-export const PRINT_MODE_OPTIONS = ['Draft', 'Production', 'Quality', 'Billboard', 'Backlit'] as const;
+export const PRINT_MODE_OPTIONS = [
+  'Draft',
+  'Production',
+  'Quality',
+  'Billboard',
+  'Backlit',
+] as const;
 
 export const PRINT_RESOLUTION_OPTIONS = [
   '360x360',
@@ -939,7 +996,7 @@ export const TIMEZONE_DISPLAY_NAMES: Record<string, string> = {
   'America/Los_Angeles': 'Pacific Time (PT)',
   'America/Anchorage': 'Alaska Time (AKT)',
   'Pacific/Honolulu': 'Hawaii Time (HST)',
-  'UTC': 'UTC',
+  UTC: 'UTC',
 };
 
 export const DATE_FORMAT_DISPLAY_NAMES: Record<string, string> = {
@@ -983,17 +1040,17 @@ export const FAVORITE_ENTITY_TYPE_ICONS: Record<string, string> = {
 };
 
 export const FAVORITE_ENTITY_TYPE_COLORS: Record<string, string> = {
-  WORK_ORDER: '#3b82f6',   // blue
-  CUSTOMER: '#22c55e',     // green
-  QUOTE: '#f59e0b',        // amber
-  INVOICE: '#8b5cf6',      // purple
-  VENDOR: '#f97316',       // orange
-  MATERIAL: '#06b6d4',     // cyan
-  EQUIPMENT: '#ec4899',    // pink
-  EMPLOYEE: '#6366f1',     // indigo
+  WORK_ORDER: '#3b82f6', // blue
+  CUSTOMER: '#22c55e', // green
+  QUOTE: '#f59e0b', // amber
+  INVOICE: '#8b5cf6', // purple
+  VENDOR: '#f97316', // orange
+  MATERIAL: '#06b6d4', // cyan
+  EQUIPMENT: '#ec4899', // pink
+  EMPLOYEE: '#6366f1', // indigo
   SUBCONTRACTOR: '#14b8a6', // teal
   SAVED_FILTER: '#64748b', // slate
-  REPORT: '#0ea5e9',       // sky
+  REPORT: '#0ea5e9', // sky
   DASHBOARD_VIEW: '#a855f7', // violet
 };
 
@@ -1068,11 +1125,7 @@ export const SEARCH_HISTORY_RETENTION_DAYS = 30;
 
 // ============ Batch Import Constants ============
 
-import {
-  ImportJobStatus,
-  ImportEntityType,
-  ImportFileType,
-} from './enums.js';
+import { ImportJobStatus, ImportEntityType, ImportFileType } from './enums.js';
 
 /** Display names for import job statuses */
 export const IMPORT_JOB_STATUS_DISPLAY_NAMES: Record<ImportJobStatus, string> = {
@@ -1189,10 +1242,7 @@ export const IMPORT_PREVIEW_ROWS = 10;
 
 // ============ Keyboard Shortcuts Constants ============
 
-import {
-  ShortcutScope,
-  ShortcutCategory,
-} from './enums.js';
+import { ShortcutScope, ShortcutCategory } from './enums.js';
 
 /** Display names for shortcut scopes */
 export const SHORTCUT_SCOPE_DISPLAY_NAMES: Record<ShortcutScope, string> = {
@@ -1233,34 +1283,50 @@ export const DEFAULT_KEYBOARD_SHORTCUTS = {
   // Navigation
   'navigation.orders': { key: 'g+o', label: 'Go to Orders', category: ShortcutCategory.NAVIGATION },
   'navigation.quotes': { key: 'g+q', label: 'Go to Quotes', category: ShortcutCategory.NAVIGATION },
-  'navigation.customers': { key: 'g+c', label: 'Go to Customers', category: ShortcutCategory.NAVIGATION },
-  'navigation.materials': { key: 'g+m', label: 'Go to Materials', category: ShortcutCategory.NAVIGATION },
-  'navigation.dashboard': { key: 'g+d', label: 'Go to Dashboard', category: ShortcutCategory.NAVIGATION },
-  'navigation.settings': { key: 'g+s', label: 'Go to Settings', category: ShortcutCategory.NAVIGATION },
-  
+  'navigation.customers': {
+    key: 'g+c',
+    label: 'Go to Customers',
+    category: ShortcutCategory.NAVIGATION,
+  },
+  'navigation.materials': {
+    key: 'g+m',
+    label: 'Go to Materials',
+    category: ShortcutCategory.NAVIGATION,
+  },
+  'navigation.dashboard': {
+    key: 'g+d',
+    label: 'Go to Dashboard',
+    category: ShortcutCategory.NAVIGATION,
+  },
+  'navigation.settings': {
+    key: 'g+s',
+    label: 'Go to Settings',
+    category: ShortcutCategory.NAVIGATION,
+  },
+
   // Actions
   'action.save': { key: 'ctrl+s', label: 'Save', category: ShortcutCategory.ACTION },
   'action.new': { key: 'ctrl+n', label: 'New Item', category: ShortcutCategory.ACTION },
   'action.delete': { key: 'delete', label: 'Delete Selected', category: ShortcutCategory.ACTION },
   'action.refresh': { key: 'ctrl+r', label: 'Refresh', category: ShortcutCategory.ACTION },
   'action.print': { key: 'ctrl+p', label: 'Print', category: ShortcutCategory.ACTION },
-  
+
   // Search
   'search.global': { key: 'ctrl+k', label: 'Global Search', category: ShortcutCategory.SEARCH },
   'search.focus': { key: '/', label: 'Focus Search', category: ShortcutCategory.SEARCH },
   'search.clear': { key: 'escape', label: 'Clear Search', category: ShortcutCategory.SEARCH },
-  
+
   // Table
   'table.selectAll': { key: 'ctrl+a', label: 'Select All', category: ShortcutCategory.TABLE },
   'table.nextPage': { key: 'ctrl+right', label: 'Next Page', category: ShortcutCategory.TABLE },
   'table.prevPage': { key: 'ctrl+left', label: 'Previous Page', category: ShortcutCategory.TABLE },
   'table.firstRow': { key: 'home', label: 'First Row', category: ShortcutCategory.TABLE },
   'table.lastRow': { key: 'end', label: 'Last Row', category: ShortcutCategory.TABLE },
-  
+
   // Modal
   'modal.close': { key: 'escape', label: 'Close Modal', category: ShortcutCategory.MODAL },
   'modal.confirm': { key: 'enter', label: 'Confirm', category: ShortcutCategory.MODAL },
-  
+
   // System
   'system.help': { key: '?', label: 'Show Help', category: ShortcutCategory.SYSTEM },
   'system.shortcuts': { key: 'ctrl+/', label: 'Show Shortcuts', category: ShortcutCategory.SYSTEM },
@@ -1443,32 +1509,27 @@ export const CONSTRAINT_TARGET_DISPLAY_NAMES: Record<ConstraintTarget, string> =
 
 /** Default prediction factor weights */
 export const DEFAULT_PREDICTION_FACTOR_WEIGHTS = {
-  queueDepth: 0.20,
+  queueDepth: 0.2,
   operatorSkill: 0.15,
-  equipmentStatus: 0.20,
-  materialMatch: 0.10,
-  deadline: 0.20,
-  qualityHistory: 0.10,
+  equipmentStatus: 0.2,
+  materialMatch: 0.1,
+  deadline: 0.2,
+  qualityHistory: 0.1,
   setupTime: 0.05,
 } as const;
 
 /** ML Model configuration */
 export const ML_MODEL_CONFIG = {
-  minConfidenceThreshold: 0.7,    // Minimum confidence to auto-apply
-  retrainingInterval: 7,          // Days between model retraining
-  minSamplesForTraining: 100,     // Minimum historical decisions
-  maxAlternatives: 5,             // Max alternative routes to suggest
-  predictionCacheTTL: 300,        // Seconds to cache predictions
+  minConfidenceThreshold: 0.7, // Minimum confidence to auto-apply
+  retrainingInterval: 7, // Days between model retraining
+  minSamplesForTraining: 100, // Minimum historical decisions
+  maxAlternatives: 5, // Max alternative routes to suggest
+  predictionCacheTTL: 300, // Seconds to cache predictions
 } as const;
 
 // ============ SSS-008/SSS-011: NLP Query & Command Palette Constants ============
 
-import {
-  QueryIntent,
-  ScheduleFrequency,
-  CommandType,
-  ActionCategory,
-} from './enums.js';
+import { QueryIntent, ScheduleFrequency, CommandType, ActionCategory } from './enums.js';
 
 /** Display names for query intents */
 export const QUERY_INTENT_DISPLAY_NAMES: Record<QueryIntent, string> = {
@@ -1556,11 +1617,11 @@ export const ACTION_CATEGORY_ICONS: Record<ActionCategory, string> = {
 
 /** NLP parsing configuration */
 export const NLP_CONFIG = {
-  minConfidenceThreshold: 0.6,    // Minimum confidence to auto-execute
-  maxSuggestions: 5,              // Max autocomplete suggestions
-  maxHistoryItems: 50,            // Max command history per user
-  searchDebounceMs: 150,          // Debounce for search input
-  maxQueryLength: 500,            // Max characters in query
+  minConfidenceThreshold: 0.6, // Minimum confidence to auto-execute
+  maxSuggestions: 5, // Max autocomplete suggestions
+  maxHistoryItems: 50, // Max command history per user
+  searchDebounceMs: 150, // Debounce for search input
+  maxQueryLength: 500, // Max characters in query
 } as const;
 
 /** Common NLP query patterns (for display/help) */
@@ -1578,10 +1639,33 @@ export const NLP_QUERY_EXAMPLES = [
 
 /** Default quick actions (seeded in database) */
 export const DEFAULT_QUICK_ACTIONS = [
-  { code: 'create_order', name: 'Create Work Order', category: 'CREATE', icon: 'file-plus', shortcut: 'alt+n' },
-  { code: 'create_quote', name: 'Create Quote', category: 'CREATE', icon: 'file-text', shortcut: 'alt+q' },
-  { code: 'create_customer', name: 'Create Customer', category: 'CREATE', icon: 'user-plus', shortcut: 'alt+c' },
-  { code: 'go_dashboard', name: 'Go to Dashboard', category: 'NAVIGATION', icon: 'layout-dashboard' },
+  {
+    code: 'create_order',
+    name: 'Create Work Order',
+    category: 'CREATE',
+    icon: 'file-plus',
+    shortcut: 'alt+n',
+  },
+  {
+    code: 'create_quote',
+    name: 'Create Quote',
+    category: 'CREATE',
+    icon: 'file-text',
+    shortcut: 'alt+q',
+  },
+  {
+    code: 'create_customer',
+    name: 'Create Customer',
+    category: 'CREATE',
+    icon: 'user-plus',
+    shortcut: 'alt+c',
+  },
+  {
+    code: 'go_dashboard',
+    name: 'Go to Dashboard',
+    category: 'NAVIGATION',
+    icon: 'layout-dashboard',
+  },
   { code: 'go_orders', name: 'Go to Orders', category: 'NAVIGATION', icon: 'clipboard-list' },
   { code: 'go_schedule', name: 'Go to Schedule', category: 'NAVIGATION', icon: 'calendar' },
   { code: 'run_report', name: 'Run Report', category: 'REPORT', icon: 'bar-chart' },
@@ -1827,11 +1911,7 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
 // DATA INTEGRITY & VALIDATION CONSTANTS
 // ============================================================================
 
-import {
-  ValidationSeverity,
-  FieldConstraintType,
-  AnomalyType,
-} from './enums.js';
+import { ValidationSeverity, FieldConstraintType, AnomalyType } from './enums.js';
 
 /** Display names for validation severity */
 export const VALIDATION_SEVERITY_DISPLAY_NAMES: Record<ValidationSeverity, string> = {
@@ -1919,7 +1999,8 @@ export const DEFAULT_INTEGRITY_CHECKS = [
     description: 'Find line items without parent work orders',
     category: 'Referential Integrity',
     entityType: 'LineItem',
-    checkQuery: 'SELECT li.id FROM "LineItem" li LEFT JOIN "WorkOrder" wo ON li."workOrderId" = wo.id WHERE wo.id IS NULL',
+    checkQuery:
+      'SELECT li.id FROM "LineItem" li LEFT JOIN "WorkOrder" wo ON li."workOrderId" = wo.id WHERE wo.id IS NULL',
     frequency: 'DAILY',
     canAutoFix: true,
     autoFixQuery: 'DELETE FROM "LineItem" WHERE "workOrderId" NOT IN (SELECT id FROM "WorkOrder")',
@@ -1929,7 +2010,8 @@ export const DEFAULT_INTEGRITY_CHECKS = [
     description: 'Find in-progress orders with empty routing',
     category: 'Business Rules',
     entityType: 'WorkOrder',
-    checkQuery: 'SELECT id FROM "WorkOrder" WHERE status = \'IN_PROGRESS\' AND (routing IS NULL OR array_length(routing, 1) = 0)',
+    checkQuery:
+      'SELECT id FROM "WorkOrder" WHERE status = \'IN_PROGRESS\' AND (routing IS NULL OR array_length(routing, 1) = 0)',
     frequency: 'HOURLY',
     canAutoFix: false,
   },
@@ -1938,7 +2020,8 @@ export const DEFAULT_INTEGRITY_CHECKS = [
     description: 'Detect duplicate order numbers',
     category: 'Data Quality',
     entityType: 'WorkOrder',
-    checkQuery: 'SELECT "orderNumber", COUNT(*) FROM "WorkOrder" GROUP BY "orderNumber" HAVING COUNT(*) > 1',
+    checkQuery:
+      'SELECT "orderNumber", COUNT(*) FROM "WorkOrder" GROUP BY "orderNumber" HAVING COUNT(*) > 1',
     frequency: 'DAILY',
     canAutoFix: false,
   },
@@ -2297,7 +2380,10 @@ export const SETTING_CATEGORY_DISPLAY_NAMES: Record<SettingCategory, string> = {
 };
 
 /** Default subscription limits */
-export const SUBSCRIPTION_LIMITS: Record<SubscriptionTier, { users: number; locations: number; storage: number }> = {
+export const SUBSCRIPTION_LIMITS: Record<
+  SubscriptionTier,
+  { users: number; locations: number; storage: number }
+> = {
   [SubscriptionTier.FREE]: { users: 3, locations: 1, storage: 1024 }, // 1GB
   [SubscriptionTier.BASIC]: { users: 10, locations: 1, storage: 10240 }, // 10GB
   [SubscriptionTier.PROFESSIONAL]: { users: 50, locations: 5, storage: 51200 }, // 50GB
@@ -2421,15 +2507,15 @@ export const PROFITABILITY_TIER_COLORS: Record<ProfitabilityTier, string> = {
 
 /** Default margin thresholds for profitability tiers */
 export const PROFITABILITY_THRESHOLDS = {
-  EXCEPTIONAL: 0.40,     // 40%+ margin
-  ABOVE_TARGET: 0.30,    // 30-40% margin
-  ON_TARGET: 0.20,       // 20-30% margin
-  BELOW_TARGET: 0.10,    // 10-20% margin
-  UNPROFITABLE: 0,       // Below 10% margin
+  EXCEPTIONAL: 0.4, // 40%+ margin
+  ABOVE_TARGET: 0.3, // 30-40% margin
+  ON_TARGET: 0.2, // 20-30% margin
+  BELOW_TARGET: 0.1, // 10-20% margin
+  UNPROFITABLE: 0, // Below 10% margin
 };
 
 /** Default labor burden rate (benefits, taxes, etc.) */
-export const DEFAULT_BURDEN_RATE = 0.30; // 30% of base wage
+export const DEFAULT_BURDEN_RATE = 0.3; // 30% of base wage
 
 /** Standard billing rates by labor activity */
 export const DEFAULT_BILLING_RATES: Partial<Record<LaborActivity, number>> = {
@@ -2566,11 +2652,11 @@ export const CONFLICT_RESOLUTION_STATUS_COLORS: Record<ConflictResolutionStatus,
 
 /** Default capacity thresholds */
 export const CAPACITY_THRESHOLDS = {
-  UNDER_UTILIZED: 0.50,    // Below 50%
-  OPTIMAL_MIN: 0.70,       // 70-90% ideal
-  OPTIMAL_MAX: 0.90,
-  NEAR_CAPACITY: 0.95,     // 90-95%
-  OVER_CAPACITY: 1.00,     // Above 100%
+  UNDER_UTILIZED: 0.5, // Below 50%
+  OPTIMAL_MIN: 0.7, // 70-90% ideal
+  OPTIMAL_MAX: 0.9,
+  NEAR_CAPACITY: 0.95, // 90-95%
+  OVER_CAPACITY: 1.0, // Above 100%
 };
 
 /** Default skill efficiency factors */
@@ -2579,7 +2665,7 @@ export const SKILL_EFFICIENCY_FACTORS: Record<SkillLevel, number> = {
   [SkillLevel.BASIC]: 0.75,
   [SkillLevel.PROFICIENT]: 1.0,
   [SkillLevel.ADVANCED]: 1.15,
-  [SkillLevel.EXPERT]: 1.30,
+  [SkillLevel.EXPERT]: 1.3,
 };
 
 // ============================================================================
@@ -2709,13 +2795,13 @@ export const COMMUNICATION_SENTIMENT_COLORS: Record<CommunicationSentiment, stri
 
 /** Customer tier score thresholds */
 export const CUSTOMER_TIER_THRESHOLDS = {
-  PLATINUM: 90,    // Score >= 90
-  GOLD: 75,        // Score 75-89
-  SILVER: 60,      // Score 60-74
-  BRONZE: 40,      // Score 40-59
-  NEW: 0,          // New customers
-  AT_RISK: -1,     // Flagged at risk
-  INACTIVE: -2,    // No activity > 365 days
+  PLATINUM: 90, // Score >= 90
+  GOLD: 75, // Score 75-89
+  SILVER: 60, // Score 60-74
+  BRONZE: 40, // Score 40-59
+  NEW: 0, // New customers
+  AT_RISK: -1, // Flagged at risk
+  INACTIVE: -2, // No activity > 365 days
 };
 
 /** Days to consider customer inactive */
@@ -2723,9 +2809,9 @@ export const CUSTOMER_INACTIVE_DAYS = 365;
 
 /** Days to consider churn risk */
 export const CHURN_RISK_THRESHOLDS = {
-  LOW: 30,         // < 30 days since last order
-  MEDIUM: 90,      // 30-90 days
-  HIGH: 180,       // > 180 days
+  LOW: 30, // < 30 days since last order
+  MEDIUM: 90, // 30-90 days
+  HIGH: 180, // > 180 days
 };
 
 // ============================================================================
@@ -2824,18 +2910,18 @@ export const RESERVATION_STATUS_DISPLAY_NAMES: Record<ReservationStatus, string>
 
 /** Supplier tier score thresholds */
 export const SUPPLIER_TIER_THRESHOLDS = {
-  PREFERRED: 90,     // Score >= 90
-  APPROVED: 75,      // Score 75-89
-  CONDITIONAL: 60,   // Score 60-74
-  PROBATION: 40,     // Score 40-59
-  DISQUALIFIED: 0,   // Score < 40
+  PREFERRED: 90, // Score >= 90
+  APPROVED: 75, // Score 75-89
+  CONDITIONAL: 60, // Score 60-74
+  PROBATION: 40, // Score 40-59
+  DISQUALIFIED: 0, // Score < 40
 };
 
 /** Default reorder settings */
 export const DEFAULT_REORDER_SETTINGS = {
   LEAD_TIME_DAYS: 7,
   SAFETY_STOCK_DAYS: 3,
-  MAX_STOCK_MULTIPLIER: 3,  // Max = Reorder * 3
+  MAX_STOCK_MULTIPLIER: 3, // Max = Reorder * 3
 };
 
 // ============================================================================
@@ -3102,16 +3188,16 @@ export const QUALITY_KPI_THRESHOLDS = {
     POOR: 85,
   },
   NCR_RATE: {
-    EXCELLENT: 1,    // < 1%
-    GOOD: 2,         // 1-2%
-    ACCEPTABLE: 5,   // 2-5%
-    POOR: 10,        // > 5%
+    EXCELLENT: 1, // < 1%
+    GOOD: 2, // 1-2%
+    ACCEPTABLE: 5, // 2-5%
+    POOR: 10, // > 5%
   },
   CAR_CLOSURE_DAYS: {
-    EXCELLENT: 7,    // < 7 days
-    GOOD: 14,        // 7-14 days
-    ACCEPTABLE: 30,  // 14-30 days
-    POOR: 60,        // > 30 days
+    EXCELLENT: 7, // < 7 days
+    GOOD: 14, // 7-14 days
+    ACCEPTABLE: 30, // 14-30 days
+    POOR: 60, // > 30 days
   },
 };
 
@@ -3244,17 +3330,17 @@ export const SIGN_SHOP_FILE_TYPES = {
 
 /** Maximum file sizes (in bytes) */
 export const MAX_FILE_SIZES = {
-  DOCUMENT: 50 * 1024 * 1024,      // 50 MB
-  DESIGN_FILE: 500 * 1024 * 1024,  // 500 MB
-  IMAGE: 25 * 1024 * 1024,         // 25 MB
-  THUMBNAIL: 1 * 1024 * 1024,      // 1 MB
+  DOCUMENT: 50 * 1024 * 1024, // 50 MB
+  DESIGN_FILE: 500 * 1024 * 1024, // 500 MB
+  IMAGE: 25 * 1024 * 1024, // 25 MB
+  THUMBNAIL: 1 * 1024 * 1024, // 1 MB
 };
 
 /** Approval workflow defaults */
 export const APPROVAL_DEFAULTS = {
-  REMINDER_DAYS: 3,           // Days before due date to send reminder
-  EXPIRY_DAYS: 14,            // Days until approval expires
-  ESCALATION_DAYS: 7,         // Days until escalation
+  REMINDER_DAYS: 3, // Days before due date to send reminder
+  EXPIRY_DAYS: 14, // Days until approval expires
+  ESCALATION_DAYS: 7, // Days until escalation
 };
 
 // ============================================================================
@@ -3407,30 +3493,30 @@ export const GOAL_STATUS_COLORS: Record<GoalStatus, string> = {
 /** Bottleneck detection thresholds */
 export const BOTTLENECK_THRESHOLDS = {
   QUEUE_DEPTH: {
-    LOW: 3,            // Warning at 3 jobs
-    MEDIUM: 6,         // Elevated at 6 jobs
-    HIGH: 10,          // Critical at 10 jobs
+    LOW: 3, // Warning at 3 jobs
+    MEDIUM: 6, // Elevated at 6 jobs
+    HIGH: 10, // Critical at 10 jobs
   },
   WAIT_TIME_MINUTES: {
-    LOW: 30,           // 30 min wait
-    MEDIUM: 60,        // 1 hour wait
-    HIGH: 120,         // 2 hour wait
+    LOW: 30, // 30 min wait
+    MEDIUM: 60, // 1 hour wait
+    HIGH: 120, // 2 hour wait
   },
 };
 
 /** Productivity benchmarks */
 export const PRODUCTIVITY_BENCHMARKS = {
   UTILIZATION: {
-    EXCELLENT: 85,     // >= 85%
-    GOOD: 75,          // 75-84%
-    ACCEPTABLE: 65,    // 65-74%
-    POOR: 50,          // < 65%
+    EXCELLENT: 85, // >= 85%
+    GOOD: 75, // 75-84%
+    ACCEPTABLE: 65, // 65-74%
+    POOR: 50, // < 65%
   },
   EFFICIENCY: {
-    EXCELLENT: 100,    // >= 100% of standard
-    GOOD: 90,          // 90-99%
-    ACCEPTABLE: 80,    // 80-89%
-    POOR: 70,          // < 80%
+    EXCELLENT: 100, // >= 100% of standard
+    GOOD: 90, // 90-99%
+    ACCEPTABLE: 80, // 80-89%
+    POOR: 70, // < 80%
   },
 };
 
@@ -3491,10 +3577,10 @@ export const DEFECT_SEVERITY_DISPLAY_NAMES: Record<DefectSeverity, string> = {
 /** Severity colors for UI */
 export const DEFECT_SEVERITY_COLORS: Record<DefectSeverity, string> = {
   [DefectSeverity.COSMETIC]: '#9CA3AF', // Gray
-  [DefectSeverity.MINOR]: '#60A5FA',    // Blue
-  [DefectSeverity.MAJOR]: '#FBBF24',    // Yellow
+  [DefectSeverity.MINOR]: '#60A5FA', // Blue
+  [DefectSeverity.MAJOR]: '#FBBF24', // Yellow
   [DefectSeverity.CRITICAL]: '#F87171', // Red
-  [DefectSeverity.SAFETY]: '#DC2626',   // Dark Red
+  [DefectSeverity.SAFETY]: '#DC2626', // Dark Red
 };
 
 /** Display names for defect disposition */
@@ -3564,11 +3650,11 @@ export const SUPPLIER_QUALITY_TIER_DISPLAY_NAMES: Record<SupplierQualityTier, st
 
 /** Supplier quality tier colors */
 export const SUPPLIER_QUALITY_TIER_COLORS: Record<SupplierQualityTier, string> = {
-  [SupplierQualityTier.PREFERRED]: '#10B981',  // Green
-  [SupplierQualityTier.APPROVED]: '#3B82F6',   // Blue
+  [SupplierQualityTier.PREFERRED]: '#10B981', // Green
+  [SupplierQualityTier.APPROVED]: '#3B82F6', // Blue
   [SupplierQualityTier.CONDITIONAL]: '#FBBF24', // Yellow
   [SupplierQualityTier.RESTRICTED]: '#F97316', // Orange
-  [SupplierQualityTier.BLOCKED]: '#EF4444',    // Red
+  [SupplierQualityTier.BLOCKED]: '#EF4444', // Red
 };
 
 /** Display names for feedback types */
@@ -3613,7 +3699,10 @@ export const QUALITY_TREND_TYPE_DISPLAY_NAMES: Record<QualityTrendType, string> 
 };
 
 /** Quality metric targets (industry benchmarks) */
-export const QUALITY_METRIC_TARGETS: Record<QualityTrendType, { target: number; unit: string; direction: 'higher' | 'lower' }> = {
+export const QUALITY_METRIC_TARGETS: Record<
+  QualityTrendType,
+  { target: number; unit: string; direction: 'higher' | 'lower' }
+> = {
   [QualityTrendType.FIRST_PASS_YIELD]: { target: 95, unit: '%', direction: 'higher' },
   [QualityTrendType.DEFECT_RATE]: { target: 2, unit: '%', direction: 'lower' },
   [QualityTrendType.CUSTOMER_RETURNS]: { target: 1, unit: '%', direction: 'lower' },
@@ -3629,8 +3718,8 @@ export const SUPPLIER_QUALITY_THRESHOLDS = {
     minQualityScore: 95,
     minDeliveryScore: 95,
     minResponseScore: 90,
-    maxRejectRate: 1,      // % of lots rejected
-    maxPPM: 100,           // Parts per million defective
+    maxRejectRate: 1, // % of lots rejected
+    maxPPM: 100, // Parts per million defective
   },
   APPROVED: {
     minQualityScore: 85,
@@ -3658,20 +3747,20 @@ export const SUPPLIER_QUALITY_THRESHOLDS = {
 
 /** Defect disposition cost impact estimates */
 export const DISPOSITION_COST_MULTIPLIERS = {
-  [DefectDisposition.USE_AS_IS]: 0,     // No additional cost
-  [DefectDisposition.REWORK]: 0.25,     // 25% of original cost
-  [DefectDisposition.SCRAP]: 1.0,       // 100% of material cost lost
+  [DefectDisposition.USE_AS_IS]: 0, // No additional cost
+  [DefectDisposition.REWORK]: 0.25, // 25% of original cost
+  [DefectDisposition.SCRAP]: 1.0, // 100% of material cost lost
   [DefectDisposition.RETURN_TO_VENDOR]: 0.1, // Handling cost
-  [DefectDisposition.DOWNGRADE]: 0.15,  // Reduced sale price
+  [DefectDisposition.DOWNGRADE]: 0.15, // Reduced sale price
   [DefectDisposition.PENDING]: 0,
 } as const;
 
 /** Statistical process control constants */
 export const SPC_QUALITY_CONSTANTS = {
-  SIGMA_MULTIPLIER: 3,           // 3-sigma control limits
-  MINIMUM_SAMPLE_SIZE: 30,       // Minimum data points for SPC
-  WARNING_SIGMA: 2,              // Warning limits at 2-sigma
-  
+  SIGMA_MULTIPLIER: 3, // 3-sigma control limits
+  MINIMUM_SAMPLE_SIZE: 30, // Minimum data points for SPC
+  WARNING_SIGMA: 2, // Warning limits at 2-sigma
+
   // Western Electric rules for out-of-control
   RULES: {
     BEYOND_3_SIGMA: 'Point beyond 3 sigma',
@@ -3740,13 +3829,13 @@ export const PROJECT_STATUS_DISPLAY_NAMES: Record<ProjectStatus, string> = {
 
 /** Colors for project status */
 export const PROJECT_STATUS_COLORS: Record<ProjectStatus, string> = {
-  [ProjectStatus.PLANNING]: '#8b5cf6',   // purple
-  [ProjectStatus.APPROVED]: '#3b82f6',   // blue
+  [ProjectStatus.PLANNING]: '#8b5cf6', // purple
+  [ProjectStatus.APPROVED]: '#3b82f6', // blue
   [ProjectStatus.IN_PROGRESS]: '#f59e0b', // amber
-  [ProjectStatus.ON_HOLD]: '#ef4444',    // red
-  [ProjectStatus.COMPLETED]: '#22c55e',  // green
-  [ProjectStatus.CANCELLED]: '#6b7280',  // gray
-  [ProjectStatus.ARCHIVED]: '#9ca3af',   // light gray
+  [ProjectStatus.ON_HOLD]: '#ef4444', // red
+  [ProjectStatus.COMPLETED]: '#22c55e', // green
+  [ProjectStatus.CANCELLED]: '#6b7280', // gray
+  [ProjectStatus.ARCHIVED]: '#9ca3af', // light gray
 };
 
 /** Display names for project priority */
@@ -3759,10 +3848,10 @@ export const PROJECT_PRIORITY_DISPLAY_NAMES: Record<ProjectPriority, string> = {
 
 /** Colors for project priority */
 export const PROJECT_PRIORITY_COLORS: Record<ProjectPriority, string> = {
-  [ProjectPriority.CRITICAL]: '#dc2626',  // red-600
-  [ProjectPriority.HIGH]: '#ea580c',      // orange-600
-  [ProjectPriority.MEDIUM]: '#2563eb',    // blue-600
-  [ProjectPriority.LOW]: '#6b7280',       // gray-500
+  [ProjectPriority.CRITICAL]: '#dc2626', // red-600
+  [ProjectPriority.HIGH]: '#ea580c', // orange-600
+  [ProjectPriority.MEDIUM]: '#2563eb', // blue-600
+  [ProjectPriority.LOW]: '#6b7280', // gray-500
 };
 
 /** Icons for project priority (emoji) */
@@ -3784,11 +3873,11 @@ export const MILESTONE_STATUS_DISPLAY_NAMES: Record<MilestoneStatus, string> = {
 
 /** Colors for milestone status */
 export const MILESTONE_STATUS_COLORS: Record<MilestoneStatus, string> = {
-  [MilestoneStatus.NOT_STARTED]: '#9ca3af',  // gray-400
-  [MilestoneStatus.IN_PROGRESS]: '#3b82f6',  // blue-500
-  [MilestoneStatus.COMPLETED]: '#22c55e',    // green-500
-  [MilestoneStatus.OVERDUE]: '#ef4444',      // red-500
-  [MilestoneStatus.SKIPPED]: '#6b7280',      // gray-500
+  [MilestoneStatus.NOT_STARTED]: '#9ca3af', // gray-400
+  [MilestoneStatus.IN_PROGRESS]: '#3b82f6', // blue-500
+  [MilestoneStatus.COMPLETED]: '#22c55e', // green-500
+  [MilestoneStatus.OVERDUE]: '#ef4444', // red-500
+  [MilestoneStatus.SKIPPED]: '#6b7280', // gray-500
 };
 
 /** Display names for budget line types */
@@ -3804,13 +3893,13 @@ export const BUDGET_LINE_TYPE_DISPLAY_NAMES: Record<BudgetLineType, string> = {
 
 /** Colors for budget line types */
 export const BUDGET_LINE_TYPE_COLORS: Record<BudgetLineType, string> = {
-  [BudgetLineType.MATERIAL]: '#3b82f6',   // blue
-  [BudgetLineType.LABOR]: '#22c55e',      // green
-  [BudgetLineType.EQUIPMENT]: '#8b5cf6',  // purple
+  [BudgetLineType.MATERIAL]: '#3b82f6', // blue
+  [BudgetLineType.LABOR]: '#22c55e', // green
+  [BudgetLineType.EQUIPMENT]: '#8b5cf6', // purple
   [BudgetLineType.SUBCONTRACT]: '#f59e0b', // amber
-  [BudgetLineType.SHIPPING]: '#06b6d4',   // cyan
-  [BudgetLineType.OVERHEAD]: '#ec4899',   // pink
-  [BudgetLineType.OTHER]: '#6b7280',      // gray
+  [BudgetLineType.SHIPPING]: '#06b6d4', // cyan
+  [BudgetLineType.OVERHEAD]: '#ec4899', // pink
+  [BudgetLineType.OTHER]: '#6b7280', // gray
 };
 
 /** Icons for budget line types (emoji) */
@@ -3835,11 +3924,11 @@ export const BUDGET_STATUS_DISPLAY_NAMES: Record<BudgetStatus, string> = {
 
 /** Colors for budget status */
 export const BUDGET_STATUS_COLORS: Record<BudgetStatus, string> = {
-  [BudgetStatus.DRAFT]: '#9ca3af',       // gray
-  [BudgetStatus.APPROVED]: '#3b82f6',    // blue
+  [BudgetStatus.DRAFT]: '#9ca3af', // gray
+  [BudgetStatus.APPROVED]: '#3b82f6', // blue
   [BudgetStatus.OVER_BUDGET]: '#ef4444', // red
   [BudgetStatus.UNDER_BUDGET]: '#22c55e', // green
-  [BudgetStatus.CLOSED]: '#6b7280',      // dark gray
+  [BudgetStatus.CLOSED]: '#6b7280', // dark gray
 };
 
 /** Display names for job template categories */
@@ -3856,14 +3945,14 @@ export const JOB_TEMPLATE_CATEGORY_DISPLAY_NAMES: Record<JobTemplateCategory, st
 
 /** Colors for job template categories */
 export const JOB_TEMPLATE_CATEGORY_COLORS: Record<JobTemplateCategory, string> = {
-  [JobTemplateCategory.SIGNAGE]: '#3b82f6',       // blue
-  [JobTemplateCategory.VEHICLE_WRAP]: '#22c55e',  // green
-  [JobTemplateCategory.BANNER]: '#f59e0b',        // amber
-  [JobTemplateCategory.DISPLAY]: '#8b5cf6',       // purple
-  [JobTemplateCategory.WAYFINDING]: '#06b6d4',    // cyan
+  [JobTemplateCategory.SIGNAGE]: '#3b82f6', // blue
+  [JobTemplateCategory.VEHICLE_WRAP]: '#22c55e', // green
+  [JobTemplateCategory.BANNER]: '#f59e0b', // amber
+  [JobTemplateCategory.DISPLAY]: '#8b5cf6', // purple
+  [JobTemplateCategory.WAYFINDING]: '#06b6d4', // cyan
   [JobTemplateCategory.CHANNEL_LETTER]: '#ec4899', // pink
-  [JobTemplateCategory.MONUMENT]: '#84cc16',      // lime
-  [JobTemplateCategory.CUSTOM]: '#6b7280',        // gray
+  [JobTemplateCategory.MONUMENT]: '#84cc16', // lime
+  [JobTemplateCategory.CUSTOM]: '#6b7280', // gray
 };
 
 /** Icons for job template categories */
@@ -3885,14 +3974,14 @@ export const PROJECT_NUMBER_PREFIX = 'PRJ-';
 export const PROJECT_DEFAULTS = {
   priority: ProjectPriority.MEDIUM,
   budgetVarianceThreshold: 10, // % over budget to trigger warning
-  milestoneDueSoonDays: 7,     // Days before due to show "due soon"
+  milestoneDueSoonDays: 7, // Days before due to show "due soon"
   overdueNotificationDays: [1, 3, 7], // Days after overdue to notify
 } as const;
 
 /** Budget analysis thresholds */
 export const BUDGET_THRESHOLDS = {
-  WARNING: 80,      // % of budget consumed - show warning
-  CRITICAL: 95,     // % of budget consumed - show critical
+  WARNING: 80, // % of budget consumed - show warning
+  CRITICAL: 95, // % of budget consumed - show critical
   OVERRUN_ALERT: 100, // % of budget - alert on overrun
   VARIANCE_WARNING: 10, // % variance from estimate
   VARIANCE_CRITICAL: 25, // % variance from estimate
@@ -3972,13 +4061,7 @@ export const TEMPLATE_CHECKLIST_ITEMS: Record<JobTemplateCategory, string[]> = {
 // NEW-CRITICAL-02: MATERIAL NESTING & WASTE OPTIMIZATION CONSTANTS
 // ============================================================================
 
-import {
-  NestingStatus,
-  CutStatus,
-  WasteCategory,
-  SheetStatus,
-  NestingAlgorithm,
-} from './enums.js';
+import { NestingStatus, CutStatus, WasteCategory, SheetStatus, NestingAlgorithm } from './enums.js';
 
 /** Display names for nesting status */
 export const NESTING_STATUS_DISPLAY_NAMES: Record<NestingStatus, string> = {
@@ -3994,14 +4077,14 @@ export const NESTING_STATUS_DISPLAY_NAMES: Record<NestingStatus, string> = {
 
 /** Colors for nesting status */
 export const NESTING_STATUS_COLORS: Record<NestingStatus, string> = {
-  [NestingStatus.DRAFT]: '#9ca3af',       // gray
-  [NestingStatus.PENDING]: '#f59e0b',     // amber
-  [NestingStatus.PROCESSING]: '#3b82f6',  // blue
-  [NestingStatus.COMPLETED]: '#22c55e',   // green
-  [NestingStatus.APPROVED]: '#8b5cf6',    // purple
+  [NestingStatus.DRAFT]: '#9ca3af', // gray
+  [NestingStatus.PENDING]: '#f59e0b', // amber
+  [NestingStatus.PROCESSING]: '#3b82f6', // blue
+  [NestingStatus.COMPLETED]: '#22c55e', // green
+  [NestingStatus.APPROVED]: '#8b5cf6', // purple
   [NestingStatus.IN_PRODUCTION]: '#06b6d4', // cyan
-  [NestingStatus.FINISHED]: '#059669',    // emerald
-  [NestingStatus.CANCELLED]: '#6b7280',   // gray
+  [NestingStatus.FINISHED]: '#059669', // emerald
+  [NestingStatus.CANCELLED]: '#6b7280', // gray
 };
 
 /** Display names for cut status */
@@ -4015,11 +4098,11 @@ export const CUT_STATUS_DISPLAY_NAMES: Record<CutStatus, string> = {
 
 /** Colors for cut status */
 export const CUT_STATUS_COLORS: Record<CutStatus, string> = {
-  [CutStatus.PENDING]: '#9ca3af',      // gray
-  [CutStatus.IN_PROGRESS]: '#3b82f6',  // blue
-  [CutStatus.COMPLETED]: '#22c55e',    // green
-  [CutStatus.FAILED]: '#ef4444',       // red
-  [CutStatus.SKIPPED]: '#6b7280',      // gray
+  [CutStatus.PENDING]: '#9ca3af', // gray
+  [CutStatus.IN_PROGRESS]: '#3b82f6', // blue
+  [CutStatus.COMPLETED]: '#22c55e', // green
+  [CutStatus.FAILED]: '#ef4444', // red
+  [CutStatus.SKIPPED]: '#6b7280', // gray
 };
 
 /** Display names for waste category */
@@ -4033,11 +4116,11 @@ export const WASTE_CATEGORY_DISPLAY_NAMES: Record<WasteCategory, string> = {
 
 /** Colors for waste category */
 export const WASTE_CATEGORY_COLORS: Record<WasteCategory, string> = {
-  [WasteCategory.USABLE_REMNANT]: '#22c55e',  // green - can be reused
-  [WasteCategory.EDGE_TRIM]: '#f59e0b',       // amber - recyclable
-  [WasteCategory.SCRAP]: '#ef4444',           // red - waste
-  [WasteCategory.DEFECTIVE]: '#dc2626',       // dark red - defect
-  [WasteCategory.SETUP_WASTE]: '#9ca3af',     // gray - expected
+  [WasteCategory.USABLE_REMNANT]: '#22c55e', // green - can be reused
+  [WasteCategory.EDGE_TRIM]: '#f59e0b', // amber - recyclable
+  [WasteCategory.SCRAP]: '#ef4444', // red - waste
+  [WasteCategory.DEFECTIVE]: '#dc2626', // dark red - defect
+  [WasteCategory.SETUP_WASTE]: '#9ca3af', // gray - expected
 };
 
 /** Icons for waste category */
@@ -4060,11 +4143,11 @@ export const SHEET_STATUS_DISPLAY_NAMES: Record<SheetStatus, string> = {
 
 /** Colors for sheet status */
 export const SHEET_STATUS_COLORS: Record<SheetStatus, string> = {
-  [SheetStatus.AVAILABLE]: '#22c55e',   // green
-  [SheetStatus.RESERVED]: '#f59e0b',    // amber
-  [SheetStatus.IN_USE]: '#3b82f6',      // blue
-  [SheetStatus.DEPLETED]: '#6b7280',    // gray
-  [SheetStatus.DAMAGED]: '#ef4444',     // red
+  [SheetStatus.AVAILABLE]: '#22c55e', // green
+  [SheetStatus.RESERVED]: '#f59e0b', // amber
+  [SheetStatus.IN_USE]: '#3b82f6', // blue
+  [SheetStatus.DEPLETED]: '#6b7280', // gray
+  [SheetStatus.DAMAGED]: '#ef4444', // red
 };
 
 /** Display names for nesting algorithms */
@@ -4077,37 +4160,41 @@ export const NESTING_ALGORITHM_DISPLAY_NAMES: Record<NestingAlgorithm, string> =
 
 /** Algorithm descriptions */
 export const NESTING_ALGORITHM_DESCRIPTIONS: Record<NestingAlgorithm, string> = {
-  [NestingAlgorithm.BOTTOM_LEFT]: 'Fast, simple placement from bottom-left corner. Good for quick estimates.',
-  [NestingAlgorithm.BEST_FIT]: 'Sorts items by size and places largest first. Better utilization than bottom-left.',
-  [NestingAlgorithm.GENETIC]: 'Evolutionary optimization for best utilization. Slower but optimal results.',
-  [NestingAlgorithm.GUILLOTINE]: 'Produces only straight cuts. Best for materials that require guillotine cuts.',
+  [NestingAlgorithm.BOTTOM_LEFT]:
+    'Fast, simple placement from bottom-left corner. Good for quick estimates.',
+  [NestingAlgorithm.BEST_FIT]:
+    'Sorts items by size and places largest first. Better utilization than bottom-left.',
+  [NestingAlgorithm.GENETIC]:
+    'Evolutionary optimization for best utilization. Slower but optimal results.',
+  [NestingAlgorithm.GUILLOTINE]:
+    'Produces only straight cuts. Best for materials that require guillotine cuts.',
 };
 
 /** Default nesting parameters */
 export const NESTING_DEFAULTS = {
-  itemSpacing: 0.25,          // inches between items
-  edgeMargin: 0.5,            // inches from sheet edge
-  minRemnantSize: 36,         // sq inches minimum to save as remnant
-  maxIterations: 1000,        // algorithm iterations
-  timeoutMs: 30000,           // algorithm timeout
+  itemSpacing: 0.25, // inches between items
+  edgeMargin: 0.5, // inches from sheet edge
+  minRemnantSize: 36, // sq inches minimum to save as remnant
+  maxIterations: 1000, // algorithm iterations
+  timeoutMs: 30000, // algorithm timeout
 } as const;
 
 /** Utilization thresholds */
 export const UTILIZATION_THRESHOLDS = {
-  EXCELLENT: 90,    // >= 90% utilization
-  GOOD: 80,         // >= 80%
-  FAIR: 70,         // >= 70%
-  POOR: 60,         // >= 60%
+  EXCELLENT: 90, // >= 90% utilization
+  GOOD: 80, // >= 80%
+  FAIR: 70, // >= 70%
+  POOR: 60, // >= 60%
   // < 60% is considered wasteful
 } as const;
 
 /** Utilization threshold colors */
 export const UTILIZATION_COLORS = {
-  EXCELLENT: '#22c55e',  // green
-  GOOD: '#84cc16',       // lime
-  FAIR: '#f59e0b',       // amber
-  POOR: '#f97316',       // orange
-  WASTEFUL: '#ef4444',   // red
+  EXCELLENT: '#22c55e', // green
+  GOOD: '#84cc16', // lime
+  FAIR: '#f59e0b', // amber
+  POOR: '#f97316', // orange
+  WASTEFUL: '#ef4444', // red
 } as const;
 
 /** Get utilization color based on percentage */
@@ -4121,9 +4208,9 @@ export const getUtilizationColor = (percent: number): string => {
 
 /** Waste cost assumptions */
 export const WASTE_COST_FACTORS = {
-  RECYCLABLE_RECOVERY: 0.15,  // 15% of material cost recoverable for recyclables
-  SCRAP_DISPOSAL_COST: 0.05,  // 5% of material cost to dispose of scrap
-  DEFECT_FULL_LOSS: 1.0,      // 100% loss on defective material
+  RECYCLABLE_RECOVERY: 0.15, // 15% of material cost recoverable for recyclables
+  SCRAP_DISPOSAL_COST: 0.05, // 5% of material cost to dispose of scrap
+  DEFECT_FULL_LOSS: 1.0, // 100% loss on defective material
 } as const;
 
 /** Common material sheet sizes (in inches) */
@@ -4188,9 +4275,9 @@ export const NOTIFICATION_PRIORITY_DISPLAY_NAMES: Record<NotificationPriorityLev
 
 /** Colors for notification priority */
 export const NOTIFICATION_PRIORITY_COLORS: Record<NotificationPriorityLevel, string> = {
-  [NotificationPriorityLevel.LOW]: '#9ca3af',    // gray
+  [NotificationPriorityLevel.LOW]: '#9ca3af', // gray
   [NotificationPriorityLevel.NORMAL]: '#3b82f6', // blue
-  [NotificationPriorityLevel.HIGH]: '#f59e0b',   // amber
+  [NotificationPriorityLevel.HIGH]: '#f59e0b', // amber
   [NotificationPriorityLevel.URGENT]: '#ef4444', // red
 };
 
@@ -4207,12 +4294,12 @@ export const DELIVERY_STATUS_DISPLAY_NAMES: Record<NotificationDeliveryStatus, s
 
 /** Colors for delivery status */
 export const DELIVERY_STATUS_COLORS: Record<NotificationDeliveryStatus, string> = {
-  [NotificationDeliveryStatus.PENDING]: '#f59e0b',   // amber
-  [NotificationDeliveryStatus.SENDING]: '#3b82f6',   // blue
+  [NotificationDeliveryStatus.PENDING]: '#f59e0b', // amber
+  [NotificationDeliveryStatus.SENDING]: '#3b82f6', // blue
   [NotificationDeliveryStatus.DELIVERED]: '#22c55e', // green
-  [NotificationDeliveryStatus.FAILED]: '#ef4444',    // red
-  [NotificationDeliveryStatus.BOUNCED]: '#dc2626',   // dark red
-  [NotificationDeliveryStatus.READ]: '#059669',      // emerald
+  [NotificationDeliveryStatus.FAILED]: '#ef4444', // red
+  [NotificationDeliveryStatus.BOUNCED]: '#dc2626', // dark red
+  [NotificationDeliveryStatus.READ]: '#059669', // emerald
   [NotificationDeliveryStatus.DISMISSED]: '#6b7280', // gray
 };
 
@@ -4225,9 +4312,9 @@ export const THREAD_STATUS_DISPLAY_NAMES: Record<ThreadStatus, string> = {
 
 /** Colors for thread status */
 export const THREAD_STATUS_COLORS: Record<ThreadStatus, string> = {
-  [ThreadStatus.OPEN]: '#3b82f6',      // blue
-  [ThreadStatus.RESOLVED]: '#22c55e',  // green
-  [ThreadStatus.ARCHIVED]: '#6b7280',  // gray
+  [ThreadStatus.OPEN]: '#3b82f6', // blue
+  [ThreadStatus.RESOLVED]: '#22c55e', // green
+  [ThreadStatus.ARCHIVED]: '#6b7280', // gray
 };
 
 /** Display names for announcement scope */
@@ -4246,25 +4333,25 @@ export const NOTIFICATION_TEMPLATE_CODES = {
   ORDER_STATUS_CHANGED: 'ORDER_STATUS_CHANGED',
   ORDER_COMPLETED: 'ORDER_COMPLETED',
   ORDER_SHIPPED: 'ORDER_SHIPPED',
-  
+
   // Proofs
   PROOF_UPLOADED: 'PROOF_UPLOADED',
   PROOF_APPROVED: 'PROOF_APPROVED',
   PROOF_REJECTED: 'PROOF_REJECTED',
   PROOF_REMINDER: 'PROOF_REMINDER',
-  
+
   // Quotes
   QUOTE_CREATED: 'QUOTE_CREATED',
   QUOTE_SENT: 'QUOTE_SENT',
   QUOTE_APPROVED: 'QUOTE_APPROVED',
   QUOTE_EXPIRING: 'QUOTE_EXPIRING',
-  
+
   // Invoices
   INVOICE_CREATED: 'INVOICE_CREATED',
   INVOICE_SENT: 'INVOICE_SENT',
   PAYMENT_RECEIVED: 'PAYMENT_RECEIVED',
   PAYMENT_OVERDUE: 'PAYMENT_OVERDUE',
-  
+
   // System
   USER_MENTIONED: 'USER_MENTIONED',
   TASK_ASSIGNED: 'TASK_ASSIGNED',
@@ -4299,8 +4386,8 @@ export const DEFAULT_NOTIFICATION_PREFERENCES = {
 /** Retry settings for failed notifications */
 export const NOTIFICATION_RETRY_SETTINGS = {
   maxAttempts: 3,
-  initialDelayMs: 5000,        // 5 seconds
-  maxDelayMs: 3600000,         // 1 hour
+  initialDelayMs: 5000, // 5 seconds
+  maxDelayMs: 3600000, // 1 hour
   backoffMultiplier: 2,
 } as const;
 
@@ -4357,11 +4444,11 @@ export const CALIBRATION_RESULT_DISPLAY_NAMES: Record<CalibrationResult, string>
 
 /** Colors for calibration results */
 export const CALIBRATION_RESULT_COLORS: Record<CalibrationResult, string> = {
-  [CalibrationResult.PASS]: '#22c55e',              // green
+  [CalibrationResult.PASS]: '#22c55e', // green
   [CalibrationResult.PASS_WITH_ADJUSTMENT]: '#84cc16', // lime
-  [CalibrationResult.FAIL]: '#ef4444',              // red
-  [CalibrationResult.CONDITIONAL]: '#f59e0b',       // amber
-  [CalibrationResult.DEFERRED]: '#6b7280',          // gray
+  [CalibrationResult.FAIL]: '#ef4444', // red
+  [CalibrationResult.CONDITIONAL]: '#f59e0b', // amber
+  [CalibrationResult.DEFERRED]: '#6b7280', // gray
 };
 
 /** Display names for certification types */
@@ -4400,11 +4487,11 @@ export const CERTIFICATION_STATUS_DISPLAY_NAMES: Record<CertificationStatus, str
 
 /** Colors for certification status */
 export const CERTIFICATION_STATUS_COLORS: Record<CertificationStatus, string> = {
-  [CertificationStatus.VALID]: '#22c55e',           // green
-  [CertificationStatus.EXPIRING_SOON]: '#f59e0b',   // amber
-  [CertificationStatus.EXPIRED]: '#ef4444',         // red
-  [CertificationStatus.SUSPENDED]: '#f97316',       // orange
-  [CertificationStatus.REVOKED]: '#dc2626',         // dark red
+  [CertificationStatus.VALID]: '#22c55e', // green
+  [CertificationStatus.EXPIRING_SOON]: '#f59e0b', // amber
+  [CertificationStatus.EXPIRED]: '#ef4444', // red
+  [CertificationStatus.SUSPENDED]: '#f97316', // orange
+  [CertificationStatus.REVOKED]: '#dc2626', // dark red
   [CertificationStatus.PENDING_RENEWAL]: '#3b82f6', // blue
 };
 
@@ -4504,10 +4591,10 @@ export const TRAINING_LEVEL_DISPLAY_NAMES: Record<TrainingLevel, string> = {
 
 /** Colors for training levels */
 export const TRAINING_LEVEL_COLORS: Record<TrainingLevel, string> = {
-  [TrainingLevel.BEGINNER]: '#22c55e',      // green
-  [TrainingLevel.INTERMEDIATE]: '#3b82f6',  // blue
-  [TrainingLevel.ADVANCED]: '#8b5cf6',      // purple
-  [TrainingLevel.EXPERT]: '#f59e0b',        // amber
+  [TrainingLevel.BEGINNER]: '#22c55e', // green
+  [TrainingLevel.INTERMEDIATE]: '#3b82f6', // blue
+  [TrainingLevel.ADVANCED]: '#8b5cf6', // purple
+  [TrainingLevel.EXPERT]: '#f59e0b', // amber
   [TrainingLevel.CERTIFICATION]: '#ef4444', // red
 };
 
@@ -4542,11 +4629,11 @@ export const SESSION_STATUS_DISPLAY_NAMES: Record<TrainingSessionStatus, string>
 
 /** Colors for session status */
 export const SESSION_STATUS_COLORS: Record<TrainingSessionStatus, string> = {
-  [TrainingSessionStatus.SCHEDULED]: '#3b82f6',  // blue
+  [TrainingSessionStatus.SCHEDULED]: '#3b82f6', // blue
   [TrainingSessionStatus.IN_PROGRESS]: '#f59e0b', // amber
-  [TrainingSessionStatus.COMPLETED]: '#22c55e',   // green
-  [TrainingSessionStatus.CANCELLED]: '#ef4444',   // red
-  [TrainingSessionStatus.POSTPONED]: '#6b7280',   // gray
+  [TrainingSessionStatus.COMPLETED]: '#22c55e', // green
+  [TrainingSessionStatus.CANCELLED]: '#ef4444', // red
+  [TrainingSessionStatus.POSTPONED]: '#6b7280', // gray
 };
 
 /** Display names for enrollment status */
@@ -4562,13 +4649,13 @@ export const ENROLLMENT_STATUS_DISPLAY_NAMES: Record<EnrollmentStatus, string> =
 
 /** Colors for enrollment status */
 export const ENROLLMENT_STATUS_COLORS: Record<EnrollmentStatus, string> = {
-  [EnrollmentStatus.ENROLLED]: '#3b82f6',    // blue
-  [EnrollmentStatus.WAITLISTED]: '#f59e0b',  // amber
-  [EnrollmentStatus.ATTENDED]: '#8b5cf6',    // purple
-  [EnrollmentStatus.COMPLETED]: '#22c55e',   // green
-  [EnrollmentStatus.NO_SHOW]: '#f97316',     // orange
-  [EnrollmentStatus.CANCELLED]: '#6b7280',   // gray
-  [EnrollmentStatus.FAILED]: '#ef4444',      // red
+  [EnrollmentStatus.ENROLLED]: '#3b82f6', // blue
+  [EnrollmentStatus.WAITLISTED]: '#f59e0b', // amber
+  [EnrollmentStatus.ATTENDED]: '#8b5cf6', // purple
+  [EnrollmentStatus.COMPLETED]: '#22c55e', // green
+  [EnrollmentStatus.NO_SHOW]: '#f97316', // orange
+  [EnrollmentStatus.CANCELLED]: '#6b7280', // gray
+  [EnrollmentStatus.FAILED]: '#ef4444', // red
 };
 
 /** Display names for competency types */
@@ -4594,11 +4681,11 @@ export const COMPETENCY_STATUS_DISPLAY_NAMES: Record<CompetencyStatus, string> =
 
 /** Colors for competency status */
 export const COMPETENCY_STATUS_COLORS: Record<CompetencyStatus, string> = {
-  [CompetencyStatus.ACTIVE]: '#22c55e',       // green
+  [CompetencyStatus.ACTIVE]: '#22c55e', // green
   [CompetencyStatus.EXPIRING_SOON]: '#f59e0b', // amber
-  [CompetencyStatus.EXPIRED]: '#ef4444',       // red
-  [CompetencyStatus.SUSPENDED]: '#f97316',     // orange
-  [CompetencyStatus.REVOKED]: '#dc2626',       // dark red
+  [CompetencyStatus.EXPIRED]: '#ef4444', // red
+  [CompetencyStatus.SUSPENDED]: '#f97316', // orange
+  [CompetencyStatus.REVOKED]: '#dc2626', // dark red
 };
 
 /** Display names for training target types */
@@ -4618,9 +4705,9 @@ export const TRAINING_PRIORITY_DISPLAY_NAMES: Record<TrainingPriorityLevel, stri
 
 /** Colors for training priority */
 export const TRAINING_PRIORITY_COLORS: Record<TrainingPriorityLevel, string> = {
-  [TrainingPriorityLevel.REQUIRED]: '#ef4444',    // red
+  [TrainingPriorityLevel.REQUIRED]: '#ef4444', // red
   [TrainingPriorityLevel.RECOMMENDED]: '#f59e0b', // amber
-  [TrainingPriorityLevel.OPTIONAL]: '#22c55e',    // green
+  [TrainingPriorityLevel.OPTIONAL]: '#22c55e', // green
 };
 
 /** Competency expiration warning days */
@@ -4671,14 +4758,14 @@ export const CONTRACT_STATUS_DISPLAY_NAMES: Record<ContractStatus, string> = {
 
 /** Colors for contract status */
 export const CONTRACT_STATUS_COLORS: Record<ContractStatus, string> = {
-  [ContractStatus.DRAFT]: '#6b7280',           // gray
+  [ContractStatus.DRAFT]: '#6b7280', // gray
   [ContractStatus.PENDING_APPROVAL]: '#f59e0b', // amber
-  [ContractStatus.ACTIVE]: '#22c55e',          // green
-  [ContractStatus.EXPIRING_SOON]: '#f97316',   // orange
-  [ContractStatus.EXPIRED]: '#ef4444',         // red
-  [ContractStatus.TERMINATED]: '#dc2626',      // dark red
-  [ContractStatus.SUSPENDED]: '#8b5cf6',       // purple
-  [ContractStatus.RENEWED]: '#3b82f6',         // blue
+  [ContractStatus.ACTIVE]: '#22c55e', // green
+  [ContractStatus.EXPIRING_SOON]: '#f97316', // orange
+  [ContractStatus.EXPIRED]: '#ef4444', // red
+  [ContractStatus.TERMINATED]: '#dc2626', // dark red
+  [ContractStatus.SUSPENDED]: '#8b5cf6', // purple
+  [ContractStatus.RENEWED]: '#3b82f6', // blue
 };
 
 /** Display names for vendor pricing types */
@@ -4753,13 +4840,13 @@ export const QUOTE_REQUEST_STATUS_DISPLAY_NAMES: Record<QuoteRequestStatus, stri
 
 /** Colors for quote request status */
 export const QUOTE_REQUEST_STATUS_COLORS: Record<QuoteRequestStatus, string> = {
-  [QuoteRequestStatus.DRAFT]: '#6b7280',         // gray
-  [QuoteRequestStatus.SENT]: '#3b82f6',          // blue
+  [QuoteRequestStatus.DRAFT]: '#6b7280', // gray
+  [QuoteRequestStatus.SENT]: '#3b82f6', // blue
   [QuoteRequestStatus.RESPONSES_RECEIVED]: '#8b5cf6', // purple
-  [QuoteRequestStatus.UNDER_REVIEW]: '#f59e0b',  // amber
-  [QuoteRequestStatus.AWARDED]: '#22c55e',       // green
-  [QuoteRequestStatus.CANCELLED]: '#ef4444',     // red
-  [QuoteRequestStatus.EXPIRED]: '#9ca3af',       // gray-400
+  [QuoteRequestStatus.UNDER_REVIEW]: '#f59e0b', // amber
+  [QuoteRequestStatus.AWARDED]: '#22c55e', // green
+  [QuoteRequestStatus.CANCELLED]: '#ef4444', // red
+  [QuoteRequestStatus.EXPIRED]: '#9ca3af', // gray-400
 };
 
 /** Display names for quote response status */
@@ -4776,13 +4863,13 @@ export const QUOTE_RESPONSE_STATUS_DISPLAY_NAMES: Record<QuoteResponseStatus, st
 
 /** Colors for quote response status */
 export const QUOTE_RESPONSE_STATUS_COLORS: Record<QuoteResponseStatus, string> = {
-  [QuoteResponseStatus.PENDING]: '#6b7280',      // gray
-  [QuoteResponseStatus.SENT]: '#3b82f6',         // blue
-  [QuoteResponseStatus.RECEIVED]: '#8b5cf6',     // purple
-  [QuoteResponseStatus.NO_RESPONSE]: '#f97316',  // orange
-  [QuoteResponseStatus.DECLINED]: '#ef4444',     // red
+  [QuoteResponseStatus.PENDING]: '#6b7280', // gray
+  [QuoteResponseStatus.SENT]: '#3b82f6', // blue
+  [QuoteResponseStatus.RECEIVED]: '#8b5cf6', // purple
+  [QuoteResponseStatus.NO_RESPONSE]: '#f97316', // orange
+  [QuoteResponseStatus.DECLINED]: '#ef4444', // red
   [QuoteResponseStatus.UNDER_REVIEW]: '#f59e0b', // amber
-  [QuoteResponseStatus.SELECTED]: '#22c55e',     // green
+  [QuoteResponseStatus.SELECTED]: '#22c55e', // green
   [QuoteResponseStatus.NOT_SELECTED]: '#9ca3af', // gray-400
 };
 
@@ -4857,14 +4944,14 @@ export const FREIGHT_QUOTE_STATUS_DISPLAY_NAMES: Record<FreightQuoteStatus, stri
 
 /** Colors for freight quote status */
 export const FREIGHT_QUOTE_STATUS_COLORS: Record<FreightQuoteStatus, string> = {
-  [FreightQuoteStatus.DRAFT]: '#6b7280',        // gray
-  [FreightQuoteStatus.QUOTING]: '#3b82f6',      // blue
-  [FreightQuoteStatus.QUOTED]: '#8b5cf6',       // purple
-  [FreightQuoteStatus.BOOKED]: '#f59e0b',       // amber
-  [FreightQuoteStatus.PICKED_UP]: '#10b981',    // emerald
-  [FreightQuoteStatus.IN_TRANSIT]: '#06b6d4',   // cyan
-  [FreightQuoteStatus.DELIVERED]: '#22c55e',    // green
-  [FreightQuoteStatus.CANCELLED]: '#ef4444',    // red
+  [FreightQuoteStatus.DRAFT]: '#6b7280', // gray
+  [FreightQuoteStatus.QUOTING]: '#3b82f6', // blue
+  [FreightQuoteStatus.QUOTED]: '#8b5cf6', // purple
+  [FreightQuoteStatus.BOOKED]: '#f59e0b', // amber
+  [FreightQuoteStatus.PICKED_UP]: '#10b981', // emerald
+  [FreightQuoteStatus.IN_TRANSIT]: '#06b6d4', // cyan
+  [FreightQuoteStatus.DELIVERED]: '#22c55e', // green
+  [FreightQuoteStatus.CANCELLED]: '#ef4444', // red
 };
 
 /** Display names for delivery route status */
@@ -4877,10 +4964,10 @@ export const DELIVERY_ROUTE_STATUS_DISPLAY_NAMES: Record<DeliveryRouteStatus, st
 
 /** Colors for delivery route status */
 export const DELIVERY_ROUTE_STATUS_COLORS: Record<DeliveryRouteStatus, string> = {
-  [DeliveryRouteStatus.PLANNED]: '#3b82f6',     // blue
+  [DeliveryRouteStatus.PLANNED]: '#3b82f6', // blue
   [DeliveryRouteStatus.IN_PROGRESS]: '#f59e0b', // amber
-  [DeliveryRouteStatus.COMPLETED]: '#22c55e',   // green
-  [DeliveryRouteStatus.CANCELLED]: '#ef4444',   // red
+  [DeliveryRouteStatus.COMPLETED]: '#22c55e', // green
+  [DeliveryRouteStatus.CANCELLED]: '#ef4444', // red
 };
 
 /** Display names for delivery stop types */
@@ -4911,12 +4998,12 @@ export const DELIVERY_STOP_STATUS_DISPLAY_NAMES: Record<DeliveryStopStatus, stri
 
 /** Colors for delivery stop status */
 export const DELIVERY_STOP_STATUS_COLORS: Record<DeliveryStopStatus, string> = {
-  [DeliveryStopStatus.PENDING]: '#6b7280',     // gray
-  [DeliveryStopStatus.EN_ROUTE]: '#3b82f6',    // blue
-  [DeliveryStopStatus.ARRIVED]: '#f59e0b',     // amber
-  [DeliveryStopStatus.COMPLETED]: '#22c55e',   // green
-  [DeliveryStopStatus.FAILED]: '#ef4444',      // red
-  [DeliveryStopStatus.SKIPPED]: '#9ca3af',     // gray-400
+  [DeliveryStopStatus.PENDING]: '#6b7280', // gray
+  [DeliveryStopStatus.EN_ROUTE]: '#3b82f6', // blue
+  [DeliveryStopStatus.ARRIVED]: '#f59e0b', // amber
+  [DeliveryStopStatus.COMPLETED]: '#22c55e', // green
+  [DeliveryStopStatus.FAILED]: '#ef4444', // red
+  [DeliveryStopStatus.SKIPPED]: '#9ca3af', // gray-400
 };
 
 /** Display names for tracking event types */
@@ -5305,7 +5392,10 @@ export const RECYCLABILITY_RATING_COLORS: Record<RecyclabilityRating, string> = 
 };
 
 /** Environmental certification display names */
-export const ENVIRONMENTAL_CERTIFICATION_DISPLAY_NAMES: Record<EnvironmentalCertificationType, string> = {
+export const ENVIRONMENTAL_CERTIFICATION_DISPLAY_NAMES: Record<
+  EnvironmentalCertificationType,
+  string
+> = {
   [EnvironmentalCertificationType.FSC]: 'FSC Certified',
   [EnvironmentalCertificationType.GREENGUARD]: 'GREENGUARD',
   [EnvironmentalCertificationType.ENERGY_STAR]: 'ENERGY STAR',
@@ -5446,21 +5536,21 @@ export const GOAL_TIMEFRAME_DISPLAY_NAMES: Record<GoalTimeframe, string> = {
 export const SUSTAINABILITY_CONFIG = {
   defaultEmissionFactorSource: 'EPA',
   carbonCreditPricePerTon: 50,
-  wasteToLandfillWarningThreshold: 0.3,  // 30%
-  recyclingRateGoal: 0.75,  // 75%
-  renewableEnergyGoal: 0.5,  // 50%
+  wasteToLandfillWarningThreshold: 0.3, // 30%
+  recyclingRateGoal: 0.75, // 75%
+  renewableEnergyGoal: 0.5, // 50%
   trackWaterUsage: true,
   requireManifestForHazardous: true,
 } as const;
 
 /** Common emission factors (kg CO2e per unit) */
 export const EMISSION_FACTORS = {
-  electricityKwh: 0.42,           // kg CO2e per kWh (US average)
-  naturalGasTherm: 5.3,           // kg CO2e per therm
-  propaneGallon: 5.72,            // kg CO2e per gallon
-  dieselGallon: 10.21,            // kg CO2e per gallon
-  shippingMilePerTon: 0.25,       // kg CO2e per ton-mile (truck)
-  airShippingMilePerTon: 0.62,    // kg CO2e per ton-mile (air)
+  electricityKwh: 0.42, // kg CO2e per kWh (US average)
+  naturalGasTherm: 5.3, // kg CO2e per therm
+  propaneGallon: 5.72, // kg CO2e per gallon
+  dieselGallon: 10.21, // kg CO2e per gallon
+  shippingMilePerTon: 0.25, // kg CO2e per ton-mile (truck)
+  airShippingMilePerTon: 0.62, // kg CO2e per ton-mile (air)
 } as const;
 
 // ============================================================================
@@ -5615,7 +5705,7 @@ export const PRICING_CONFIG = {
 
 /** Quote intelligence configuration */
 export const QUOTE_INTELLIGENCE_CONFIG = {
-  minSimilarityScore: 60,          // Minimum similarity to be considered comparable
+  minSimilarityScore: 60, // Minimum similarity to be considered comparable
   winProbabilityThresholds: {
     low: 50,
     medium: 70,
@@ -5662,7 +5752,7 @@ export const PRODUCTION_LIST_SECTION_DISPLAY_NAMES: Record<ProductionListSection
 export const PRODUCTION_LIST_SECTION_MARKERS: Record<ProductionListSection, string> = {
   [ProductionListSection.CUSTOMER]: 'CUSTOMER',
   [ProductionListSection.MONTHLY]: 'MONTHLY',
-  [ProductionListSection.COMING_UP]: 'COMING UP\u2026',  // Unicode ellipsis U+2026
+  [ProductionListSection.COMING_UP]: 'COMING UP\u2026', // Unicode ellipsis U+2026
   [ProductionListSection.DESIGN_PRODUCTION]: 'DESIGN; PRODUCTION/ACTUAL ORDERS',
   [ProductionListSection.DESIGN_ONLY]: 'DESIGN; DESIGN ONLY ORDERS',
   [ProductionListSection.OUTSOURCED]: 'OUTSOURCED',
@@ -5672,24 +5762,24 @@ export const PRODUCTION_LIST_SECTION_MARKERS: Record<ProductionListSection, stri
 
 /** Colors for each production list section (for UI display) */
 export const PRODUCTION_LIST_SECTION_COLORS: Record<ProductionListSection, string> = {
-  [ProductionListSection.CUSTOMER]: '#ef4444',       // red — shipping today
-  [ProductionListSection.MONTHLY]: '#8b5cf6',        // purple — recurring
-  [ProductionListSection.COMING_UP]: '#3b82f6',      // blue — approved, coming up
+  [ProductionListSection.CUSTOMER]: '#ef4444', // red — shipping today
+  [ProductionListSection.MONTHLY]: '#8b5cf6', // purple — recurring
+  [ProductionListSection.COMING_UP]: '#3b82f6', // blue — approved, coming up
   [ProductionListSection.DESIGN_PRODUCTION]: '#22c55e', // green — active production
-  [ProductionListSection.DESIGN_ONLY]: '#a855f7',    // violet — design only
-  [ProductionListSection.OUTSOURCED]: '#64748b',      // slate — outsourced
-  [ProductionListSection.INSTALL_READY]: '#14b8a6',   // teal — install/ship
-  [ProductionListSection.ON_HOLD]: '#9ca3af',         // gray — on hold
+  [ProductionListSection.DESIGN_ONLY]: '#a855f7', // violet — design only
+  [ProductionListSection.OUTSOURCED]: '#64748b', // slate — outsourced
+  [ProductionListSection.INSTALL_READY]: '#14b8a6', // teal — install/ship
+  [ProductionListSection.ON_HOLD]: '#9ca3af', // gray — on hold
 };
 
 /** Maps ERP OrderStatus to the default Production List section */
 export const ERP_STATUS_TO_SECTION: Record<string, ProductionListSection> = {
-  'PENDING': ProductionListSection.DESIGN_PRODUCTION,
-  'IN_PROGRESS': ProductionListSection.COMING_UP,
-  'COMPLETED': ProductionListSection.INSTALL_READY,
-  'SHIPPED': ProductionListSection.INSTALL_READY,
-  'CANCELLED': ProductionListSection.ON_HOLD,
-  'ON_HOLD': ProductionListSection.ON_HOLD,
+  PENDING: ProductionListSection.DESIGN_PRODUCTION,
+  IN_PROGRESS: ProductionListSection.COMING_UP,
+  COMPLETED: ProductionListSection.INSTALL_READY,
+  SHIPPED: ProductionListSection.INSTALL_READY,
+  CANCELLED: ProductionListSection.ON_HOLD,
+  ON_HOLD: ProductionListSection.ON_HOLD,
 };
 
 /** Maps Production List section to the best-fit ERP OrderStatus */
@@ -5713,15 +5803,15 @@ export const PRINT_STATION_TO_ERP_METHOD: Record<ProductionListPrintStation, str
 
 /** Maps ERP PrintingMethod back to production list station codes */
 export const ERP_METHOD_TO_PRINT_STATION: Record<string, ProductionListPrintStation | null> = {
-  'ROLL_TO_ROLL': ProductionListPrintStation.RR,
-  'FLATBED': ProductionListPrintStation.FB,
-  'PRODUCTION': ProductionListPrintStation.Z,
-  'SCREEN_PRINT': null,
-  'DESIGN': null,
-  'SALES': null,
-  'INSTALLATION': null,
-  'ORDER_ENTRY': null,
-  'SHIPPING_RECEIVING': null,
+  ROLL_TO_ROLL: ProductionListPrintStation.RR,
+  FLATBED: ProductionListPrintStation.FB,
+  PRODUCTION: ProductionListPrintStation.Z,
+  SCREEN_PRINT: null,
+  DESIGN: null,
+  SALES: null,
+  INSTALLATION: null,
+  ORDER_ENTRY: null,
+  SHIPPING_RECEIVING: null,
 };
 
 /** Display names for row styles */
@@ -5733,7 +5823,10 @@ export const PRODUCTION_LIST_STYLE_DISPLAY_NAMES: Record<ProductionListStyle, st
 };
 
 /** Display names for production list sync directions */
-export const PRODUCTION_LIST_SYNC_DIRECTION_DISPLAY_NAMES: Record<ProductionListSyncDirection, string> = {
+export const PRODUCTION_LIST_SYNC_DIRECTION_DISPLAY_NAMES: Record<
+  ProductionListSyncDirection,
+  string
+> = {
   [ProductionListSyncDirection.IMPORT]: 'Import (Excel → ERP)',
   [ProductionListSyncDirection.EXPORT]: 'Export (ERP → Excel)',
   [ProductionListSyncDirection.BIDIRECTIONAL]: 'Bidirectional Merge',
@@ -5766,7 +5859,8 @@ export const PRODUCTION_LIST_COLUMNS = [
 ] as const;
 
 /** The Production List base path on OneDrive (per §13) */
-export const PRODUCTION_LIST_BASE_PATH = 'C:\\Users\\{username}\\OneDrive - Wilde Signs\\Production List';
+export const PRODUCTION_LIST_BASE_PATH =
+  'C:\\Users\\{username}\\OneDrive - Wilde Signs\\Production List';
 
 /** File naming patterns (per §13) */
 export const PRODUCTION_LIST_FILE_PATTERNS = {

@@ -89,8 +89,8 @@ export function OrdersPage() {
     return findMatchingFilter(getCurrentFilterState());
   }, [findMatchingFilter, getCurrentFilterState]);
   
-  const { data: usersData } = useQuery({
-    queryKey: ['users'],
+  const { data: usersData = [] } = useQuery<Array<{ id: string; displayName: string }>>({
+    queryKey: ['users', 'filter-list'],
     queryFn: async () => {
       const response = await api.get('/users');
       const data = response.data.data;
@@ -177,8 +177,9 @@ export function OrdersPage() {
     },
   });
 
-  const orders = data?.items ?? [];
-  const totalPages = data?.totalPages ?? 1;
+  const orders = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+  const totalPages = typeof data?.totalPages === 'number' && data.totalPages > 0 ? data.totalPages : 1;
+  const totalOrders = typeof data?.total === 'number' ? data.total : orders.length;
 
   const orderIds = useMemo(() => orders.map((o: { id: string }) => o.id), [orders]);
   const allSelected = orderIds.length > 0 && orderIds.every((id: string) => selectedIds.has(id));
@@ -224,7 +225,7 @@ export function OrdersPage() {
       <div className="flex items-center gap-3 mb-1.5 flex-shrink-0">
         <h1 className="text-lg font-bold text-gray-900 whitespace-nowrap">Work Orders</h1>
         <span className="text-[11px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full font-semibold tabular-nums">
-          {data?.total ?? '—'}
+          {totalOrders.toLocaleString()}
         </span>
 
         {/* Search */}
@@ -347,19 +348,21 @@ export function OrdersPage() {
           >
             <Printer className="h-3.5 w-3.5 mr-1" />Labels
           </button>
-          <Link
-            to="/orders/temp"
-            className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors border border-amber-200"
-          >
-            <Clock className="h-3.5 w-3.5 mr-1" />Temp
-          </Link>
           {canCreateOrder && (
-            <Link
-              to="/orders/new"
-              className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors shadow-sm"
-            >
-              <Plus className="h-3.5 w-3.5 mr-1" />New
-            </Link>
+            <>
+              <Link
+                to="/orders/new"
+                className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors border border-amber-200"
+              >
+                <Clock className="h-3.5 w-3.5 mr-1" />Temp
+              </Link>
+              <Link
+                to="/orders/new"
+                className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors shadow-sm"
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />New
+              </Link>
+            </>
           )}
         </div>
       </div>
@@ -503,7 +506,7 @@ export function OrdersPage() {
                       className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                     >
                       <option value="">Anyone</option>
-                      {usersData?.map((u: { id: string; displayName: string }) => (
+                      {usersData.map((u) => (
                         <option key={u.id} value={u.id}>{u.displayName}</option>
                       ))}
                     </select>
@@ -622,10 +625,20 @@ export function OrdersPage() {
                   status: string;
                   priority: number;
                   dueDate: string | null;
+                  routing?: string[];
                   stationProgress: Array<{ station: string; status: string }>;
                   isTempOrder?: boolean;
                   quickbooksOrderNum?: string | null;
-                }) => (
+                }) => {
+                  const stationBadges =
+                    order.stationProgress.length > 0
+                      ? order.stationProgress
+                      : (order.routing ?? []).map((station) => ({
+                          station,
+                          status: 'NOT_STARTED',
+                        }));
+
+                  return (
                   <tr
                     key={order.id}
                     className={`border-b border-gray-50 transition-colors duration-100 hover:bg-gray-50/60 ${selectedIds.has(order.id) ? 'bg-primary-50/60' : ''}`}
@@ -655,13 +668,12 @@ export function OrdersPage() {
                           #{order.orderNumber}
                         </Link>
                         {order.isTempOrder && (
-                          <Link
-                            to="/orders/temp"
-                            className="inline-flex items-center gap-0.5 px-1 py-px text-[9px] font-bold bg-amber-100 text-amber-700 rounded hover:bg-amber-200 transition-colors leading-tight"
+                          <span
+                            className="inline-flex items-center gap-0.5 px-1 py-px text-[9px] font-bold bg-amber-100 text-amber-700 rounded leading-tight"
                             title="Temporary order"
                           >
                             <LinkIcon className="w-2.5 h-2.5" />TEMP
-                          </Link>
+                          </span>
                         )}
                       </div>
                     </td>
@@ -745,7 +757,7 @@ export function OrdersPage() {
                     {/* Stations */}
                     <td className="px-3 py-1.5">
                       <div className="flex flex-wrap gap-0.5">
-                        {order.stationProgress.map((sp) => (
+                        {stationBadges.map((sp) => (
                           <span
                             key={sp.station}
                             title={STATION_DISPLAY_NAMES[sp.station] || sp.station}
@@ -763,7 +775,8 @@ export function OrdersPage() {
                       </div>
                     </td>
                   </tr>
-                ))
+                );
+                })
               )}
             </tbody>
           </table>
@@ -774,7 +787,7 @@ export function OrdersPage() {
           <div className="px-3 py-1.5 border-t border-gray-100 flex items-center justify-between bg-gray-50/80 flex-shrink-0">
             <p className="text-xs text-gray-500">
               Page <span className="font-semibold text-gray-800">{page}</span> of <span className="font-semibold text-gray-800">{totalPages}</span>
-              {data?.total && <span className="text-gray-400"> · {data.total.toLocaleString()} orders</span>}
+              {totalOrders > 0 && <span className="text-gray-400"> · {totalOrders.toLocaleString()} orders</span>}
             </p>
             <div className="flex items-center gap-1">
               <button

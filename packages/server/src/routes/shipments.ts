@@ -3,6 +3,7 @@ import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { reconcileShippedOrdersWithShipments } from '../services/shipment-linking.js';
 import { broadcast } from '../ws/server.js';
 import {
   CreateShipmentSchema,
@@ -18,6 +19,10 @@ router.use(authenticate);
 
 // GET /shipments - List all shipments with filtering
 router.get('/', async (req: AuthRequest, res) => {
+  await reconcileShippedOrdersWithShipments().catch((err) => {
+    console.warn('Shipment reconciliation warning:', err);
+  });
+
   const filters = ShipmentFilterSchema.parse(req.query);
   const { page, pageSize, status, carrier, workOrderId, search, fromDate, toDate, sortBy, sortOrder } = filters;
 
@@ -39,7 +44,9 @@ router.get('/', async (req: AuthRequest, res) => {
     where.OR = [
       { trackingNumber: { contains: search, mode: 'insensitive' } },
       { workOrder: { orderNumber: { contains: search, mode: 'insensitive' } } },
+      { workOrder: { customerName: { contains: search, mode: 'insensitive' } } },
       { workOrder: { customer: { name: { contains: search, mode: 'insensitive' } } } },
+      { workOrder: { customer: { companyName: { contains: search, mode: 'insensitive' } } } },
     ];
   }
 
@@ -57,6 +64,7 @@ router.get('/', async (req: AuthRequest, res) => {
           select: {
             id: true,
             orderNumber: true,
+            customerName: true,
             customer: { select: { id: true, name: true } },
           },
         },

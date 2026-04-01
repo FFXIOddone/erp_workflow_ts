@@ -126,9 +126,11 @@ export function InventoryPage() {
     }
   };
 
-  const items = data?.items ?? [];
-  const itemMasters: ItemMaster[] = itemMastersData?.items ?? [];
-  const activeOrders: WorkOrderOption[] = (ordersData?.items ?? [])
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const totalItems = typeof data?.total === 'number' ? data.total : items.length;
+  const itemMasters: ItemMaster[] = Array.isArray(itemMastersData?.items) ? itemMastersData.items : [];
+  const activeOrdersSource = Array.isArray(ordersData?.items) ? ordersData.items : [];
+  const activeOrders: WorkOrderOption[] = activeOrdersSource
     .filter((o: { status: string }) => !['COMPLETED', 'SHIPPED', 'CANCELLED'].includes(o.status));
   
   // Filter items by search term
@@ -153,7 +155,7 @@ export function InventoryPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Inventory</h1>
-              <p className="text-gray-500">{data?.total ?? 0} items in stock</p>
+              <p className="text-gray-500">{totalItems} items in stock</p>
             </div>
           </div>
         </div>

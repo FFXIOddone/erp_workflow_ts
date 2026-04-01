@@ -37,7 +37,7 @@ export function verifyToken(token: string): JwtPayload {
 
 export async function authenticate(
   req: AuthRequest,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> {
   const authHeader = req.headers.authorization;
@@ -54,7 +54,11 @@ export async function authenticate(
   }
   
   if (!token) {
-    throw UnauthorizedError('Missing or invalid authorization header');
+    res.status(401).json({
+      success: false,
+      error: 'Missing or invalid authorization header',
+    });
+    return;
   }
 
   try {
@@ -62,7 +66,11 @@ export async function authenticate(
     
     // Reject portal tokens on internal API (defense in depth)
     if ((payload as any).type === 'portal') {
-      throw UnauthorizedError('Portal tokens cannot access internal API');
+      res.status(401).json({
+        success: false,
+        error: 'Portal tokens cannot access internal API',
+      });
+      return;
     }
     
     const user = await prisma.user.findUnique({
@@ -70,7 +78,11 @@ export async function authenticate(
     });
 
     if (!user || !user.isActive) {
-      throw UnauthorizedError('User not found or inactive');
+      res.status(401).json({
+        success: false,
+        error: 'User not found or inactive',
+      });
+      return;
     }
 
     req.user = {
@@ -89,7 +101,11 @@ export async function authenticate(
     next();
   } catch (error) {
     if (error instanceof jwt.JsonWebTokenError) {
-      throw UnauthorizedError('Invalid token');
+      res.status(401).json({
+        success: false,
+        error: 'Invalid token',
+      });
+      return;
     }
     throw error;
   }

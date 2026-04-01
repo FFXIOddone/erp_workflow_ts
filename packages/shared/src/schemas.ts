@@ -132,7 +132,7 @@ export const CreateLineItemSchema = z.object({
   quantity: z.number().int().positive(),
   unitPrice: z.number().nonnegative(),
   notes: z.string().nullable().optional(),
-  itemMasterId: z.string().uuid('Item must be selected from the catalog'),
+  itemMasterId: z.string().uuid().nullable().optional(),
 });
 
 export const UpdateLineItemSchema = CreateLineItemSchema.partial();
@@ -155,7 +155,7 @@ export const CreateWorkOrderSchema = z.object({
 
 export const UpdateLineItemPayloadSchema = z.object({
   id: z.string().uuid().optional(), // present for existing items
-  itemMasterId: z.string().uuid('Item must be selected from the catalog'),
+  itemMasterId: z.string().uuid().nullable().optional(),
   description: z.string().min(1),
   quantity: z.number().int().positive(),
   unitPrice: z.number().nonnegative(),

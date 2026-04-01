@@ -21,6 +21,11 @@ const QROptionsSchema = z.object({
   background: z.string().optional().default('#ffffff'),
 });
 
+const BatchLabelSchema = z.object({
+  orderIds: z.array(z.string().min(1)).min(1).max(100),
+  size: z.coerce.number().min(100).max(1000).optional().default(200),
+});
+
 /**
  * Generate QR code data for a work order
  * The QR code contains a JSON payload with order info for scanning
@@ -40,6 +45,38 @@ function generateOrderQRPayload(order: {
     status: order.status,
     timestamp: new Date().toISOString(),
   });
+}
+
+async function buildOrderLabelData(
+  order: {
+    id: string;
+    orderNumber: string;
+    customerName: string;
+    description: string | null;
+    dueDate: Date | null;
+    routing: string[];
+    customer?: { name: string; companyName?: string | null } | null;
+    status: string;
+  },
+  size: number,
+) {
+  const payload = generateOrderQRPayload(order);
+  const qrCode = await QRCode.toDataURL(payload, {
+    width: size,
+    margin: 1,
+    errorCorrectionLevel: 'M',
+  });
+
+  return {
+    qrCode,
+    label: {
+      orderNumber: order.orderNumber,
+      customer: order.customer?.companyName || order.customer?.name || order.customerName,
+      description: order.description?.substring(0, 50) || '',
+      dueDate: order.dueDate?.toISOString().split('T')[0] || '',
+      routing: order.routing || [],
+    },
+  };
 }
 
 // GET /qrcode/order/:id - Generate QR code for a specific work order
@@ -131,26 +168,50 @@ qrcodeRouter.get('/order/:id/label', async (req: AuthRequest, res: Response) => 
     throw NotFoundError('Work order not found');
   }
 
-  const payload = generateOrderQRPayload(order);
-
-  const qrCode = await QRCode.toDataURL(payload, {
-    width: size,
-    margin: 1,
-    errorCorrectionLevel: 'M',
-  });
+  const labelData = await buildOrderLabelData(order, size);
 
   // Return label data for frontend to render
   res.json({
     success: true,
-    data: {
-      qrCode,
-      label: {
-        orderNumber: order.orderNumber,
-        customer: order.customer?.companyName || order.customer?.name || order.customerName,
-        description: order.description?.substring(0, 50) || '',
-        dueDate: order.dueDate?.toISOString().split('T')[0] || '',
-        routing: order.routing || [],
+    data: labelData,
+  });
+});
+
+// POST /qrcode/orders/labels - Generate printable labels for multiple work orders
+qrcodeRouter.post('/orders/labels', async (req: AuthRequest, res: Response) => {
+  const { orderIds, size } = BatchLabelSchema.parse(req.body);
+  const uniqueOrderIds = [...new Set(orderIds)];
+
+  const orders = await prisma.workOrder.findMany({
+    where: { id: { in: uniqueOrderIds } },
+    include: {
+      customer: {
+        select: { name: true, companyName: true },
       },
+    },
+  });
+
+  const orderById = new Map(orders.map((order) => [order.id, order]));
+  const labels = await Promise.all(
+    uniqueOrderIds.map(async (orderId) => {
+      const order = orderById.get(orderId);
+      if (!order) {
+        return null;
+      }
+
+      const labelData = await buildOrderLabelData(order, size);
+      return {
+        orderId,
+        ...labelData,
+      };
+    }),
+  );
+
+  res.json({
+    success: true,
+    data: {
+      labels: labels.filter(Boolean),
+      missingOrderIds: uniqueOrderIds.filter((orderId) => !orderById.has(orderId)),
     },
   });
 });

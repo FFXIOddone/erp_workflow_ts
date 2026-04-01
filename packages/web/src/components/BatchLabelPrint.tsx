@@ -20,6 +20,10 @@ interface LabelData {
   };
 }
 
+interface BatchLabelData extends LabelData {
+  orderId: string;
+}
+
 /**
  * BatchLabelPrint - Prints multiple order labels on 8.5"x11" sheets
  * Layout: 2 columns x 5 rows = 10 labels per page
@@ -32,20 +36,16 @@ export function BatchLabelPrint({ selectedOrderIds, onClose }: BatchLabelPrintPr
   const { data: labelsData, isLoading } = useQuery({
     queryKey: ['batch-labels', selectedOrderIds],
     queryFn: async () => {
-      const results = await Promise.all(
-        selectedOrderIds.map(async (orderId) => {
-          try {
-            const response = await api.get<{ success: boolean; data: LabelData }>(
-              `/qrcode/order/${orderId}/label`
-            );
-            return { orderId, ...response.data.data };
-          } catch (e) {
-            console.error(`Failed to get label for ${orderId}:`, e);
-            return null;
-          }
-        })
-      );
-      return results.filter(Boolean) as (LabelData & { orderId: string })[];
+      const response = await api.post<{
+        success: boolean;
+        data?: {
+          labels?: BatchLabelData[];
+        };
+      }>('/qrcode/orders/labels', {
+        orderIds: selectedOrderIds,
+      });
+
+      return Array.isArray(response.data?.data?.labels) ? response.data.data.labels : [];
     },
     enabled: selectedOrderIds.length > 0,
   });

@@ -209,6 +209,7 @@ export async function updateJobCost(workOrderId: string, options?: {
       totalCost: calculation.totalCost,
       grossProfit: calculation.grossProfit,
       grossMargin: calculation.grossMargin,
+      calculatedAt: new Date(),
     },
   });
 

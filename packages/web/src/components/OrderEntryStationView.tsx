@@ -39,8 +39,12 @@ import {
   STATION_DISPLAY_NAMES,
   STATUS_DISPLAY_NAMES,
   STATUS_COLORS,
+  inferRoutingFromOrderDetails,
+  isDesignOnlyOrder,
+  stripOrderCategoryTags,
 } from '@erp/shared';
 import { api } from '../lib/api';
+import { buildDesignFollowOnPayload, fetchOrderRecreationSource, isDesignOnlySource } from '../lib/order-recreation';
 import { useWebSocket } from '../hooks/useWebSocket';
 
 // ─── Types ──────────────────────────────────────────
@@ -84,28 +88,13 @@ const CATEGORIES = [
 
 const ROUTING_PRESETS = [
   { label: 'FB  (Flatbed)', stations: [PrintingMethod.FLATBED] },
-  { label: 'RR  (Roll-to-Roll)', stations: [PrintingMethod.ROLL_TO_ROLL] },
+  { label: 'MM  (Mimaki / Roll-to-Roll)', stations: [PrintingMethod.ROLL_TO_ROLL] },
   { label: 'SP  (Screen Print)', stations: [PrintingMethod.SCREEN_PRINT] },
   { label: 'Prod + Ship Only', stations: [PrintingMethod.PRODUCTION, PrintingMethod.SHIPPING_RECEIVING] },
   { label: 'Ship Only', stations: [PrintingMethod.SHIPPING_RECEIVING] },
   { label: 'Design + FB', stations: [PrintingMethod.DESIGN, PrintingMethod.FLATBED] },
-  { label: 'Design + RR', stations: [PrintingMethod.DESIGN, PrintingMethod.ROLL_TO_ROLL] },
+  { label: 'Design + MM', stations: [PrintingMethod.DESIGN, PrintingMethod.ROLL_TO_ROLL] },
 ] as const;
-
-const DESCRIPTION_ROUTING_MAP: { pattern: RegExp; stations: PrintingMethod[] }[] = [
-  { pattern: /banner/i, stations: [PrintingMethod.ROLL_TO_ROLL] },
-  { pattern: /vinyl|decal|wrap|window\s*(graphic|perf)/i, stations: [PrintingMethod.ROLL_TO_ROLL] },
-  { pattern: /sign|board|panel|coroplast|aluminum|dibond|pvc|acrylic/i, stations: [PrintingMethod.FLATBED] },
-  { pattern: /poster|insert/i, stations: [PrintingMethod.FLATBED] },
-  { pattern: /screen\s*print/i, stations: [PrintingMethod.SCREEN_PRINT] },
-  { pattern: /install/i, stations: [PrintingMethod.INSTALLATION] },
-];
-
-const ROUTING_ABBREVS: Record<string, PrintingMethod[]> = {
-  'FB': [PrintingMethod.FLATBED],
-  'RR': [PrintingMethod.ROLL_TO_ROLL],
-  'SP': [PrintingMethod.SCREEN_PRINT],
-};
 
 const ORDER_STATUSES = [
   OrderStatus.PENDING,
@@ -120,9 +109,10 @@ const STATION_ABBREVS: Record<string, string> = {
   ORDER_ENTRY: 'OE',
   DESIGN: 'Des',
   FLATBED: 'FB',
-  ROLL_TO_ROLL: 'RR',
+  ROLL_TO_ROLL: 'MM',
   SCREEN_PRINT: 'SP',
   PRODUCTION: 'Prod',
+  PRODUCTION_ZUND: 'Zund',
   INSTALLATION: 'Inst',
   SHIPPING_RECEIVING: 'Ship',
   SALES: 'Sales',
@@ -145,6 +135,10 @@ function emptyDraft(): NewOrderDraft {
     routing: [],
     category: '',
   };
+}
+
+function buildDraftDescription(description: string, category: string): string {
+  return category ? `${description} ${category}`.trim() : description.trim();
 }
 
 // ─── Main Component ─────────────────────────────────
@@ -190,28 +184,18 @@ export function OrderEntryStationView() {
           lightweight: true,
         },
       });
-      return res.data.data.items || res.data.data || [];
+      const items = res.data.data.items ?? res.data.data ?? [];
+      return Array.isArray(items) ? items : [];
     },
     refetchInterval: 15000,
     staleTime: 5000,
   });
 
-  // Fetch recent descriptions for autocomplete
-  const { data: recentDescriptions = [] } = useQuery<string[]>({
-    queryKey: ['order-descriptions-autocomplete'],
-    queryFn: async () => {
-      const res = await api.get('/orders', {
-        params: { pageSize: 100, sortBy: 'createdAt', sortOrder: 'desc' },
-      });
-      const items: { description: string }[] = res.data.data.items || res.data.data || [];
-      const descs = items.map(o => o.description).filter(Boolean);
-      const cleaned = descs.map(d =>
-        d.replace(/\s*\(OUTSOURCED\)|\s*\(DESIGN ONLY\)|\s*\(INSTALL\)|\s*\(INV\)|\s*\(COM\)/gi, '').trim()
-      );
-      return [...new Set(cleaned)].slice(0, 50);
-    },
-    staleTime: 60000,
-  });
+  const recentDescriptions = useMemo(() => {
+    const descs = orders.map((order) => order.description).filter(Boolean);
+    const cleaned = descs.map((description) => stripOrderCategoryTags(description));
+    return [...new Set(cleaned)].slice(0, 50);
+  }, [orders]);
 
   // ─── Customer Autocomplete ──────────────────────────
 
@@ -234,20 +218,7 @@ export function OrderEntryStationView() {
   // ─── Routing Auto-guess from Description ────────────
 
   const guessRoutingFromDescription = useCallback((desc: string): PrintingMethod[] => {
-    const guessed = new Set<PrintingMethod>();
-    // Check parenthesized abbreviations like (FB) or (RR)
-    const abbrMatches = desc.match(/\(([A-Z]{2,3})\)/g);
-    if (abbrMatches) {
-      for (const m of abbrMatches) {
-        const abbr = m.replace(/[()]/g, '');
-        if (ROUTING_ABBREVS[abbr]) ROUTING_ABBREVS[abbr].forEach(s => guessed.add(s));
-      }
-    }
-    // Check description keywords
-    for (const { pattern, stations } of DESCRIPTION_ROUTING_MAP) {
-      if (pattern.test(desc)) stations.forEach(s => guessed.add(s));
-    }
-    return Array.from(guessed);
+    return inferRoutingFromOrderDetails({ description: desc });
   }, []);
 
   // ─── Due Date Suggestions ───────────────────────────
@@ -370,7 +341,13 @@ export function OrderEntryStationView() {
   const handleCreateOrder = () => {
     if (!draft.customerName.trim()) { toast.error('Customer name required'); return; }
     if (!draft.description.trim()) { toast.error('Description required'); return; }
-    const fullDesc = draft.category ? (draft.description + ' ' + draft.category).trim() : draft.description;
+    const fullDesc = buildDraftDescription(draft.description, draft.category);
+    const inferredRouting = guessRoutingFromDescription(fullDesc);
+    const routing = isDesignOnlyOrder({ description: fullDesc, routing: draft.routing })
+      ? [PrintingMethod.DESIGN]
+      : draft.routing.length > 0
+        ? draft.routing
+        : inferredRouting;
     createMutation.mutate({
       orderNumber: draft.orderNumber,
       customerName: draft.customerName,
@@ -379,18 +356,68 @@ export function OrderEntryStationView() {
       dueDate: draft.dueDate || null,
       notes: draft.notes || null,
       companyBrand: draft.companyBrand,
-      routing: draft.routing,
+      routing,
       lineItems: [],
     });
   };
 
   const handleDescriptionChange = (value: string) => {
-    setDraft(d => ({ ...d, description: value }));
+    const fullDesc = buildDraftDescription(value, draft.category);
+    const guessed = guessRoutingFromDescription(fullDesc);
+    const shouldReplaceRouting =
+      draft.routing.length === 0 || isDesignOnlyOrder({ description: fullDesc, routing: draft.routing });
+
+    setDraft((currentDraft) => ({
+      ...currentDraft,
+      description: value,
+      routing: shouldReplaceRouting ? guessed : currentDraft.routing,
+    }));
     filterDescriptions(value);
     setShowDescDropdown(true);
-    const guessed = guessRoutingFromDescription(value);
-    if (guessed.length > 0 && draft.routing.length === 0) {
-      setDraft(d => ({ ...d, routing: guessed }));
+  };
+
+  const handleToggleStation = async (order: OrderRow, station: string, isDone: boolean) => {
+    if (isDone) {
+      stationMutation.mutate({ orderId: order.id, station, action: 'uncomplete' });
+      return;
+    }
+
+    const isDesignOnlyDesignStation =
+      station === PrintingMethod.DESIGN && isDesignOnlySource(order);
+
+    if (isDesignOnlyDesignStation) {
+      const confirmed = window.confirm(
+        `Mark design complete for ${order.orderNumber}? This will close the design-only order.`,
+      );
+      if (!confirmed) return;
+    }
+
+    try {
+      await stationMutation.mutateAsync({ orderId: order.id, station, action: 'complete' });
+    } catch {
+      return;
+    }
+
+    if (!isDesignOnlyDesignStation) {
+      return;
+    }
+
+    const shouldCreateFollowOn = window.confirm(
+      `Create a new work order from ${order.orderNumber} now?`,
+    );
+    if (!shouldCreateFollowOn) {
+      return;
+    }
+
+    try {
+      const source = await fetchOrderRecreationSource(order.id);
+      const response = await api.post('/orders', buildDesignFollowOnPayload(source));
+      const newOrder = response.data.data;
+      queryClient.invalidateQueries({ queryKey: ['order-entry-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast.success(`Created ${newOrder.orderNumber} from ${order.orderNumber}`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || err?.message || 'Failed to create follow-on order');
     }
   };
 
@@ -545,7 +572,7 @@ export function OrderEntryStationView() {
                   showStatusDropdown={statusDropdownId === order.id}
                   onToggleStatusDropdown={(e: React.MouseEvent) => { e.stopPropagation(); setStatusDropdownId(statusDropdownId === order.id ? null : order.id); }}
                   onChangeStatus={(status: string) => statusMutation.mutate({ id: order.id, status })}
-                  onToggleStation={(station: string, isDone: boolean) => stationMutation.mutate({ orderId: order.id, station, action: isDone ? 'uncomplete' : 'complete' })}
+                  onToggleStation={(station: string, isDone: boolean) => handleToggleStation(order, station, isDone)}
                   stationMutationPending={stationMutation.isPending}
                   fmtDate={fmtDate}
                 />
@@ -644,16 +671,37 @@ function NewOrderRow({
               <div className="absolute z-30 left-0 right-0 mt-0.5 bg-white border border-gray-200 rounded-lg shadow-lg max-h-36 overflow-auto">
                 {descSuggestions.map((d, i) => (
                   <button key={i} type="button" onMouseDown={() => {
-                    setDraft(prev => ({ ...prev, description: d }));
+                    const fullDesc = buildDraftDescription(d, draft.category);
+                    const guessed = guessRoutingFromDescription(fullDesc);
+                    const shouldReplaceRouting =
+                      draft.routing.length === 0 || isDesignOnlyOrder({ description: fullDesc, routing: draft.routing });
+
+                    setDraft((prev) => ({
+                      ...prev,
+                      description: d,
+                      routing: shouldReplaceRouting ? guessed : prev.routing,
+                    }));
                     setShowDescDropdown(false);
-                    const guessed = guessRoutingFromDescription(d);
-                    if (guessed.length > 0) setDraft(prev => ({ ...prev, routing: guessed }));
                   }} className="w-full px-2 py-1.5 text-left hover:bg-amber-50 text-sm truncate">{d}</button>
                 ))}
               </div>
             )}
           </div>
-          <select value={draft.category} onChange={e => setDraft(d => ({ ...d, category: e.target.value }))}
+          <select
+            value={draft.category}
+            onChange={(e) => {
+              const category = e.target.value;
+              const fullDesc = buildDraftDescription(draft.description, category);
+              const guessed = guessRoutingFromDescription(fullDesc);
+              const shouldReplaceRouting =
+                draft.routing.length === 0 || isDesignOnlyOrder({ description: fullDesc, routing: draft.routing });
+
+              setDraft((currentDraft) => ({
+                ...currentDraft,
+                category,
+                routing: shouldReplaceRouting ? guessed : currentDraft.routing,
+              }));
+            }}
             className="px-1 py-1.5 border border-amber-300 rounded text-xs bg-white w-20" title="Category">
             {CATEGORIES.map(c => (<option key={c.value} value={c.value}>{c.label}</option>))}
           </select>
