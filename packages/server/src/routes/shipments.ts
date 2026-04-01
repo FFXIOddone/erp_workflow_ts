@@ -4,6 +4,7 @@ import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
 import { reconcileShippedOrdersWithShipments } from '../services/shipment-linking.js';
+import { applyShipmentTrackingNumber } from '../services/shipment-tracking.js';
 import { broadcast } from '../ws/server.js';
 import {
   CreateShipmentSchema,
@@ -13,6 +14,49 @@ import {
 } from '@erp/shared';
 
 const router = Router();
+
+const shipmentTrackingInclude = {
+  labelScans: {
+    select: {
+      trackingNumber: true,
+      scannedAt: true,
+    },
+    orderBy: {
+      scannedAt: 'desc',
+    },
+    take: 1,
+  },
+  workOrder: {
+    select: {
+      id: true,
+      orderNumber: true,
+      customerName: true,
+      customer: { select: { id: true, name: true } },
+      shippingScans: {
+        select: {
+          trackingNumber: true,
+          scannedAt: true,
+        },
+        orderBy: {
+          scannedAt: 'desc',
+        },
+        take: 1,
+      },
+      fedExShipmentRecords: {
+        select: {
+          trackingNumber: true,
+          importedAt: true,
+        },
+        orderBy: {
+          importedAt: 'desc',
+        },
+        take: 1,
+      },
+    },
+  },
+  createdBy: { select: { id: true, displayName: true } },
+  packages: true,
+} as const;
 
 // All routes require authentication
 router.use(authenticate);
@@ -59,29 +103,19 @@ router.get('/', async (req: AuthRequest, res) => {
   const [shipments, total] = await Promise.all([
     prisma.shipment.findMany({
       where,
-      include: {
-        workOrder: {
-          select: {
-            id: true,
-            orderNumber: true,
-            customerName: true,
-            customer: { select: { id: true, name: true } },
-          },
-        },
-        createdBy: { select: { id: true, displayName: true } },
-        packages: true,
-      },
+      include: shipmentTrackingInclude,
       orderBy: { [sortBy]: sortOrder },
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
     prisma.shipment.count({ where }),
   ]);
+  const trackedShipments = shipments.map((shipment) => applyShipmentTrackingNumber(shipment));
 
   res.json({
     success: true,
     data: {
-      items: shipments,
+      items: trackedShipments,
       total,
       page,
       pageSize,
@@ -97,16 +131,35 @@ router.get('/:id', async (req: AuthRequest, res) => {
   const shipment = await prisma.shipment.findUnique({
     where: { id },
     include: {
+      ...shipmentTrackingInclude,
       workOrder: {
         select: {
           id: true,
           orderNumber: true,
           description: true,
           customer: { select: { id: true, name: true, email: true, phone: true } },
+          shippingScans: {
+            select: {
+              trackingNumber: true,
+              scannedAt: true,
+            },
+            orderBy: {
+              scannedAt: 'desc',
+            },
+            take: 1,
+          },
+          fedExShipmentRecords: {
+            select: {
+              trackingNumber: true,
+              importedAt: true,
+            },
+            orderBy: {
+              importedAt: 'desc',
+            },
+            take: 1,
+          },
         },
       },
-      createdBy: { select: { id: true, displayName: true } },
-      packages: true,
     },
   });
 
@@ -114,7 +167,7 @@ router.get('/:id', async (req: AuthRequest, res) => {
     throw NotFoundError('Shipment not found');
   }
 
-  res.json({ success: true, data: shipment });
+  res.json({ success: true, data: applyShipmentTrackingNumber(shipment) });
 });
 
 // GET /shipments/order/:workOrderId - Get shipments for a work order
@@ -123,14 +176,12 @@ router.get('/order/:workOrderId', async (req: AuthRequest, res) => {
 
   const shipments = await prisma.shipment.findMany({
     where: { workOrderId },
-    include: {
-      createdBy: { select: { id: true, displayName: true } },
-      packages: true,
-    },
+    include: shipmentTrackingInclude,
     orderBy: { shipDate: 'desc' },
   });
+  const trackedShipments = shipments.map((shipment) => applyShipmentTrackingNumber(shipment));
 
-  res.json({ success: true, data: shipments });
+  res.json({ success: true, data: trackedShipments });
 });
 
 // POST /shipments - Create new shipment
