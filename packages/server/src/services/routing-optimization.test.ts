@@ -14,6 +14,7 @@ import {
   optimizeRoutingRecommendation,
   persistRoutingRecommendation,
   recordManualRoutingOverride,
+  recordRoutingOutcome,
   type RoutingOptimizationContext,
   type RoutingPersistenceClient,
   type RoutingWriteClient,
@@ -163,20 +164,48 @@ function createRoutingDbMock() {
   db = {
     routingPrediction: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
-        createdPredictions.push(data as Record<string, unknown>);
-        return {
-          id: `prediction-${createdPredictions.length}`,
+        const record = {
+          id: `prediction-${createdPredictions.length + 1}`,
           ...data,
         };
+        createdPredictions.push(record);
+        return record;
+      },
+      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        const index = createdPredictions.findIndex((prediction) => prediction.id === where.id);
+        if (index < 0) {
+          throw new Error(`Prediction ${where.id} not found`);
+        }
+
+        const updated = {
+          ...createdPredictions[index],
+          ...data,
+        };
+        createdPredictions[index] = updated;
+        return updated;
       },
     } as unknown as RoutingWriteClient['routingPrediction'],
     routingDecision: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
-        createdDecisions.push(data as Record<string, unknown>);
-        return {
-          id: `decision-${createdDecisions.length}`,
+        const record = {
+          id: `decision-${createdDecisions.length + 1}`,
           ...data,
         };
+        createdDecisions.push(record);
+        return record;
+      },
+      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        const index = createdDecisions.findIndex((decision) => decision.id === where.id);
+        if (index < 0) {
+          throw new Error(`Decision ${where.id} not found`);
+        }
+
+        const updated = {
+          ...createdDecisions[index],
+          ...data,
+        };
+        createdDecisions[index] = updated;
+        return updated;
       },
     } as unknown as RoutingWriteClient['routingDecision'],
     $transaction: async (callback: (client: RoutingWriteClient) => Promise<unknown>) => callback(db),
@@ -295,5 +324,60 @@ describe('optimizeRoutingRecommendation', () => {
     expect(manualDecision.newRoute[0]).toBe(PrintingMethod.DESIGN);
     expect(manualDecision.predictionId).toBe('prediction-1');
     expect(manualDecision.outcomeStatus).toBe(DecisionOutcome.PARTIAL);
+  });
+
+  it('records accepted and rejected routing outcomes against the persisted recommendation', async () => {
+    const context = createContext({
+      workOrder: {
+        id: 'wo-4',
+        orderNumber: 'WO1004',
+        description: 'Window graphic install',
+        priority: 2,
+        dueDate: new Date('2026-04-04T12:00:00.000Z'),
+        notes: null,
+        routing: [PrintingMethod.DESIGN, PrintingMethod.FLATBED, PrintingMethod.SHIPPING_RECEIVING],
+      },
+      candidateRoutes: [
+        [PrintingMethod.DESIGN, PrintingMethod.FLATBED, PrintingMethod.PRODUCTION, PrintingMethod.SHIPPING_RECEIVING],
+        [PrintingMethod.DESIGN, PrintingMethod.ROLL_TO_ROLL, PrintingMethod.PRODUCTION, PrintingMethod.SHIPPING_RECEIVING],
+      ],
+      optimizationRules: [],
+    });
+
+    const { db, createdPredictions, createdDecisions } = createRoutingDbMock();
+    const acceptedRoute = optimizeRoutingRecommendation(context).suggestion.suggestedRoute as PrintingMethod[];
+
+    const accepted = await recordRoutingOutcome(db, context, acceptedRoute);
+
+    expect(accepted.wasAccepted).toBe(true);
+    expect(createdPredictions).toHaveLength(1);
+    expect(createdDecisions).toHaveLength(1);
+    expect(createdPredictions[0].actualRoute).toEqual(acceptedRoute);
+    expect(createdPredictions[0].wasAccepted).toBe(true);
+    expect(createdDecisions[0].outcomeStatus).toBe(DecisionOutcome.SUCCESS);
+    expect(createdDecisions[0].outcomeNotes).toContain('accepted');
+
+    const rejectedRoute = acceptedRoute[1] === PrintingMethod.ROLL_TO_ROLL
+      ? [
+          PrintingMethod.DESIGN,
+          PrintingMethod.FLATBED,
+          PrintingMethod.PRODUCTION,
+          PrintingMethod.SHIPPING_RECEIVING,
+        ]
+      : [
+          PrintingMethod.DESIGN,
+          PrintingMethod.ROLL_TO_ROLL,
+          PrintingMethod.PRODUCTION,
+          PrintingMethod.SHIPPING_RECEIVING,
+        ];
+    const rejected = await recordRoutingOutcome(db, context, rejectedRoute);
+
+    expect(rejected.wasAccepted).toBe(false);
+    expect(createdPredictions).toHaveLength(2);
+    expect(createdDecisions).toHaveLength(2);
+    expect(createdPredictions[1].actualRoute).toEqual(rejectedRoute);
+    expect(createdPredictions[1].wasAccepted).toBe(false);
+    expect(createdDecisions[1].outcomeStatus).toBe(DecisionOutcome.REVERTED);
+    expect(createdDecisions[1].outcomeNotes).toContain('rejected');
   });
 });

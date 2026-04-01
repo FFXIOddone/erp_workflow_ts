@@ -49,4 +49,5 @@
 | 2026-04-01T16:26:48.7878161Z | SSS-API-001 | Routing events are now auditable and user-scoped | Optimize and feedback now write activity logs plus targeted websocket messages without mutating the work order. |
 | 2026-04-01T16:31:10.6468108Z | SSS-API-001 | Order detail routing preview is visible | The order detail page now renders the live routing preview card with confidence, reasoning, and ranked options from the routing API. |
 | 2026-04-01T16:51:34.4506875Z | WORKSPACE-DEEP-CLEAN-043 | Workspace cleanup removed 74.75 GB of local artifacts and keeps the repo from re-accumulating temp clutter. | scripts/clean-workspace.mjs; npm run clean:workspace:dry-run; npm run clean:workspace; workspace size fell from 76.48 GB to 1.73 GB |
+| 2026-04-01T17:43:51.370Z | SSS-API-001 | Routing updates now record accepted/rejected recommendation outcomes and the actual route used for learning loops. | packages/server/src/routes/orders.ts; packages/server/src/services/routing-optimization.ts; packages/server/src/services/routing-optimization.test.ts; npm.cmd run test -w @erp/server -- src/services/routing-optimization.test.ts |
 <!-- MILESTONE_ROWS -->

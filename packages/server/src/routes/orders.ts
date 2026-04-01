@@ -42,6 +42,7 @@ import { ensureShipmentRecordForWorkOrder } from '../services/shipment-linking.j
 import { resolveCustomerId } from '../lib/customer-matching.js';
 import { updateStreak, checkAchievements } from '../services/gamification.js';
 import { applyRoutingDefaults } from '../lib/routing-defaults.js';
+import { recordRoutingOutcome, type RoutingOptimizationContext } from '../services/routing-optimization.js';
 
 export const ordersRouter = Router();
 const MATERIAL_DEDUCTION_STATIONS = ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT', 'CUT', 'FABRICATION', 'INSTALLATION'];
@@ -1617,33 +1618,90 @@ ordersRouter.post('/:id/routing', async (req: AuthRequest, res: Response) => {
 
   const existing = await prisma.workOrder.findUnique({
     where: { id: req.params.id },
-    select: { description: true },
+    select: {
+      id: true,
+      orderNumber: true,
+      description: true,
+      priority: true,
+      dueDate: true,
+      notes: true,
+      routing: true,
+    },
   });
-  const routing = applyRoutingDefaults(rawRouting, { description: existing?.description ?? '' });
+  if (!existing) {
+    throw NotFoundError('Order not found');
+  }
+  const routing = applyRoutingDefaults(rawRouting, { description: existing.description });
+  const routingContext: RoutingOptimizationContext = {
+    workOrder: {
+      id: existing.id,
+      orderNumber: existing.orderNumber,
+      description: existing.description,
+      priority: existing.priority,
+      dueDate: existing.dueDate,
+      notes: existing.notes,
+      routing: existing.routing as PrintingMethod[],
+    },
+    currentRoute: existing.routing as PrintingMethod[],
+    now: new Date(),
+  };
 
-  await prisma.stationProgress.deleteMany({ where: { orderId: req.params.id } });
+  const result = await prisma.$transaction(async (tx: any) => {
+    const routingOutcome = await recordRoutingOutcome(tx, routingContext, routing);
 
-  const order = await prisma.workOrder.update({
-    where: { id: req.params.id },
-    data: {
-      routing,
-      stationProgress: {
-        create: routing.map((station) => ({ station, status: 'NOT_STARTED' })),
-      },
-      events: {
-        create: {
-          eventType: 'ROUTING_SET',
-          description: `Routing set to: ${routing.join(', ')}`,
-          userId,
-          details: { routing },
+    await tx.stationProgress.deleteMany({ where: { orderId: req.params.id } });
+
+    const order = await tx.workOrder.update({
+      where: { id: req.params.id },
+      data: {
+        routing,
+        stationProgress: {
+          create: routing.map((station) => ({ station, status: 'NOT_STARTED' })),
+        },
+        events: {
+          create: {
+            eventType: 'ROUTING_SET',
+            description: `Routing set to: ${routing.join(', ')}`,
+            userId,
+            details: {
+              routing,
+              routingFeedback: {
+                predictionId: routingOutcome.prediction.id,
+                decisionId: routingOutcome.decision.id,
+                wasAccepted: routingOutcome.wasAccepted,
+                recommendedRoute: routingOutcome.recommendation.suggestion.suggestedRoute,
+                actualRoute: routing,
+              },
+            },
+          },
         },
       },
-    },
-    include: { stationProgress: true },
+      include: { stationProgress: true },
+    });
+
+    return { order, routingOutcome };
   });
 
-  broadcast({ type: 'ORDER_UPDATED', payload: order, timestamp: new Date() });
-  res.json({ success: true, data: order });
+  await logActivity({
+    action: ActivityAction.UPDATE,
+    entityType: EntityType.WORK_ORDER,
+    entityId: result.order.id,
+    entityName: result.order.orderNumber,
+    description: `Routing updated and recommendation ${result.routingOutcome.wasAccepted ? 'accepted' : 'rejected'}`,
+    details: {
+      routing,
+      predictionId: result.routingOutcome.prediction.id,
+      decisionId: result.routingOutcome.decision.id,
+      wasAccepted: result.routingOutcome.wasAccepted,
+      recommendedRoute: result.routingOutcome.recommendation.suggestion.suggestedRoute,
+      actualRoute: routing,
+    },
+    userId,
+    req,
+  });
+
+  broadcast({ type: 'ORDER_UPDATED', payload: result.order, timestamp: new Date() });
+  res.json({ success: true, data: result.order });
 });
 
 // POST /orders/:id/stations/:station/start - Mark station as in-progress

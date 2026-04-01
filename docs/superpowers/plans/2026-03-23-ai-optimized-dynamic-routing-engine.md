@@ -97,5 +97,5 @@ Validation note: `npx tsc --noEmit -p packages/web/tsconfig.json` passes. `npm r
 
 ## Task 6: Feedback and Rollout
 
-- [ ] Capture accepted vs rejected recommendations and actual route outcomes for future learning loops.
+- [x] Capture accepted vs rejected recommendations and actual route outcomes for future learning loops.
 - [ ] Add rollout notes, validation evidence, and follow-up slices for predictive completion times and what-if simulations from the `SSS+` direction.

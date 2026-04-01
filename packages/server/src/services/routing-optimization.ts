@@ -131,6 +131,12 @@ export interface RoutingOverrideRecordOptions {
   outcomeStatus?: DecisionOutcome | null;
 }
 
+export interface RoutingOutcomeRecordOptions {
+  actualDuration?: number | null;
+  feedbackScore?: number | null;
+  feedbackNotes?: string | null;
+}
+
 const ROUTING_MODEL_VERSION = 'routing-optimization-v1';
 
 const DEFAULT_PREDICTION_FACTOR_WEIGHTS: PredictionFactorWeights = {
@@ -230,6 +236,10 @@ function coercePrintingMethodRoute(
 
 function fingerprintRoute(route: readonly PrintingMethod[]): string {
   return route.join('>');
+}
+
+function routesMatch(left: readonly PrintingMethod[], right: readonly PrintingMethod[]): boolean {
+  return left.length === right.length && left.every((station, index) => station === right[index]);
 }
 
 function applyRouteDefaults(route: readonly PrintingMethod[], description: string): PrintingMethod[] {
@@ -597,7 +607,7 @@ export async function persistRoutingRecommendation(
   };
 
   if (typeof db.$transaction === 'function') {
-    return db.$transaction(async (transaction) => run(transaction as RoutingWriteClient));
+    return db.$transaction(async (transaction: any) => run(transaction as RoutingWriteClient));
   }
 
   return run(db);
@@ -632,6 +642,51 @@ export async function recordManualRoutingOverride(
   });
 
   return createRoutingDecisionRecord(db, decisionData);
+}
+
+export async function recordRoutingOutcome(
+  db: RoutingPersistenceClient,
+  context: RoutingOptimizationContext,
+  actualRoute: readonly PrintingMethod[],
+  options: RoutingOutcomeRecordOptions = {}
+): Promise<{
+  recommendation: RoutingOptimizationResult;
+  prediction: Awaited<ReturnType<typeof createRoutingPredictionRecord>>;
+  decision: Awaited<ReturnType<typeof createRoutingDecisionRecord>>;
+  wasAccepted: boolean;
+}> {
+  const persisted = await persistRoutingRecommendation(db, context);
+  const resolvedActualRoute = normalizeRoute(actualRoute);
+  const suggestedRoute = coercePrintingMethodRoute(persisted.recommendation.suggestion.suggestedRoute);
+  const wasAccepted = routesMatch(suggestedRoute, resolvedActualRoute);
+  const feedbackNotes = options.feedbackNotes ?? (wasAccepted ? 'Routing recommendation accepted' : 'Routing recommendation rejected');
+
+  const prediction = await db.routingPrediction.update({
+    where: { id: persisted.prediction.id },
+    data: {
+      actualRoute: resolvedActualRoute,
+      actualDuration: options.actualDuration ?? persisted.prediction.actualDuration,
+      wasAccepted,
+      feedbackScore: options.feedbackScore ?? persisted.prediction.feedbackScore,
+      feedbackNotes,
+    },
+  });
+
+  const decision = await db.routingDecision.update({
+    where: { id: persisted.decision.id },
+    data: {
+      outcomeStatus: wasAccepted ? DecisionOutcome.SUCCESS : DecisionOutcome.REVERTED,
+      outcomeNotes: feedbackNotes,
+      actualDuration: options.actualDuration ?? undefined,
+    },
+  });
+
+  return {
+    recommendation: persisted.recommendation,
+    prediction,
+    decision,
+    wasAccepted,
+  };
 }
 
 function matchesTextTerm(source: string, term: string): boolean {
