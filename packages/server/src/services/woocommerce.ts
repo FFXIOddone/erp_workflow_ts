@@ -19,7 +19,8 @@
  *    - WOOCOMMERCE_CONSUMER_SECRET=cs_xxxxx
  */
 
-import { PrismaClient, PrintingMethod } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
+import { PrintingMethod } from '@erp/shared';
 import { applyRoutingDefaults } from '../lib/routing-defaults.js';
 
 const prisma = new PrismaClient();
@@ -299,7 +300,7 @@ class WooCommerceService {
 
           // Apply routing defaults (auto-add PRODUCTION, SHIPPING_RECEIVING, etc.)
           const description = `Online order from shop.wilde-signs.com - Order #${order.number}`;
-          routing = applyRoutingDefaults(routing as any, { description }) as unknown as PrintingMethod[];
+          routing = applyRoutingDefaults(routing, { description });
 
           // Create customer name
           const customerName = order.billing.company || 
