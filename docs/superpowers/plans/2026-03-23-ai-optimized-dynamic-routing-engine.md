@@ -82,9 +82,9 @@ Validation note: `npx tsc --noEmit -p packages/server/tsconfig.json` passes. `np
 ## Task 4: API and Event Integration
 
 - [x] Add focused API surface for requesting optimization, previewing alternatives, and accepting or rejecting recommendations.
-- [ ] Wire activity logging and targeted broadcasts only after the server contract and tests are stable.
+- [x] Wire activity logging and targeted broadcasts only after the server contract and tests are stable.
 
-Validation note: `npx tsc --noEmit -p packages/server/tsconfig.json` passes. `npm run build -w @erp/server` passes. The routing router now exposes preview, optimize, and feedback endpoints under `/api/v1/routing`.
+Validation note: `npx tsc --noEmit -p packages/server/tsconfig.json` passes. `npm run build -w @erp/server` passes. The routing router now exposes preview, optimize, and feedback endpoints under `/api/v1/routing`, and optimize/feedback now log activity plus emit user-targeted websocket events.
 
 ## Task 5: Web and Shop-Floor Adoption
 

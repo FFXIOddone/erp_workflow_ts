@@ -46,4 +46,5 @@
 | 2026-04-01T15:50:08.380Z | SSS-API-001 | Shared routing contract now exposes structured explanation factors and manual override payloads for future optimization work. | packages/shared/src/types.ts; packages/shared/src/schemas.ts; npm run build -w @erp/shared |
 | 2026-04-01T16:12:46.997Z | SSS-API-001 | Server routing engine slice complete | Typecheck, targeted vitest, and server build all passed after adding optimizeRoutingRecommendation, persistence helpers, and override recording. |
 | 2026-04-01T16:19:45.250Z | SSS-API-001 | Routing API surface is now live | The server now exposes /api/v1/routing preview, optimize, and feedback endpoints; TypeScript check and server build both pass. |
+| 2026-04-01T16:26:48.7878161Z | SSS-API-001 | Routing events are now auditable and user-scoped | Optimize and feedback now write activity logs plus targeted websocket messages without mutating the work order. |
 <!-- MILESTONE_ROWS -->
