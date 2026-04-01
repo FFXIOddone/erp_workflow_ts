@@ -26,6 +26,7 @@ import {
 import { api } from '../lib/api';
 import { STATUS_DISPLAY_NAMES, STATUS_COLORS, PRIORITY_LABELS, UserRole, PrintingMethod, STATION_DISPLAY_NAMES } from '@erp/shared';
 import { useAuthStore } from '../stores/auth';
+import { RoutingIntelligenceCard } from '../components/RoutingIntelligenceCard';
 
 interface DashboardStats {
   total: number;
@@ -226,6 +227,8 @@ export function DashboardPage() {
           </Link>
         ))}
       </div>
+
+      <RoutingIntelligenceCard />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Due Today Orders */}

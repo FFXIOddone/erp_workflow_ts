@@ -5,8 +5,12 @@ import {
   OptimizationRuleType,
   PredictionFeedbackSchema,
   PrintingMethod,
+  STATION_DISPLAY_NAMES,
   RequestRoutingOptimizationSchema,
+  type RoutingDecision,
+  type RoutingIntelligenceDashboard,
   type PredictionFeedbackInput,
+  type StationStatusSummary,
 } from '@erp/shared';
 import { prisma } from '../db/client.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
@@ -64,6 +68,13 @@ interface OptimizationRuleRow {
   priority: number;
   isActive: boolean;
   appliesTo: string[];
+}
+
+interface RoutingPredictionMetricsRow {
+  confidence: number;
+  predictedRoute: PrintingMethod[];
+  actualRoute: PrintingMethod[];
+  wasAccepted: boolean | null;
 }
 
 interface RoutingPredictionRow {
@@ -138,6 +149,27 @@ function mapOptimizationRules(rows: OptimizationRuleRow[]): RoutingOptimizationR
   } as RoutingOptimizationRule));
 }
 
+function mapStationSummaries(rows: StationIntelligenceRow[]): StationStatusSummary[] {
+  return rows.map((row) => ({
+    station: row.station,
+    displayName: STATION_DISPLAY_NAMES[row.station as PrintingMethod] ?? row.station,
+    status: row.equipmentStatus as StationStatusSummary['status'],
+    queueDepth: row.currentQueueDepth,
+    waitTimeMinutes: row.currentWaitTime,
+    utilizationPct: row.utilizationPct,
+    isBottleneck: row.isBottleneck,
+    activeOperators: row.activeOperators,
+  }));
+}
+
+function routesMatch(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((station, index) => station === right[index]);
+}
+
+function roundToTwoDecimals(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 async function recordRoutingActivity(params: {
   userId: string;
   workOrderId: string;
@@ -162,6 +194,70 @@ async function recordRoutingActivity(params: {
     payload: params.broadcastPayload,
     timestamp: new Date(),
   });
+}
+
+async function loadRoutingIntelligenceDashboard(): Promise<RoutingIntelligenceDashboard> {
+  const [stationRows, predictionRows, decisionRows] = await Promise.all([
+    prisma.stationIntelligence.findMany({
+      orderBy: { station: 'asc' },
+      select: {
+        station: true,
+        currentQueueDepth: true,
+        currentWaitTime: true,
+        activeJobs: true,
+        activeOperators: true,
+        equipmentStatus: true,
+        utilizationPct: true,
+        avgJobDuration: true,
+        avgSetupTime: true,
+        avgQualityScore: true,
+        throughputPerHour: true,
+        isBottleneck: true,
+        bottleneckReason: true,
+      },
+    }),
+    prisma.routingPrediction.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        confidence: true,
+        predictedRoute: true,
+        actualRoute: true,
+        wasAccepted: true,
+      },
+    }),
+    prisma.routingDecision.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    }),
+  ]);
+
+  const predictions = predictionRows as RoutingPredictionMetricsRow[];
+  const totalPredictions = predictions.length;
+  const acceptedPredictions = predictions.filter((prediction) => prediction.wasAccepted === true).length;
+  const avgConfidence = totalPredictions > 0
+    ? roundToTwoDecimals(
+        predictions.reduce((sum, prediction) => sum + prediction.confidence, 0) / totalPredictions
+      )
+    : 0;
+  const completedPredictions = predictions.filter((prediction) => prediction.actualRoute.length > 0);
+  const exactMatches = completedPredictions.filter((prediction) => routesMatch(prediction.predictedRoute, prediction.actualRoute)).length;
+  const avgAccuracy = completedPredictions.length > 0
+    ? roundToTwoDecimals(exactMatches / completedPredictions.length)
+    : 0;
+
+  const stationSummaries = mapStationSummaries(stationRows as unknown as StationIntelligenceRow[]);
+
+  return {
+    stations: stationSummaries,
+    bottlenecks: stationSummaries.filter((station) => station.isBottleneck),
+    predictions: {
+      total: totalPredictions,
+      accepted: acceptedPredictions,
+      avgConfidence,
+      avgAccuracy,
+    },
+    recentDecisions: decisionRows as unknown as RoutingDecision[],
+  };
 }
 
 async function loadRoutingOptimizationContext(
@@ -425,5 +521,15 @@ routingRouter.post('/predictions/:predictionId/feedback', async (req: AuthReques
   res.json({
     success: true,
     data: result,
+  });
+});
+
+// GET /routing/dashboard - Summaries for routing outcome capture and learning loops
+routingRouter.get('/dashboard', async (_req: AuthRequest, res: Response) => {
+  const dashboard = await loadRoutingIntelligenceDashboard();
+
+  res.json({
+    success: true,
+    data: dashboard,
   });
 });
