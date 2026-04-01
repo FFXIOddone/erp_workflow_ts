@@ -73,9 +73,11 @@ Validation note: `npm run build -w @erp/shared` passes. `npm run lint -w @erp/sh
 
 ## Task 3: Server Routing Engine
 
-- [ ] Implement a server-only routing optimization service that transforms work-order context, station intelligence, equipment status, operator availability, and optimization rules into a ranked route recommendation.
-- [ ] Persist predictions and decisions using the existing routing-intelligence Prisma models, keeping manual-override support as a first-class path.
-- [ ] Add targeted server tests for deterministic scoring, fallback behavior, and override recording.
+- [x] Implement a server-only routing optimization service that transforms work-order context, station intelligence, equipment status, operator availability, and optimization rules into a ranked route recommendation.
+- [x] Persist predictions and decisions using the existing routing-intelligence Prisma models, keeping manual-override support as a first-class path.
+- [x] Add targeted server tests for deterministic scoring, fallback behavior, and override recording.
+
+Validation note: `npx tsc --noEmit -p packages/server/tsconfig.json` passes. `npm run test -w @erp/server -- src/services/routing-optimization.test.ts` passes. `npm run build -w @erp/server` passes.
 
 ## Task 4: API and Event Integration
 
