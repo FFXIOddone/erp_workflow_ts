@@ -68,6 +68,7 @@ import clientErrorsRouter from './routes/client-errors.js';
 import { microsoftOAuthRouter } from './routes/microsoft-oauth.js';
 import equipmentRouter from './routes/equipment.js';
 import { equipmentWatchRouter } from './routes/equipment-watch.js';
+import { routingRouter } from './routes/routing.js';
 import { handleAuthCallback } from './services/microsoft-oauth.js';
 import { syncRipJobStatuses } from './services/rip-queue.js';
 import { processEquipmentWatchRules } from './services/equipment-watch.js';
@@ -265,6 +266,7 @@ app.use(`${API_BASE_PATH}/client-errors`, clientErrorsRouter);
 app.use(`${API_BASE_PATH}/microsoft-oauth`, microsoftOAuthRouter);
 app.use(`${API_BASE_PATH}/equipment`, equipmentRouter);
 app.use(`${API_BASE_PATH}/equipment-watch`, equipmentWatchRouter);
+app.use(`${API_BASE_PATH}/routing`, routingRouter);
 
 // ─── Production Static File Serving ──────────────────────────────────────────
 // In production, serve the built frontend apps directly from the Express server.
