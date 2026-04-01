@@ -11,7 +11,21 @@
 - `packages/server/prisma/schema.prisma` already contains `RoutingPrediction`, `OptimizationRule`, `StationIntelligence`, and `RoutingDecision`.
 - `packages/shared/src/types.ts` and `packages/shared/src/schemas.ts` already expose routing-intelligence DTOs and optimization request schemas.
 - `packages/server/src/lib/routing-defaults.ts` and `packages/server/src/routes/orders.ts` represent the current static/default routing entry points.
-- `packages/web/src/pages/ProductionCalendarPage.tsx` and multiple `packages/shop-floor/src/stations/*.tsx` screens consume routing arrays today.
+- `packages/server/src/services/woocommerce.ts`, `packages/server/src/routes/templates.ts`, and `packages/server/prisma/seed.ts` also seed or derive routing before the current defaults are applied.
+- `packages/shared/src/routing-inference.ts` is the current text-to-routing inference helper used by both server and shop-floor flows.
+- `packages/web/src/pages/ProductionCalendarPage.tsx`, `packages/web/src/components/OrderEntryStationView.tsx`, and multiple `packages/shop-floor/src/stations/*.tsx` screens consume routing arrays today.
+
+## Routing Contract Note
+
+The current system has a few distinct routing producers and consumers that this engine must respect instead of silently replacing:
+
+- Producers: `packages/shared/src/routing-inference.ts`, `packages/server/src/lib/routing-defaults.ts`, `packages/server/src/routes/orders.ts`, `packages/server/src/services/woocommerce.ts`, `packages/server/src/routes/templates.ts`, and `packages/server/prisma/seed.ts`.
+- Consumers: `packages/web/src/components/OrderEntryStationView.tsx`, `packages/web/src/pages/OrdersPage.tsx`, `packages/web/src/pages/OrderDetailPage.tsx`, `packages/web/src/pages/TemplatesPage.tsx`, `packages/web/src/pages/ProductionCalendarPage.tsx`, `packages/server/src/routes/portal.ts`, `packages/server/src/routes/reports.ts`, `packages/server/src/routes/qrcode.ts`, and the shop-floor station views under `packages/shop-floor/src/stations/`.
+- Inputs: work-order metadata, customer/company context, description and notes text, template defaults, imported spreadsheet hints, manual routing edits, current station progress, queue depth, operator skill/access, equipment availability, and business rules.
+- Outputs: a ranked route recommendation, alternative routes, score breakdown, confidence, explanation text, and a persisted decision record that can be audited later.
+- Ranking factors: hard constraints first, then route eligibility, downstream station requirements, equipment readiness, operator availability, queue load, due-date urgency, and historical route success.
+- Override rules: explicit user edits and accepted recommendations always win over computed suggestions; manual route changes must keep the user, reason, and timestamp; the engine must not silently rewrite routing that has already been committed.
+- Non-goals for this slice: no UI/API implementation yet, no ML training loop, no historical-order migration, no removal of manual routing controls, and no change to station-completion semantics.
 
 **Constraints:**
 - The worktree already contains unrelated edits across server, web, shop-floor, and root files.
@@ -48,7 +62,7 @@
 ## Task 1: Safe Broad-Task Decomposition
 
 - [x] Create or refresh the execution plan for `SSS-API-001`, scoped to independently verifiable slices, and record the slice in centralized autonomy logs.
-- [ ] Inventory the current routing producers and consumers, then add a docs-only contract note to this plan covering engine inputs, outputs, ranking factors, override rules, and explicit non-goals.
+- [x] Inventory the current routing producers and consumers, then add a docs-only contract note to this plan covering engine inputs, outputs, ranking factors, override rules, and explicit non-goals.
 
 ## Task 2: Shared Contract Hardening
 
