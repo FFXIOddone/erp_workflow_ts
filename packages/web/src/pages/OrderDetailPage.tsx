@@ -10,6 +10,7 @@ import { buildDesignFollowOnPayload, buildDuplicateOrderPayload, isDesignOnlySou
 import { useAuthStore } from '../stores/auth';
 import { NetworkFileBrowser } from '../components/NetworkFileBrowser';
 import { ShippingPanel } from '../components/ShippingPanel';
+import { RoutingRecommendationCard } from '../components/RoutingRecommendationCard';
 import { PrinterInfoCard } from '../components/PrinterInfoCard';
 import { ZundInfoCard } from '../components/ZundInfoCard';
 import { HorizontalActivityTimeline } from '../components/HorizontalActivityTimeline';
@@ -419,6 +420,16 @@ export function OrderDetailPage() {
               </div>
             </dl>
           </div>
+
+          <RoutingRecommendationCard
+            workOrderId={order.id}
+            orderNumber={order.orderNumber}
+            description={order.description}
+            priority={order.priority}
+            dueDate={order.dueDate ?? null}
+            notes={order.notes ?? null}
+            currentRoute={order.routing ?? []}
+          />
 
           <ShippingPanel workOrderId={order.id} orderNumber={order.orderNumber} />
 
