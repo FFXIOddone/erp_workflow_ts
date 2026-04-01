@@ -2661,6 +2661,34 @@ export const PredictionFactorWeightsSchema = z.object({
 
 export type PredictionFactorWeightsInput = z.infer<typeof PredictionFactorWeightsSchema>;
 
+/** Schema for an alternative routing option */
+export const AlternativeRouteSchema = z.object({
+  route: z.array(z.string().min(1)),
+  score: z.number().min(0).max(100),
+  reason: z.string().min(1).max(500),
+  estimatedDuration: z.number().nonnegative(),
+});
+
+/** Schema for a structured explanation factor */
+export const RoutingExplanationFactorSchema = z.object({
+  key: z.string().min(1).max(100),
+  label: z.string().min(1).max(200),
+  direction: z.enum(['positive', 'negative', 'neutral']),
+  scoreImpact: z.number().min(-100).max(100),
+  value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+  description: z.string().max(500).nullable().optional(),
+});
+
+/** Schema for the routing factors considered during a decision */
+export const RoutingFactorsConsideredSchema = z.object({
+  queueDepths: z.record(z.number().nonnegative()).default({}),
+  waitTimes: z.record(z.number().nonnegative()).default({}),
+  operatorAvailability: z.record(z.number().nonnegative()).default({}),
+  equipmentStatus: z.record(z.nativeEnum(EquipmentStatus)).default({}),
+  deadlineRisk: z.number().min(0).max(100),
+  qualityScores: z.record(z.number().nonnegative()).default({}),
+});
+
 /** Schema for creating a routing prediction request */
 export const CreateRoutingPredictionSchema = z.object({
   workOrderId: z.string().uuid().optional(),
@@ -2791,6 +2819,27 @@ export const RequestRoutingOptimizationSchema = z.object({
 });
 
 export type RequestRoutingOptimizationInput = z.infer<typeof RequestRoutingOptimizationSchema>;
+
+/** Schema for routing suggestions returned by the optimization engine */
+export const RoutingSuggestionSchema = z.object({
+  suggestedRoute: z.array(z.string().min(1)),
+  confidence: z.number().min(0).max(1),
+  estimatedDuration: z.number().nonnegative(),
+  reasoning: z.array(z.string()).default([]),
+  alternatives: z.array(AlternativeRouteSchema).default([]),
+  warnings: z.array(z.string()).default([]),
+  explanationFactors: z.array(RoutingExplanationFactorSchema).default([]),
+});
+
+/** Schema for a manual routing override payload */
+export const RoutingOverrideInputSchema = z.object({
+  workOrderId: z.string().uuid(),
+  predictionId: z.string().uuid().nullable().optional(),
+  newRoute: z.array(z.string().min(1)).min(1),
+  reason: z.string().min(1).max(500),
+  notes: z.string().max(1000).nullable().optional(),
+  preserveCompletedStations: z.boolean().default(true),
+});
 
 /** Schema for bulk route optimization request */
 export const BulkRouteOptimizationSchema = z.object({

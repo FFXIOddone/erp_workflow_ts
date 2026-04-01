@@ -66,8 +66,10 @@ The current system has a few distinct routing producers and consumers that this 
 
 ## Task 2: Shared Contract Hardening
 
-- [ ] Verify whether existing `@erp/shared` routing-intelligence types and schemas already cover recommended route, alternative routes, explanation factors, confidence, and override payloads; patch only shared-package gaps.
-- [ ] Validate `@erp/shared` after any contract changes with package-local build/lint commands before opening server work.
+- [x] Verify whether existing `@erp/shared` routing-intelligence types and schemas already cover recommended route, alternative routes, explanation factors, confidence, and override payloads; patch only shared-package gaps.
+- [x] Validate `@erp/shared` after any contract changes with package-local build/lint commands before opening server work.
+
+Validation note: `npm run build -w @erp/shared` passes. `npm run lint -w @erp/shared` still reports pre-existing shared-package baseline issues in unrelated files, but the routing contract files touched in this slice are clean.
 
 ## Task 3: Server Routing Engine
 

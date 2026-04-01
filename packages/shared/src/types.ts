@@ -3212,6 +3212,16 @@ export interface AlternativeRoute {
   estimatedDuration: number;     // Minutes
 }
 
+/** Structured explanation factor for a routing recommendation */
+export interface RoutingExplanationFactor {
+  key: string;                   // Stable factor identifier
+  label: string;                 // Human-readable label
+  direction: 'positive' | 'negative' | 'neutral';
+  scoreImpact: number;           // Relative impact on the score
+  value: string | number | boolean | null;
+  description: string | null;
+}
+
 /** Factor weights for prediction */
 export interface PredictionFactorWeights {
   queueDepth: number;            // Weight for queue depth consideration
@@ -3403,6 +3413,17 @@ export interface RoutingSuggestion {
   reasoning: string[];           // Why this route
   alternatives: AlternativeRoute[];
   warnings: string[];            // Any concerns
+  explanationFactors: RoutingExplanationFactor[];
+}
+
+/** Payload for manually overriding or applying a routing recommendation */
+export interface RoutingOverrideInput {
+  workOrderId: string;
+  predictionId: string | null;
+  newRoute: string[];
+  reason: string;
+  notes: string | null;
+  preserveCompletedStations: boolean;
 }
 
 /** Station status summary for dashboard */

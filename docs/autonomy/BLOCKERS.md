@@ -5,6 +5,7 @@
 | Timestamp | Task ID | Source | Blocker | Needs | Status | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-03-25T20:12:18.169Z | PRINT-STATION-ROUTING-001 | validation | Vitest cannot execute targeted server tests because the local install is missing the std-env package. | Restore the missing Vitest dependency or refresh workspace installs before relying on package tests. | open | Attempted: npm.cmd run test -w @erp/server -- src/lib/routing-defaults.test.ts. Server TypeScript build still passed, so this did not block the code fix itself. |
+| 2026-04-01T15:50:08.524Z | PLAN:2026-03-23-ai-optimized-dynamic-routing-engine | validation | Shared package lint baseline fails on pre-existing unused imports and type debt in unrelated files | Repo-wide shared lint cleanup before npm run lint -w @erp/shared can pass cleanly | open | The routing contract slice itself builds cleanly and targeted lint on the touched files shows only baseline debt outside this patch. |
 <!-- BLOCKER_OPEN_ROWS -->
 
 ## Resolved
