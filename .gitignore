@@ -7,6 +7,10 @@ build
 .DS_Store
 coverage
 .turbo
+.venv/
+logs/
+tmp/
+packages/server/prisma/dev.db
 
 # Vite cache (prevents OneDrive sync issues)
 .vite
