@@ -2,7 +2,14 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { formatFedExLogFileName, parseFedExLogDate, parseFedExLogFile } from './fedex.js';
+import {
+  formatFedExLogFileName,
+  extractFedExWorkOrderCandidates,
+  parseFedExLogDate,
+  parseFedExLogFile,
+  parseFedExShipmentExportCsv,
+  parseFedExShipmentDetailReport,
+} from './fedex.js';
 
 const tempFiles: string[] = [];
 
@@ -58,5 +65,83 @@ describe('FedEx log parser', () => {
       destinationState: 'WI',
     });
     expect(records[0].sourceKey).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('parses the FedEx shipment detail text report format', async () => {
+    const sampleReport = `03/26/2026 - 03/27/2026        270013422        A GROUND SHIPMENT DETAIL        CAFE3954          Page: 1
+
+TRACKING #       ACT WG Service Type Desc                        C NET     LNET
+   RECIPIENT COMPANY         RECIPIENT CONTACT         RECIPIENT ADDRESS 1  RECIPIENT CITY       ST ZIP
+---------------- ------ ---------------------------------------- --------- -----------
+   ------------------------- ------------------------- -------------------- -------------------- -- ------
+495213067555     10.00  FedEx Ground Service                     12.85     23.76
+   Kwik-Fill S0214           STORE MANAGER             4994 Mahoning Ave.   CHAMPION             OH 44483
+`;
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fedex-report-'));
+    const filePath = path.join(tempDir, 'KF Ground.txt');
+    await fs.writeFile(filePath, sampleReport, 'utf-8');
+    tempFiles.push(filePath, tempDir);
+
+    const records = await parseFedExShipmentDetailReport(filePath);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      sourceFileName: 'KF Ground.txt',
+      trackingNumber: '495213067555',
+      service: 'FedEx Ground Service',
+      recipientCompanyName: 'Kwik-Fill S0214',
+      recipientContactName: 'STORE MANAGER',
+      destinationAddressLine1: '4994 Mahoning Ave.',
+      destinationCity: 'CHAMPION',
+      destinationState: 'OH',
+      destinationPostalCode: '44483',
+    });
+    expect(records[0].sourceFileDate.getFullYear()).toBe(2026);
+    expect(records[0].sourceFileDate.getMonth()).toBe(2);
+    expect(records[0].sourceFileDate.getDate()).toBe(26);
+    expect(records[0].sourceKey).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('parses the FedEx shipment export CSV format', async () => {
+    const sampleCsv = `Shipment ID,Tracking Number,Service Type Desc,Recipient Company Name,Recipient Contact Name,Recipient Address 1,Recipient City,Recipient State,Recipient Postal Code,Ship Date
+64359,805941978240,FedEx Ground Service,URC (M0029),STORE MANAGER,123 Main St.,Mansfield,OH,44905,03/26/2026
+`;
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fedex-export-'));
+    const filePath = path.join(tempDir, 'shipments_2026-03-26_1100.csv');
+    await fs.writeFile(filePath, sampleCsv, 'utf-8');
+    tempFiles.push(filePath, tempDir);
+
+    const records = await parseFedExShipmentExportCsv(filePath);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      sourceFileName: 'shipments_2026-03-26_1100.csv',
+      trackingNumber: '805941978240',
+      service: 'FedEx Ground Service',
+      recipientCompanyName: 'URC (M0029)',
+      recipientContactName: 'STORE MANAGER',
+      destinationAddressLine1: '123 Main St.',
+      destinationCity: 'Mansfield',
+      destinationState: 'OH',
+      destinationPostalCode: '44905',
+    });
+    expect(records[0].sourceFileDate.getFullYear()).toBe(2026);
+    expect(records[0].sourceFileDate.getMonth()).toBe(2);
+    expect(records[0].sourceFileDate.getDate()).toBe(26);
+    expect(records[0].eventTimestamp?.getFullYear()).toBe(2026);
+    expect(records[0].sourceKey).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('extracts work order candidates from shipment export rows', () => {
+    const candidates = extractFedExWorkOrderCandidates({
+      row: {
+        'Shipment ID': 'WO-64359',
+        'Tracking Number': '805941978240',
+        'Service Type Desc': 'FedEx Ground Service',
+      },
+      sourceType: 'shipment_export_csv',
+    });
+
+    expect(candidates).toContain('64359');
   });
 });

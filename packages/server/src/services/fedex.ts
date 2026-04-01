@@ -2,17 +2,38 @@ import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { XMLParser } from 'fast-xml-parser';
+import * as XLSX from 'xlsx';
 import type { FedExShipmentRecord, Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
 
 const FEDEX_LOG_FILE_PREFIX = 'FxLogSr';
 const FEDEX_LOG_FILE_REGEX = /^FxLogSr(\d{8})\.xml$/i;
+const FEDEX_EXPORT_FILE_REGEX = /^shipments_(?:latest|\d{4}-\d{2}-\d{2}(?:_\d{4})?)\.csv$/i;
 const DEFAULT_FEDEX_LOG_ROOTS = [
   process.env.FEDEX_LOG_ROOT?.trim(),
   process.env.FEDEX_LOG_DIR?.trim(),
   '\\\\192.168.254.131\\ProgramData\\FedEx\\FSM\\Logs',
   '\\\\192.168.254.131\\C$\\ProgramData\\FedEx\\FSM\\Logs',
   'C:\\ProgramData\\FedEx\\FSM\\Logs',
+].filter((value): value is string => Boolean(value));
+
+const DEFAULT_FEDEX_REPORT_ROOTS = [
+  process.env.FEDEX_REPORT_ROOT?.trim(),
+  process.env.FEDEX_REPORT_DIR?.trim(),
+  'C:\\Users\\Shipping1\\OneDrive - Wilde Signs\\Desktop',
+  '\\\\192.168.254.131\\Users\\Shipping1\\OneDrive - Wilde Signs\\Desktop',
+  'C:\\Users\\Shipping1\\OneDrive - Wilde Signs\\Desktop\\FedExExports',
+  '\\\\192.168.254.131\\Users\\Shipping1\\OneDrive - Wilde Signs\\Desktop\\FedExExports',
+].filter((value): value is string => Boolean(value));
+
+const DEFAULT_FEDEX_EXPORT_ROOTS = [
+  process.env.FEDEX_EXPORT_ROOT?.trim(),
+  process.env.FEDEX_EXPORT_DIR?.trim(),
+  'C:\\ProgramData\\FedEx\\FSM\\DATABASE\\exports',
+  '\\\\192.168.254.131\\DATABASE\\exports',
+  '\\\\192.168.254.131\\C$\\ProgramData\\FedEx\\FSM\\DATABASE\\exports',
+  'C:\\Users\\Shipping1\\OneDrive - Wilde Signs\\Desktop\\FedExExports',
+  '\\\\192.168.254.131\\Users\\Shipping1\\OneDrive - Wilde Signs\\Desktop\\FedExExports',
 ].filter((value): value is string => Boolean(value));
 
 const xmlParser = new XMLParser({
@@ -49,6 +70,26 @@ export type FedExShipmentRecordWithWorkOrder = FedExShipmentRecord & {
     orderNumber: string;
     customerName: string;
   } | null;
+};
+
+type FedExShipmentRecordRow = {
+  sourceFileName: string;
+  sourceFilePath: string | null;
+  sourceFileDate: Date;
+  eventTimestamp: Date | null;
+  trackingNumber: string | null;
+  service: string | null;
+  recipientCompanyName: string | null;
+  recipientContactName: string | null;
+  destinationAddressLine1: string | null;
+  destinationCity: string | null;
+  destinationState: string | null;
+  destinationPostalCode: string | null;
+  destinationCountry: string | null;
+  workOrderId: string | null;
+  sourceKey: string;
+  rawPayload: string;
+  rawData: Prisma.JsonValue;
 };
 
 export interface FedExLogResolution {
@@ -131,6 +172,7 @@ type FedExWorkOrderCandidate = {
   id: string;
   orderNumber: string;
   customerName: string;
+  description: string;
   company: {
     name: string | null;
     address: string | null;
@@ -297,6 +339,187 @@ function hashRecordSource(parts: string[]): string {
   return createHash('sha256').update(parts.join('|')).digest('hex');
 }
 
+function normalizeFedExHeaderKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function stringifyFedExValue(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isNaN(time) ? null : value.toISOString();
+  }
+
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function normalizeFedExWorkOrderToken(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const token = trimmed.replace(/[^A-Za-z0-9-]/g, '').toUpperCase();
+  if (!token) {
+    return null;
+  }
+
+  const digitsOnly = token.replace(/\D/g, '');
+  if (digitsOnly.length >= 4 && digitsOnly.length <= 8) {
+    return digitsOnly;
+  }
+
+  if (token.length >= 4 && token.length <= 16) {
+    return token;
+  }
+
+  return null;
+}
+
+function extractFedExStoreCodeTokens(value: string | null | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return uniqueStrings((value.match(/\b[A-Z]\d{4}\b/gi) ?? []).map((token) => token.toUpperCase()));
+}
+
+function extractFedExWorkOrderTokensFromText(value: string): string[] {
+  const stopWords = new Set([
+    'SHIPMENT',
+    'SHIPMENTS',
+    'SHIPMENTID',
+    'SHIPID',
+    'REFERENCE',
+    'REFERENCE1',
+    'REFERENCE2',
+    'REFERENCE3',
+    'REF',
+    'ORDER',
+    'ORDERNUMBER',
+    'WORKORDER',
+    'PO',
+    'PONUMBER',
+    'WO',
+    'TRACKING',
+    'NUMBER',
+    'LABEL',
+    'SERVICE',
+    'RECIPIENT',
+    'COMPANY',
+    'CONTACT',
+  ]);
+
+  const tokens = value.match(/[A-Za-z0-9]+/g) ?? [];
+  const candidates = new Set<string>();
+
+  for (const token of tokens) {
+    const normalized = token.toUpperCase();
+    if (normalized.length < 4 || stopWords.has(normalized)) {
+      continue;
+    }
+
+    const candidate = normalizeFedExWorkOrderToken(normalized);
+    if (candidate) {
+      candidates.add(candidate);
+    }
+  }
+
+  return [...candidates];
+}
+
+export function extractFedExWorkOrderCandidates(rawData: Record<string, unknown>): string[] {
+  const candidates = new Set<string>();
+  const keyHints = [
+    'shipmentid',
+    'shipmentnumber',
+    'shipmentref',
+    'shipmentreference',
+    'ordernumber',
+    'orderid',
+    'workorder',
+    'workordernumber',
+    'ponumber',
+    'reference',
+    'reference1',
+    'reference2',
+    'reference3',
+    'ref1',
+    'ref2',
+    'ref3',
+    'po',
+    'wo',
+  ];
+
+  const visit = (value: unknown, keyPath: string[] = []): void => {
+    if (typeof value === 'string') {
+      const normalizedKeyPath = normalizeFedExHeaderKey(keyPath.join(' '));
+      if (!keyHints.some((hint) => normalizedKeyPath.includes(hint))) {
+        return;
+      }
+
+      for (const candidate of extractFedExWorkOrderTokensFromText(value)) {
+        candidates.add(candidate);
+      }
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        visit(entry, keyPath);
+      }
+      return;
+    }
+
+    if (value && typeof value === 'object') {
+      for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+        visit(entry, [...keyPath, key]);
+      }
+    }
+  };
+
+  visit(rawData);
+  return [...candidates];
+}
+
+async function resolveFedExWorkOrderByExactCandidate(candidate: string): Promise<string | null> {
+  const normalized = candidate.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const digitsOnly = normalized.replace(/\D/g, '');
+  const lookupValues = uniqueStrings([
+    normalized,
+    normalized.toUpperCase(),
+    normalized.replace(/\s+/g, ''),
+    digitsOnly.length >= 4 ? digitsOnly : null,
+  ]);
+
+  for (const lookupValue of lookupValues) {
+    const exact = await prisma.workOrder.findFirst({
+      where: {
+        OR: [
+          { orderNumber: lookupValue },
+          { quickbooksOrderNum: lookupValue },
+          { poNumber: lookupValue },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (exact?.id) {
+      return exact.id;
+    }
+  }
+
+  return null;
+}
+
 function getFedExMatchTerms(record: FedExShipmentRecordInput): string[] {
   const addressParts = [
     record.destinationAddressLine1,
@@ -336,6 +559,7 @@ function scoreFedExWorkOrderCandidate(
 
   const candidateLabels = uniqueStrings([
     candidate.customerName,
+    candidate.description,
     candidate.company?.name,
     candidate.customer?.companyName,
     candidate.customer?.name,
@@ -361,6 +585,28 @@ function scoreFedExWorkOrderCandidate(
     candidate.customer?.shipToLine4,
     candidate.customer?.shipToLine5,
   ]).map((value) => normalizeMatchText(value));
+
+  const recordStoreCodes = new Set([
+    ...extractFedExStoreCodeTokens(record.recipientCompanyName),
+    ...extractFedExStoreCodeTokens(record.recipientContactName),
+    ...extractFedExStoreCodeTokens(
+      [
+        record.destinationAddressLine1,
+        record.destinationCity,
+        record.destinationState,
+        record.destinationPostalCode,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(' ')
+    ),
+  ]);
+  const candidateStoreCodes = new Set([
+    ...extractFedExStoreCodeTokens(candidate.customerName),
+    ...extractFedExStoreCodeTokens(candidate.description),
+    ...extractFedExStoreCodeTokens(candidate.company?.name),
+    ...extractFedExStoreCodeTokens(candidate.customer?.companyName),
+    ...extractFedExStoreCodeTokens(candidate.customer?.name),
+  ]);
 
   let score = 0;
 
@@ -388,6 +634,13 @@ function scoreFedExWorkOrderCandidate(
       if (recordAddress.includes(candidateAddress) || candidateAddress.includes(recordAddress)) {
         score = Math.max(score, 70);
       }
+    }
+  }
+
+  for (const storeCode of recordStoreCodes) {
+    if (candidateStoreCodes.has(storeCode)) {
+      score = Math.max(score, 90);
+      break;
     }
   }
 
@@ -420,6 +673,14 @@ function scoreFedExWorkOrderCandidate(
 }
 
 async function resolveFedExWorkOrderId(record: FedExShipmentRecordInput): Promise<string | null> {
+  const exactCandidates = extractFedExWorkOrderCandidates(record.rawData);
+  for (const candidate of exactCandidates) {
+    const workOrderId = await resolveFedExWorkOrderByExactCandidate(candidate);
+    if (workOrderId) {
+      return workOrderId;
+    }
+  }
+
   if (record.trackingNumber) {
     const shipment = await prisma.shipment.findFirst({
       where: {
@@ -436,10 +697,6 @@ async function resolveFedExWorkOrderId(record: FedExShipmentRecordInput): Promis
   }
 
   const searchTerms = getFedExMatchTerms(record);
-  if (searchTerms.length === 0) {
-    return null;
-  }
-
   const orConditions = searchTerms.slice(0, 8).flatMap((term) => [
     { customerName: { contains: term, mode: 'insensitive' as const } },
     { company: { name: { contains: term, mode: 'insensitive' as const } } },
@@ -448,53 +705,78 @@ async function resolveFedExWorkOrderId(record: FedExShipmentRecordInput): Promis
     { description: { contains: term, mode: 'insensitive' as const } },
   ]);
 
-  const candidates = await prisma.workOrder.findMany({
-    where: orConditions.length > 0 ? { OR: orConditions } : undefined,
-    select: {
-      id: true,
-      orderNumber: true,
-      customerName: true,
-      company: {
-        select: {
-          name: true,
-          address: true,
-          city: true,
-          state: true,
-          zipCode: true,
-          shipToLine1: true,
-          shipToLine2: true,
-          shipToLine3: true,
-          shipToLine4: true,
-          shipToLine5: true,
-        },
-      },
-      customer: {
-        select: {
-          name: true,
-          companyName: true,
-          address: true,
-          city: true,
-          state: true,
-          zipCode: true,
-          shipToLine1: true,
-          shipToLine2: true,
-          shipToLine3: true,
-          shipToLine4: true,
-          shipToLine5: true,
-        },
+  const workOrderSelect = {
+    id: true,
+    orderNumber: true,
+    customerName: true,
+    company: {
+      select: {
+        name: true,
+        address: true,
+        city: true,
+        state: true,
+        zipCode: true,
+        shipToLine1: true,
+        shipToLine2: true,
+        shipToLine3: true,
+        shipToLine4: true,
+        shipToLine5: true,
       },
     },
-    take: 100,
-  }) as FedExWorkOrderCandidate[];
+    customer: {
+      select: {
+        name: true,
+        companyName: true,
+        address: true,
+        city: true,
+        state: true,
+        zipCode: true,
+        shipToLine1: true,
+        shipToLine2: true,
+        shipToLine3: true,
+        shipToLine4: true,
+        shipToLine5: true,
+      },
+    },
+    description: true,
+  } as const;
 
-  let bestCandidate: FedExWorkOrderCandidate | null = null;
-  let bestScore = 0;
+  const scoreCandidates = (candidates: FedExWorkOrderCandidate[]): {
+    bestCandidate: FedExWorkOrderCandidate | null;
+    bestScore: number;
+  } => {
+    let bestCandidate: FedExWorkOrderCandidate | null = null;
+    let bestScore = 0;
 
-  for (const candidate of candidates) {
-    const score = scoreFedExWorkOrderCandidate(record, candidate);
-    if (score > bestScore) {
-      bestScore = score;
-      bestCandidate = candidate;
+    for (const candidate of candidates) {
+      const score = scoreFedExWorkOrderCandidate(record, candidate);
+      if (score > bestScore) {
+        bestScore = score;
+        bestCandidate = candidate;
+      }
+    }
+
+    return { bestCandidate, bestScore };
+  };
+
+  const searchCandidates = orConditions.length > 0
+    ? (await prisma.workOrder.findMany({
+        where: { OR: orConditions },
+        select: workOrderSelect,
+        take: 100,
+      })) as FedExWorkOrderCandidate[]
+    : [];
+
+  let { bestCandidate, bestScore } = scoreCandidates(searchCandidates);
+  if (bestScore < 60) {
+    const allCandidates = (await prisma.workOrder.findMany({
+      select: workOrderSelect,
+      take: 500,
+    })) as FedExWorkOrderCandidate[];
+    const fallback = scoreCandidates(allCandidates);
+    if (fallback.bestScore > bestScore) {
+      bestCandidate = fallback.bestCandidate;
+      bestScore = fallback.bestScore;
     }
   }
 
@@ -617,6 +899,103 @@ export function getFedExLogRoots(): string[] {
   return [...new Set(DEFAULT_FEDEX_LOG_ROOTS)];
 }
 
+export function getFedExReportRoots(): string[] {
+  return [...new Set(DEFAULT_FEDEX_REPORT_ROOTS)];
+}
+
+export function getFedExExportRoots(): string[] {
+  return [...new Set(DEFAULT_FEDEX_EXPORT_ROOTS)];
+}
+
+function parseFedExReportDate(value: string): Date | null {
+  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) {
+    return null;
+  }
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function extractFedExReportSourceDate(content: string, fallback: Date): Date {
+  const headerMatch = content.match(/^\s*(\d{2}\/\d{2}\/\d{4})\s*-\s*(\d{2}\/\d{2}\/\d{4})\s+/m);
+  const parsed = headerMatch?.[1] ? parseFedExReportDate(headerMatch[1]) : null;
+  return parsed ?? fallback;
+}
+
+function parseFedExShipmentReportRecipientLine(line: string): {
+  recipientCompanyName: string | null;
+  recipientContactName: string | null;
+  destinationAddressLine1: string | null;
+  destinationCity: string | null;
+  destinationState: string | null;
+  destinationPostalCode: string | null;
+} | null {
+  const trimmedLine = line.trim();
+  if (!trimmedLine) {
+    return null;
+  }
+
+  const parts = trimmedLine.split(/\s{2,}/).filter((part) => part.trim().length > 0);
+  if (parts.length >= 6) {
+    const [recipientCompanyName, recipientContactName, destinationAddressLine1, destinationCity, destinationState, destinationPostalCode] = parts;
+    return {
+      recipientCompanyName: recipientCompanyName.trim() || null,
+      recipientContactName: recipientContactName.trim() || null,
+      destinationAddressLine1: destinationAddressLine1.trim() || null,
+      destinationCity: destinationCity.trim() || null,
+      destinationState: destinationState.trim() || null,
+      destinationPostalCode: destinationPostalCode.trim() || null,
+    };
+  }
+
+  const fallbackMatch = trimmedLine.match(
+    /^(.+?)\s{2,}(.+?)\s{2,}(.+?)\s{2,}(.+?)\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\s*$/
+  );
+  if (!fallbackMatch) {
+    return null;
+  }
+
+  return {
+    recipientCompanyName: fallbackMatch[1].trim() || null,
+    recipientContactName: fallbackMatch[2].trim() || null,
+    destinationAddressLine1: fallbackMatch[3].trim() || null,
+    destinationCity: fallbackMatch[4].trim() || null,
+    destinationState: fallbackMatch[5].trim() || null,
+    destinationPostalCode: fallbackMatch[6].trim() || null,
+  };
+}
+
+function isFedExShipmentReportFileName(fileName: string): boolean {
+  return /^(?:KF|SHIPMENTS_).+\.txt$/i.test(fileName);
+}
+
+function isFedExShipmentExportFileName(fileName: string): boolean {
+  return FEDEX_EXPORT_FILE_REGEX.test(fileName);
+}
+
+function parseFedExExportDate(fileName: string): Date | null {
+  const latestMatch = fileName.match(/^shipments_latest\.csv$/i);
+  if (latestMatch) {
+    return null;
+  }
+
+  const datedMatch = fileName.match(/^shipments_(\d{4})-(\d{2})-(\d{2})(?:_\d{4})?\.csv$/i);
+  if (!datedMatch) {
+    return null;
+  }
+
+  const year = Number(datedMatch[1]);
+  const month = Number(datedMatch[2]);
+  const day = Number(datedMatch[3]);
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export async function resolveFedExLogFile(date = new Date()): Promise<FedExLogResolution | null> {
   const fileName = formatFedExLogFileName(date);
   const sourceFileDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -648,6 +1027,519 @@ export async function parseFedExLogFile(filePath: string): Promise<FedExShipment
   return blocks
     .map((block) => buildRecordFromBlock(block, fileName, sourceFileDate, filePath))
     .filter((record): record is FedExShipmentRecordInput => Boolean(record));
+}
+
+async function resolveFedExShipmentReportFiles(): Promise<string[]> {
+  const candidates = new Map<string, number>();
+
+  for (const rootPath of getFedExReportRoots()) {
+    let entries: import('fs').Dirent[] = [];
+    try {
+      entries = await fs.readdir(rootPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !isFedExShipmentReportFileName(entry.name)) {
+        continue;
+      }
+
+      const filePath = path.win32.join(rootPath, entry.name);
+
+      try {
+        const content = await fs.readFile(filePath, 'utf-8');
+        if (!content.includes('TRACKING #') || !/SHIPMENT DETAIL/i.test(content)) {
+          continue;
+        }
+
+        const stats = await fs.stat(filePath);
+        candidates.set(filePath, stats.mtimeMs);
+      } catch {
+        // Skip files we cannot read in the current environment.
+      }
+    }
+  }
+
+  return [...candidates.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .map(([filePath]) => filePath);
+}
+
+async function resolveFedExShipmentExportFiles(): Promise<string[]> {
+  const candidates = new Map<string, number>();
+
+  for (const rootPath of getFedExExportRoots()) {
+    let entries: import('fs').Dirent[] = [];
+    try {
+      entries = await fs.readdir(rootPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !isFedExShipmentExportFileName(entry.name)) {
+        continue;
+      }
+
+      const filePath = path.win32.join(rootPath, entry.name);
+
+      try {
+        const stats = await fs.stat(filePath);
+        candidates.set(filePath, stats.mtimeMs);
+      } catch {
+        // Skip files we cannot inspect in the current environment.
+      }
+    }
+  }
+
+  return [...candidates.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .map(([filePath]) => filePath);
+}
+
+export async function parseFedExShipmentDetailReport(filePath: string): Promise<FedExShipmentRecordInput[]> {
+  const fileName = path.win32.basename(filePath);
+  const fileContent = (await fs.readFile(filePath, 'utf-8')).replace(/^\uFEFF/, '');
+  const fileStats = await fs.stat(filePath);
+  const sourceFileDate = extractFedExReportSourceDate(fileContent, fileStats.mtime);
+  const lines = fileContent.split(/\r?\n/);
+  const records: FedExShipmentRecordInput[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const reportLine = lines[index];
+    const trackingMatch = reportLine.match(
+      /^\s*(\d{12,15})\s+([\d.]+)\s+(.+?)\s+([\d.]+)\s+([\d.]+)\s*$/
+    );
+    if (!trackingMatch) {
+      continue;
+    }
+
+    const recipientLine = lines[index + 1]?.trimEnd() ?? '';
+    const recipient = parseFedExShipmentReportRecipientLine(recipientLine);
+    if (!recipient) {
+      continue;
+    }
+
+    const trackingNumber = trackingMatch[1].trim();
+    const service = trackingMatch[3].trim();
+    const rawPayload = `${reportLine.trimEnd()}\n${recipientLine.trimEnd()}`.trim();
+
+    const sourceKey = hashRecordSource([
+      fileName,
+      sourceFileDate.toISOString(),
+      trackingNumber,
+      recipient.recipientCompanyName ?? '',
+      recipient.recipientContactName ?? '',
+      recipient.destinationAddressLine1 ?? '',
+      recipient.destinationCity ?? '',
+      recipient.destinationState ?? '',
+      recipient.destinationPostalCode ?? '',
+      service,
+      rawPayload,
+    ]);
+
+    records.push({
+      sourceFileName: fileName,
+      sourceFilePath: filePath,
+      sourceFileDate,
+      eventTimestamp: null,
+      trackingNumber,
+      service,
+      recipientCompanyName: recipient.recipientCompanyName,
+      recipientContactName: recipient.recipientContactName,
+      destinationAddressLine1: recipient.destinationAddressLine1,
+      destinationCity: recipient.destinationCity,
+      destinationState: recipient.destinationState,
+      destinationPostalCode: recipient.destinationPostalCode,
+      destinationCountry: null,
+      sourceKey,
+      rawPayload,
+      rawData: {
+        reportLine: reportLine.trimEnd(),
+        recipientLine: recipientLine.trimEnd(),
+        sourceFileName: fileName,
+        sourceFilePath: filePath,
+        sourceFileDate: sourceFileDate.toISOString(),
+        sourceType: 'shipment_detail_report',
+      },
+    });
+
+    index += 1;
+  }
+
+  return records;
+}
+
+function parseFedExCsvRowDate(value: string | null | undefined): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsedByReportFormat = parseFedExLogDate(value);
+  if (parsedByReportFormat) {
+    return parsedByReportFormat;
+  }
+
+  const parsed = Date.parse(value);
+  if (!Number.isNaN(parsed)) {
+    return new Date(parsed);
+  }
+
+  return null;
+}
+
+function pickFedExRowValue(row: Record<string, unknown>, aliases: string[]): string | null {
+  const normalizedAliases = aliases.map((alias) => normalizeFedExHeaderKey(alias));
+
+  for (const [key, value] of Object.entries(row)) {
+    const normalizedKey = normalizeFedExHeaderKey(key);
+    if (!normalizedAliases.some((alias) => normalizedKey === alias || normalizedKey.includes(alias) || alias.includes(normalizedKey))) {
+      continue;
+    }
+
+    const text = stringifyFedExValue(value);
+    if (text) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
+export async function parseFedExShipmentExportCsv(filePath: string): Promise<FedExShipmentRecordInput[]> {
+  const fileName = path.win32.basename(filePath);
+  const workbook = XLSX.readFile(filePath, {
+    cellDates: true,
+  });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) {
+    return [];
+  }
+
+  const fileStats = await fs.stat(filePath);
+  const sourceFileDate = parseFedExExportDate(fileName) ?? fileStats.mtime;
+  const sheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+    defval: '',
+    raw: false,
+  });
+  const records: FedExShipmentRecordInput[] = [];
+
+  for (const row of rows) {
+    const trackingNumber =
+      pickFedExRowValue(row, [
+        'tracking number',
+        'tracking #',
+        'tracking#',
+        'tracking',
+      ]) ?? null;
+
+    if (!trackingNumber) {
+      continue;
+    }
+
+    const service =
+      pickFedExRowValue(row, [
+        'service type desc',
+        'service type description',
+        'service type',
+        'service',
+      ]) ?? null;
+
+    const recipientCompanyName =
+      pickFedExRowValue(row, [
+        'recipient company name',
+        'recipient company',
+        'ship to company name',
+        'ship to company',
+        'company name',
+        'company',
+        'recipient',
+      ]) ?? null;
+
+    const recipientContactName =
+      pickFedExRowValue(row, [
+        'recipient contact name',
+        'recipient contact',
+        'contact name',
+        'contact',
+        'attention',
+        'attn',
+      ]) ?? null;
+
+    const destinationAddressLine1 =
+      pickFedExRowValue(row, [
+        'recipient address 1',
+        'recipient address',
+        'ship to address 1',
+        'ship to address',
+        'address 1',
+        'address',
+      ]) ?? null;
+
+    const destinationCity =
+      pickFedExRowValue(row, [
+        'recipient city',
+        'ship to city',
+        'city',
+      ]) ?? null;
+
+    const destinationState =
+      pickFedExRowValue(row, [
+        'st',
+        'state',
+        'recipient state',
+        'ship to state',
+        'province',
+      ]) ?? null;
+
+    const destinationPostalCode =
+      pickFedExRowValue(row, [
+        'zip',
+        'zip code',
+        'postal code',
+        'postal',
+        'recipient postal code',
+        'ship to postal code',
+      ]) ?? null;
+
+    const destinationCountry =
+      pickFedExRowValue(row, [
+        'country',
+      ]) ?? null;
+
+    const eventTimestamp =
+      parseFedExCsvRowDate(
+        pickFedExRowValue(row, [
+          'ship date',
+          'shipment date',
+          'date shipped',
+          'shipping date',
+          'date',
+        ])
+      ) ?? null;
+
+    const normalizedRow = Object.fromEntries(
+      Object.entries(row).map(([key, value]) => [key, stringifyFedExValue(value) ?? ''])
+    );
+    const rawPayload = JSON.stringify(normalizedRow);
+
+    const sourceKey = hashRecordSource([
+      fileName,
+      sourceFileDate.toISOString(),
+      eventTimestamp?.toISOString() ?? '',
+      trackingNumber,
+      recipientCompanyName ?? '',
+      recipientContactName ?? '',
+      destinationAddressLine1 ?? '',
+      destinationCity ?? '',
+      destinationState ?? '',
+      destinationPostalCode ?? '',
+      service ?? '',
+      rawPayload,
+    ]);
+
+    records.push({
+      sourceFileName: fileName,
+      sourceFilePath: filePath,
+      sourceFileDate,
+      eventTimestamp,
+      trackingNumber,
+      service,
+      recipientCompanyName,
+      recipientContactName,
+      destinationAddressLine1,
+      destinationCity,
+      destinationState,
+      destinationPostalCode,
+      destinationCountry,
+      sourceKey,
+      rawPayload,
+      rawData: {
+        row: normalizedRow,
+        sourceFileName: fileName,
+        sourceFilePath: filePath,
+        sourceFileDate: sourceFileDate.toISOString(),
+        eventTimestamp: eventTimestamp?.toISOString() ?? null,
+        sourceType: 'shipment_export_csv',
+      },
+    });
+  }
+
+  return records;
+}
+
+async function backfillShipmentTrackingNumbers(records: FedExShipmentRecordInput[]): Promise<number> {
+  const latestTrackingByWorkOrder = new Map<string, FedExShipmentRecordInput>();
+
+  for (const record of records) {
+    if (!record.workOrderId || !record.trackingNumber) {
+      continue;
+    }
+
+    const existing = latestTrackingByWorkOrder.get(record.workOrderId);
+    if (!existing) {
+      latestTrackingByWorkOrder.set(record.workOrderId, record);
+      continue;
+    }
+
+    const existingTimestamp = existing.eventTimestamp?.getTime() ?? existing.sourceFileDate.getTime();
+    const candidateTimestamp = record.eventTimestamp?.getTime() ?? record.sourceFileDate.getTime();
+    if (candidateTimestamp >= existingTimestamp) {
+      latestTrackingByWorkOrder.set(record.workOrderId, record);
+    }
+  }
+
+  if (latestTrackingByWorkOrder.size === 0) {
+    return 0;
+  }
+
+  const shipments = await prisma.shipment.findMany({
+    where: {
+      workOrderId: { in: [...latestTrackingByWorkOrder.keys()] },
+      trackingNumber: null,
+    },
+    select: {
+      id: true,
+      workOrderId: true,
+      shipDate: true,
+      createdAt: true,
+    },
+    orderBy: [
+      { shipDate: 'desc' },
+      { createdAt: 'desc' },
+    ],
+  });
+
+  const shipmentByWorkOrder = new Map<string, { id: string; workOrderId: string }>();
+  for (const shipment of shipments) {
+    if (!shipmentByWorkOrder.has(shipment.workOrderId)) {
+      shipmentByWorkOrder.set(shipment.workOrderId, shipment);
+    }
+  }
+
+  let updated = 0;
+  for (const [workOrderId, record] of latestTrackingByWorkOrder) {
+    const shipment = shipmentByWorkOrder.get(workOrderId);
+    if (!shipment) {
+      continue;
+    }
+
+    await prisma.shipment.update({
+      where: { id: shipment.id },
+      data: { trackingNumber: record.trackingNumber },
+    });
+    updated += 1;
+  }
+
+  return updated;
+}
+
+function mapFedExShipmentRecordRowToInput(row: FedExShipmentRecordRow): FedExShipmentRecordInput {
+  return {
+    sourceFileName: row.sourceFileName,
+    sourceFilePath: row.sourceFilePath,
+    sourceFileDate: row.sourceFileDate,
+    eventTimestamp: row.eventTimestamp,
+    trackingNumber: row.trackingNumber,
+    service: row.service,
+    recipientCompanyName: row.recipientCompanyName,
+    recipientContactName: row.recipientContactName,
+    destinationAddressLine1: row.destinationAddressLine1,
+    destinationCity: row.destinationCity,
+    destinationState: row.destinationState,
+    destinationPostalCode: row.destinationPostalCode,
+    destinationCountry: row.destinationCountry,
+    workOrderId: row.workOrderId,
+    sourceKey: row.sourceKey,
+    rawPayload: row.rawPayload,
+    rawData: (row.rawData ?? {}) as Record<string, unknown>,
+  };
+}
+
+export async function backfillFedExShipmentTrackingFromDatabase(options: {
+  dryRun?: boolean;
+} = {}): Promise<{
+  status: 'synced' | 'empty';
+  totalRecords: number;
+  linkedRecords: number;
+  updatedRecords: number;
+  updatedShipments: number;
+  warnings: string[];
+}> {
+  const warnings: string[] = [];
+  const rows = await prisma.fedExShipmentRecord.findMany({
+    where: {
+      trackingNumber: { not: null },
+    },
+    select: {
+      sourceFileName: true,
+      sourceFilePath: true,
+      sourceFileDate: true,
+      eventTimestamp: true,
+      trackingNumber: true,
+      service: true,
+      recipientCompanyName: true,
+      recipientContactName: true,
+      destinationAddressLine1: true,
+      destinationCity: true,
+      destinationState: true,
+      destinationPostalCode: true,
+      destinationCountry: true,
+      workOrderId: true,
+      sourceKey: true,
+      rawPayload: true,
+      rawData: true,
+    },
+  });
+
+  if (rows.length === 0) {
+    return {
+      status: 'empty',
+      totalRecords: 0,
+      linkedRecords: 0,
+      updatedRecords: 0,
+      updatedShipments: 0,
+      warnings: ['No stored FedEx shipment records were found to reconcile.'],
+    };
+  }
+
+  const records = rows.map((row) => mapFedExShipmentRecordRowToInput(row));
+
+  let updatedRecords = 0;
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const record = records[index];
+    const workOrderId = await resolveFedExWorkOrderId(record);
+    record.workOrderId = workOrderId;
+
+    if (!workOrderId || workOrderId === row.workOrderId || options.dryRun) {
+      continue;
+    }
+
+    await prisma.fedExShipmentRecord.update({
+      where: { sourceKey: row.sourceKey },
+      data: { workOrderId },
+    });
+    updatedRecords += 1;
+  }
+
+  const linkedRecords = records.filter((record) => Boolean(record.workOrderId)).length;
+  const updatedShipments = options.dryRun ? 0 : await backfillShipmentTrackingNumbers(records);
+
+  if (updatedRecords === 0 && updatedShipments === 0 && linkedRecords === 0) {
+    warnings.push('Stored FedEx records were scanned, but no work order matches were found.');
+  }
+
+  return {
+    status: 'synced',
+    totalRecords: rows.length,
+    linkedRecords,
+    updatedRecords,
+    updatedShipments,
+    warnings,
+  };
 }
 
 export async function syncFedExShipmentRecords(options: {
@@ -773,12 +1665,299 @@ export async function syncFedExShipmentRecords(options: {
     }
   }
 
+  if (!options.dryRun) {
+    const shipmentTrackingUpdated = await backfillShipmentTrackingNumbers(records);
+    if (shipmentTrackingUpdated > 0) {
+      console.log(
+        `FedEx tracking backfill: ${shipmentTrackingUpdated} shipment rows updated from XML log records.`
+      );
+    }
+  }
+
   const result: FedExShipmentSyncResult = {
     status: records.length > 0 ? 'synced' : 'empty',
     sourceFileName: resolution.fileName,
     sourceFilePath: resolution.filePath,
     sourceFileDate: resolution.sourceFileDate,
     matchedBy: resolution.matchedBy,
+    totalRecords: records.length,
+    imported,
+    updated,
+    skipped,
+    records,
+    warnings,
+  };
+
+  lastFedExSync = result;
+  return result;
+}
+
+export async function syncFedExShipmentReports(options: {
+  filePath?: string;
+  dryRun?: boolean;
+} = {}): Promise<FedExShipmentSyncResult> {
+  const warnings: string[] = [];
+
+  const filePaths = options.filePath ? [options.filePath] : await resolveFedExShipmentReportFiles();
+
+  if (filePaths.length === 0) {
+    const result: FedExShipmentSyncResult = {
+      status: 'missing',
+      sourceFileName: null,
+      sourceFilePath: null,
+      sourceFileDate: null,
+      matchedBy: null,
+      totalRecords: 0,
+      imported: 0,
+      updated: 0,
+      skipped: 0,
+      records: [],
+      warnings: ['No FedEx shipment detail report files were found.'],
+    };
+    lastFedExSync = result;
+    return result;
+  }
+
+  const recordsByFile = await Promise.all(
+    filePaths.map(async (filePath) => ({
+      filePath,
+      records: await parseFedExShipmentDetailReport(filePath),
+    }))
+  );
+  const records = recordsByFile.flatMap((entry) => entry.records);
+
+  if (records.length === 0) {
+    warnings.push('The FedEx shipment detail report files were found, but no shipment rows were parsed.');
+  }
+
+  const sourceKeys = uniqueStrings(records.map((record) => record.sourceKey));
+  const existingRecords = sourceKeys.length
+    ? await prisma.fedExShipmentRecord.findMany({
+        where: { sourceKey: { in: sourceKeys } },
+        select: { sourceKey: true },
+      })
+    : [];
+  const existingKeys = new Set(existingRecords.map((record) => record.sourceKey));
+
+  let imported = 0;
+  let updated = 0;
+  const skipped = 0;
+
+  for (const record of records) {
+    const workOrderId = await resolveFedExWorkOrderId(record);
+    record.workOrderId = workOrderId;
+
+    if (options.dryRun) {
+      if (existingKeys.has(record.sourceKey)) {
+        updated += 1;
+      } else {
+        imported += 1;
+      }
+      continue;
+    }
+
+    await prisma.fedExShipmentRecord.upsert({
+      where: { sourceKey: record.sourceKey },
+      create: {
+        sourceFileName: record.sourceFileName,
+        sourceFilePath: record.sourceFilePath,
+        sourceFileDate: record.sourceFileDate,
+        eventTimestamp: record.eventTimestamp,
+        trackingNumber: record.trackingNumber,
+        service: record.service,
+        recipientCompanyName: record.recipientCompanyName,
+        recipientContactName: record.recipientContactName,
+        destinationAddressLine1: record.destinationAddressLine1,
+        destinationCity: record.destinationCity,
+        destinationState: record.destinationState,
+        destinationPostalCode: record.destinationPostalCode,
+        destinationCountry: record.destinationCountry,
+        workOrderId,
+        sourceKey: record.sourceKey,
+        rawPayload: record.rawPayload,
+        rawData: record.rawData as Prisma.InputJsonValue,
+      },
+      update: {
+        sourceFileName: record.sourceFileName,
+        sourceFilePath: record.sourceFilePath,
+        sourceFileDate: record.sourceFileDate,
+        eventTimestamp: record.eventTimestamp,
+        trackingNumber: record.trackingNumber,
+        service: record.service,
+        recipientCompanyName: record.recipientCompanyName,
+        recipientContactName: record.recipientContactName,
+        destinationAddressLine1: record.destinationAddressLine1,
+        destinationCity: record.destinationCity,
+        destinationState: record.destinationState,
+        destinationPostalCode: record.destinationPostalCode,
+        destinationCountry: record.destinationCountry,
+        workOrderId,
+        rawPayload: record.rawPayload,
+        rawData: record.rawData as Prisma.InputJsonValue,
+      },
+    });
+
+    if (existingKeys.has(record.sourceKey)) {
+      updated += 1;
+    } else {
+      imported += 1;
+    }
+  }
+
+  if (!options.dryRun) {
+    const shipmentTrackingUpdated = await backfillShipmentTrackingNumbers(records);
+    if (shipmentTrackingUpdated > 0) {
+      console.log(
+        `FedEx tracking backfill: ${shipmentTrackingUpdated} shipment rows updated from shipment detail report records.`
+      );
+    }
+  }
+
+  const result: FedExShipmentSyncResult = {
+    status: records.length > 0 ? 'synced' : 'empty',
+    sourceFileName: filePaths[0] ? path.win32.basename(filePaths[0]) : null,
+    sourceFilePath: filePaths[0] ?? null,
+    sourceFileDate: records[0]?.sourceFileDate ?? null,
+    matchedBy: null,
+    totalRecords: records.length,
+    imported,
+    updated,
+    skipped,
+    records,
+    warnings,
+  };
+
+  lastFedExSync = result;
+  return result;
+}
+
+export async function syncFedExShipmentExports(options: {
+  filePath?: string;
+  dryRun?: boolean;
+} = {}): Promise<FedExShipmentSyncResult> {
+  const warnings: string[] = [];
+
+  const filePaths = options.filePath ? [options.filePath] : await resolveFedExShipmentExportFiles();
+
+  if (filePaths.length === 0) {
+    const result: FedExShipmentSyncResult = {
+      status: 'missing',
+      sourceFileName: null,
+      sourceFilePath: null,
+      sourceFileDate: null,
+      matchedBy: null,
+      totalRecords: 0,
+      imported: 0,
+      updated: 0,
+      skipped: 0,
+      records: [],
+      warnings: ['No FedEx shipment export CSV files were found.'],
+    };
+    lastFedExSync = result;
+    return result;
+  }
+
+  const recordsByFile = await Promise.all(
+    filePaths.map(async (filePath) => ({
+      filePath,
+      records: await parseFedExShipmentExportCsv(filePath),
+    }))
+  );
+  const records = recordsByFile.flatMap((entry) => entry.records);
+
+  if (records.length === 0) {
+    warnings.push('The FedEx shipment export CSV files were found, but no shipment rows were parsed.');
+  }
+
+  const sourceKeys = uniqueStrings(records.map((record) => record.sourceKey));
+  const existingRecords = sourceKeys.length
+    ? await prisma.fedExShipmentRecord.findMany({
+        where: { sourceKey: { in: sourceKeys } },
+        select: { sourceKey: true },
+      })
+    : [];
+  const existingKeys = new Set(existingRecords.map((record) => record.sourceKey));
+
+  let imported = 0;
+  let updated = 0;
+  const skipped = 0;
+
+  for (const record of records) {
+    const workOrderId = await resolveFedExWorkOrderId(record);
+    record.workOrderId = workOrderId;
+
+    if (options.dryRun) {
+      if (existingKeys.has(record.sourceKey)) {
+        updated += 1;
+      } else {
+        imported += 1;
+      }
+      continue;
+    }
+
+    await prisma.fedExShipmentRecord.upsert({
+      where: { sourceKey: record.sourceKey },
+      create: {
+        sourceFileName: record.sourceFileName,
+        sourceFilePath: record.sourceFilePath,
+        sourceFileDate: record.sourceFileDate,
+        eventTimestamp: record.eventTimestamp,
+        trackingNumber: record.trackingNumber,
+        service: record.service,
+        recipientCompanyName: record.recipientCompanyName,
+        recipientContactName: record.recipientContactName,
+        destinationAddressLine1: record.destinationAddressLine1,
+        destinationCity: record.destinationCity,
+        destinationState: record.destinationState,
+        destinationPostalCode: record.destinationPostalCode,
+        destinationCountry: record.destinationCountry,
+        workOrderId,
+        sourceKey: record.sourceKey,
+        rawPayload: record.rawPayload,
+        rawData: record.rawData as Prisma.InputJsonValue,
+      },
+      update: {
+        sourceFileName: record.sourceFileName,
+        sourceFilePath: record.sourceFilePath,
+        sourceFileDate: record.sourceFileDate,
+        eventTimestamp: record.eventTimestamp,
+        trackingNumber: record.trackingNumber,
+        service: record.service,
+        recipientCompanyName: record.recipientCompanyName,
+        recipientContactName: record.recipientContactName,
+        destinationAddressLine1: record.destinationAddressLine1,
+        destinationCity: record.destinationCity,
+        destinationState: record.destinationState,
+        destinationPostalCode: record.destinationPostalCode,
+        destinationCountry: record.destinationCountry,
+        workOrderId,
+        rawPayload: record.rawPayload,
+        rawData: record.rawData as Prisma.InputJsonValue,
+      },
+    });
+
+    if (existingKeys.has(record.sourceKey)) {
+      updated += 1;
+    } else {
+      imported += 1;
+    }
+  }
+
+  if (!options.dryRun) {
+    const shipmentTrackingUpdated = await backfillShipmentTrackingNumbers(records);
+    if (shipmentTrackingUpdated > 0) {
+      console.log(
+        `FedEx tracking backfill: ${shipmentTrackingUpdated} shipment rows updated from shipment export CSV records.`
+      );
+    }
+  }
+
+  const result: FedExShipmentSyncResult = {
+    status: records.length > 0 ? 'synced' : 'empty',
+    sourceFileName: filePaths[0] ? path.win32.basename(filePaths[0]) : null,
+    sourceFilePath: filePaths[0] ?? null,
+    sourceFileDate: records[0]?.sourceFileDate ?? null,
+    matchedBy: null,
     totalRecords: records.length,
     imported,
     updated,
@@ -858,9 +2037,13 @@ export async function listFedExShipmentRecords(
 export function getFedExSyncStatus(): {
   lastSync: FedExShipmentSyncResult | null;
   logRoots: string[];
+  reportRoots: string[];
+  exportRoots: string[];
 } {
   return {
     lastSync: lastFedExSync,
     logRoots: getFedExLogRoots(),
+    reportRoots: getFedExReportRoots(),
+    exportRoots: getFedExExportRoots(),
   };
 }
