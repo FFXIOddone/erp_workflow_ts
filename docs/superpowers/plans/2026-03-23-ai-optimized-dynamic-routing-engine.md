@@ -88,8 +88,12 @@ Validation note: `npx tsc --noEmit -p packages/server/tsconfig.json` passes. `np
 
 ## Task 5: Web and Shop-Floor Adoption
 
-- [ ] Add web UI surfaces that show recommended routes, confidence, reasoning, and manual-override controls.
-- [ ] Update shop-floor station views only after web/API flows prove the payload shape and routing transitions are stable.
+- Web UI surfaces should show recommended routes, confidence, reasoning, and manual-override controls.
+  - [x] Add an order-detail routing recommendation card that previews the live route, confidence, and reasoning.
+  - [ ] Add manual-override controls and the route-application flow in the web UI.
+  - [ ] Update shop-floor station views only after the order-detail routing card and API payload shape are stable.
+
+Validation note: `npx tsc --noEmit -p packages/web/tsconfig.json` passes. `npm run build -w @erp/web` passes. The order detail page now renders a live routing preview card from `/api/v1/routing/preview`.
 
 ## Task 6: Feedback and Rollout
 
