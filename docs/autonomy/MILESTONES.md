@@ -45,4 +45,5 @@
 | 2026-04-01T15:42:35.722Z | SSS-API-001 | Routing engine discovery is now documented with explicit producers, consumers, inputs, outputs, ranking factors, and override rules. | docs/superpowers/plans/2026-03-23-ai-optimized-dynamic-routing-engine.md; npm run autonomy:next-task -- --json |
 | 2026-04-01T15:50:08.380Z | SSS-API-001 | Shared routing contract now exposes structured explanation factors and manual override payloads for future optimization work. | packages/shared/src/types.ts; packages/shared/src/schemas.ts; npm run build -w @erp/shared |
 | 2026-04-01T16:12:46.997Z | SSS-API-001 | Server routing engine slice complete | Typecheck, targeted vitest, and server build all passed after adding optimizeRoutingRecommendation, persistence helpers, and override recording. |
+| 2026-04-01T16:19:45.250Z | SSS-API-001 | Routing API surface is now live | The server now exposes /api/v1/routing preview, optimize, and feedback endpoints; TypeScript check and server build both pass. |
 <!-- MILESTONE_ROWS -->
