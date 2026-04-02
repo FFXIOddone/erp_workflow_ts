@@ -41,13 +41,21 @@ import { bomAutomationService } from '../services/bom-automation.js';
 import { ensureShipmentRecordForWorkOrder } from '../services/shipment-linking.js';
 import { resolveCustomerId } from '../lib/customer-matching.js';
 import { updateStreak, checkAchievements } from '../services/gamification.js';
-import { applyRoutingDefaults } from '../lib/routing-defaults.js';
+import {
+  applyRoutingDefaults,
+  buildInitialStationProgress,
+  inferRoutingSource,
+} from '../lib/routing-defaults.js';
 import { recordRoutingOutcome, type RoutingOptimizationContext } from '../services/routing-optimization.js';
 
 export const ordersRouter = Router();
 const MATERIAL_DEDUCTION_STATIONS = ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT', 'CUT', 'FABRICATION', 'INSTALLATION'];
 const AUTO_ADVANCE_FROM = ['PRODUCTION', 'SCREEN_PRINT', 'FLATBED', 'ROLL_TO_ROLL', 'DESIGN',
   'FLATBED_PRINTING', 'ROLL_TO_ROLL_PRINTING', 'PRODUCTION_ZUND', 'PRODUCTION_FINISHING', 'SHIPPING_QC'];
+
+function isDesignCompletionStation(station: string): boolean {
+  return station === PrintingMethod.DESIGN || station === PrintingMethod.DESIGN_ONLY;
+}
 
 // All routes require authentication
 ordersRouter.use(authenticate);
@@ -94,24 +102,34 @@ async function completeDesignOnlyOrderIfNeeded(orderId: string, userId: string):
     return false;
   }
 
+  const currentRouting = order.routing as PrintingMethod[];
+  const designStation = currentRouting.includes(PrintingMethod.DESIGN_ONLY)
+    ? PrintingMethod.DESIGN_ONLY
+    : PrintingMethod.DESIGN;
+  const keepOrderEntry = currentRouting.includes(PrintingMethod.ORDER_ENTRY);
+  const normalizedRouting = [
+    ...(keepOrderEntry ? [PrintingMethod.ORDER_ENTRY] : []),
+    designStation,
+  ];
+
   await prisma.$transaction(async (tx) => {
     await tx.workOrder.update({
       where: { id: orderId },
       data: {
         status: 'COMPLETED',
-        routing: [PrintingMethod.DESIGN],
+        routing: normalizedRouting,
       },
     });
 
     await tx.stationProgress.deleteMany({
       where: {
         orderId,
-        station: { not: 'DESIGN' as never },
+        station: { notIn: normalizedRouting as never[] },
       },
     });
 
     await tx.stationProgress.upsert({
-      where: { orderId_station: { orderId, station: 'DESIGN' } },
+      where: { orderId_station: { orderId, station: designStation as never } },
       update: {
         status: 'COMPLETED',
         completedAt: new Date(),
@@ -119,7 +137,7 @@ async function completeDesignOnlyOrderIfNeeded(orderId: string, userId: string):
       },
       create: {
         orderId,
-        station: 'DESIGN',
+        station: designStation as never,
         status: 'COMPLETED',
         completedAt: new Date(),
         completedById: userId,
@@ -128,8 +146,8 @@ async function completeDesignOnlyOrderIfNeeded(orderId: string, userId: string):
 
     if (
       order.status !== 'COMPLETED' ||
-      (order.routing as string[]).length !== 1 ||
-      (order.routing as string[])[0] !== PrintingMethod.DESIGN
+      (order.routing as string[]).length !== normalizedRouting.length ||
+      !(order.routing as string[]).every((station, index) => station === normalizedRouting[index])
     ) {
       await tx.workEvent.create({
         data: {
@@ -140,7 +158,7 @@ async function completeDesignOnlyOrderIfNeeded(orderId: string, userId: string):
           details: {
             status: 'COMPLETED',
             reason: 'DESIGN_ONLY',
-            normalizedRouting: [PrintingMethod.DESIGN],
+            normalizedRouting,
           },
         },
       });
@@ -809,7 +827,7 @@ ordersRouter.post('/bulk/station-status', async (req: AuthRequest, res: Response
   });
 
   const designOnlyCompletedOrderIds = new Set<string>();
-  if (status === 'COMPLETED' && station === PrintingMethod.DESIGN) {
+  if (status === 'COMPLETED' && isDesignCompletionStation(station)) {
     for (const order of orders) {
       if (await completeDesignOnlyOrderIfNeeded(order.id, userId)) {
         designOnlyCompletedOrderIds.add(order.id);
@@ -893,7 +911,7 @@ ordersRouter.post('/bulk/multi-station-status', async (req: AuthRequest, res: Re
       totalUpdated += orders.length;
       for (const order of orders) {
         allBroadcasts.push({ orderId: order.id, station, status });
-        if (station === PrintingMethod.DESIGN && status === 'COMPLETED') {
+        if (isDesignCompletionStation(station) && status === 'COMPLETED') {
           designCompletionCandidates.add(order.id);
         }
         if (status === 'COMPLETED' && MATERIAL_DEDUCTION_STATIONS.includes(station)) {
@@ -1207,10 +1225,7 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
         })),
       },
       stationProgress: {
-        create: routing.map((station) => ({
-          station,
-          status: 'NOT_STARTED',
-        })),
+        create: buildInitialStationProgress(routing),
       },
       events: {
         create: {
@@ -1643,6 +1658,7 @@ ordersRouter.post('/:id/routing', async (req: AuthRequest, res: Response) => {
       routing: existing.routing as PrintingMethod[],
     },
     currentRoute: existing.routing as PrintingMethod[],
+    source: inferRoutingSource(existing.orderNumber, existing.description),
     now: new Date(),
   };
 
@@ -1656,7 +1672,9 @@ ordersRouter.post('/:id/routing', async (req: AuthRequest, res: Response) => {
       data: {
         routing,
         stationProgress: {
-          create: routing.map((station) => ({ station, status: 'NOT_STARTED' })),
+          create: buildInitialStationProgress(routing, {
+            source: inferRoutingSource(existing.orderNumber, existing.description),
+          }),
         },
         events: {
           create: {
@@ -1768,8 +1786,9 @@ ordersRouter.post('/:id/stations/:station/complete', async (req: AuthRequest, re
   await deductMaterialsOnStationCompleteIfNeeded(req.params.id, station, userId);
 
   broadcast({ type: 'STATION_UPDATED', payload: { orderId: req.params.id, station, status: 'COMPLETED' }, timestamp: new Date() });
-  const designOnlyCompleted =
-    station === 'DESIGN' ? await completeDesignOnlyOrderIfNeeded(req.params.id, userId) : false;
+  const designOnlyCompleted = isDesignCompletionStation(station)
+    ? await completeDesignOnlyOrderIfNeeded(req.params.id, userId)
+    : false;
 
   // Sub-station auto-completion: if a sub-station completes, check if parent should auto-complete
   try {

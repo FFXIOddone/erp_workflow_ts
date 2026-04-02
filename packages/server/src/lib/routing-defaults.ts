@@ -2,21 +2,46 @@
  * Routing defaults logic for work orders.
  *
  * Rules:
- * 1. If any PRINTING station exists (ROLL_TO_ROLL, FLATBED, SCREEN_PRINT) ->
- *    auto-add PRODUCTION and SHIPPING_RECEIVING + their sub-stations
- * 2. If description contains "(INSTALL)" -> auto-add INSTALLATION
- * 3. If description contains "(OUTSOURCED)" -> auto-add ORDER_ENTRY
- * 4. If needsProof is true -> auto-add DESIGN
+ * 1. Order Entry is included for all non-WooCommerce orders.
+ * 2. If any PRINTING station exists (ROLL_TO_ROLL, FLATBED, SCREEN_PRINT) ->
+ *    auto-add PRODUCTION and SHIPPING_RECEIVING + their sub-stations.
+ * 3. If description contains "(INSTALL)" -> auto-add INSTALLATION.
+ * 4. If description contains "(OUTSOURCED)" or the order is design only ->
+ *    keep the route in the design-only lane.
+ * 5. If needsProof is true -> auto-add the design proofing chain.
  *
  * The user can always remove stations later - it's easier to remove from a
  * few orders than to add routes to every single one.
  */
-import { PrintingMethod, inferRoutingFromOrderDetails, isDesignOnlyOrder } from '@erp/shared';
+import { PrintingMethod, StationStatus, inferRoutingFromOrderDetails, isDesignOnlyOrder } from '@erp/shared';
+
+export type RoutingSource = 'manual' | 'production-list' | 'spreadsheet' | 'qb' | 'recurring' | 'woocommerce';
+
+export interface RoutingDefaultsOptions {
+  description?: string;
+  needsProof?: boolean;
+  source?: RoutingSource;
+}
+
+export interface InitialStationProgressEntry {
+  station: PrintingMethod;
+  status: StationStatus;
+  startedAt?: Date;
+  completedAt?: Date | null;
+}
 
 const PRINTING_STATIONS = new Set<PrintingMethod>([
   PrintingMethod.ROLL_TO_ROLL,
   PrintingMethod.FLATBED,
   PrintingMethod.SCREEN_PRINT,
+]);
+
+const DESIGN_STATIONS = new Set<PrintingMethod>([
+  PrintingMethod.DESIGN_ONLY,
+  PrintingMethod.DESIGN,
+  PrintingMethod.DESIGN_PROOF,
+  PrintingMethod.DESIGN_APPROVAL,
+  PrintingMethod.DESIGN_PRINT_READY,
 ]);
 
 /**
@@ -25,8 +50,8 @@ const PRINTING_STATIONS = new Set<PrintingMethod>([
  */
 const STATION_ORDER: PrintingMethod[] = [
   PrintingMethod.SALES,
-  PrintingMethod.DESIGN_ONLY,
   PrintingMethod.ORDER_ENTRY,
+  PrintingMethod.DESIGN_ONLY,
   PrintingMethod.DESIGN,
   PrintingMethod.DESIGN_PROOF,
   PrintingMethod.DESIGN_APPROVAL,
@@ -61,20 +86,33 @@ const STATION_ORDER: PrintingMethod[] = [
  */
 export function applyRoutingDefaults(
   routing: PrintingMethod[],
-  options?: {
-    description?: string;
-    needsProof?: boolean;
-  }
+  options?: RoutingDefaultsOptions
 ): PrintingMethod[] {
-  const routingSet = new Set(routing);
+  const source = options?.source ?? 'manual';
+  const includeOrderEntry = source !== 'woocommerce';
   const description = options?.description ?? '';
   const descUpper = description.toUpperCase();
+  const inferredRouting = inferRoutingFromDescription(description);
+  const routingSet = new Set<PrintingMethod>([...routing, ...inferredRouting]);
+  const hasExplicitDesign = Array.from(DESIGN_STATIONS).some((station) => routingSet.has(station));
+  const hasPrinting = Array.from(PRINTING_STATIONS).some((station) => routingSet.has(station));
+  const hasInstall = routingSet.has(PrintingMethod.INSTALLATION);
+  const hasProductionWork = hasPrinting || hasInstall;
 
   if (isDesignOnlyOrder({ description, routing })) {
-    return [PrintingMethod.DESIGN];
+    return includeOrderEntry
+      ? [PrintingMethod.ORDER_ENTRY, PrintingMethod.DESIGN_ONLY]
+      : [PrintingMethod.DESIGN_ONLY];
   }
 
-  const hasPrinting = routing.some((station) => PRINTING_STATIONS.has(station));
+  if (includeOrderEntry) {
+    routingSet.add(PrintingMethod.ORDER_ENTRY);
+  }
+
+  if (hasProductionWork && !hasExplicitDesign) {
+    routingSet.add(PrintingMethod.DESIGN);
+  }
+
   if (hasPrinting) {
     routingSet.add(PrintingMethod.PRODUCTION);
     routingSet.add(PrintingMethod.PRODUCTION_ZUND);
@@ -82,6 +120,8 @@ export function applyRoutingDefaults(
     routingSet.add(PrintingMethod.SHIPPING_RECEIVING);
     routingSet.add(PrintingMethod.SHIPPING_QC);
     routingSet.add(PrintingMethod.SHIPPING_PACKAGING);
+    routingSet.add(PrintingMethod.SHIPPING_SHIPMENT);
+    routingSet.add(PrintingMethod.SHIPPING_INSTALL_READY);
 
     if (routingSet.has(PrintingMethod.FLATBED)) {
       routingSet.add(PrintingMethod.FLATBED_PRINTING);
@@ -89,18 +129,41 @@ export function applyRoutingDefaults(
     if (routingSet.has(PrintingMethod.ROLL_TO_ROLL)) {
       routingSet.add(PrintingMethod.ROLL_TO_ROLL_PRINTING);
     }
+    if (routingSet.has(PrintingMethod.SCREEN_PRINT)) {
+      routingSet.add(PrintingMethod.SCREEN_PRINT_PRINTING);
+      routingSet.add(PrintingMethod.SCREEN_PRINT_ASSEMBLY);
+    }
   }
 
-  if (descUpper.includes('(INSTALL)')) {
-    routingSet.add(PrintingMethod.INSTALLATION);
-  }
-
-  if (descUpper.includes('(OUTSOURCED)')) {
-    routingSet.add(PrintingMethod.ORDER_ENTRY);
+  if (hasInstall) {
+    routingSet.add(PrintingMethod.SHIPPING_RECEIVING);
+    routingSet.add(PrintingMethod.SHIPPING_QC);
+    routingSet.add(PrintingMethod.SHIPPING_PACKAGING);
+    routingSet.add(PrintingMethod.SHIPPING_SHIPMENT);
+    routingSet.add(PrintingMethod.SHIPPING_INSTALL_READY);
+    routingSet.add(PrintingMethod.INSTALLATION_REMOTE);
+    routingSet.add(PrintingMethod.INSTALLATION_INHOUSE);
   }
 
   if (options?.needsProof) {
     routingSet.add(PrintingMethod.DESIGN);
+    routingSet.add(PrintingMethod.DESIGN_PROOF);
+  }
+
+  if (routingSet.has(PrintingMethod.DESIGN) && (hasExplicitDesign || options?.needsProof)) {
+    routingSet.add(PrintingMethod.DESIGN_PROOF);
+    routingSet.add(PrintingMethod.DESIGN_APPROVAL);
+    routingSet.add(PrintingMethod.DESIGN_PRINT_READY);
+  }
+
+  if (descUpper.includes('(INSTALL)')) {
+    routingSet.add(PrintingMethod.INSTALLATION);
+    routingSet.add(PrintingMethod.INSTALLATION_REMOTE);
+    routingSet.add(PrintingMethod.INSTALLATION_INHOUSE);
+  }
+
+  if (descUpper.includes('(OUTSOURCED)')) {
+    routingSet.add(PrintingMethod.ORDER_ENTRY);
   }
 
   return STATION_ORDER.filter((station) => routingSet.has(station));
@@ -125,6 +188,7 @@ export function resolveImportedRouting(options: {
   description?: string | null;
   section?: string | null;
   needsProof?: boolean;
+  source?: RoutingSource;
 }): PrintingMethod[] {
   const description = options.description ?? '';
   const sectionUpper = (options.section ?? '').toUpperCase();
@@ -134,7 +198,9 @@ export function resolveImportedRouting(options: {
     sectionUpper.includes('DESIGN ONLY');
 
   if (designOnly) {
-    return [PrintingMethod.DESIGN];
+    return options.source === 'woocommerce'
+      ? [PrintingMethod.DESIGN_ONLY]
+      : [PrintingMethod.ORDER_ENTRY, PrintingMethod.DESIGN_ONLY];
   }
 
   inferRoutingFromDescription(description).forEach((station) => routingSet.add(station));
@@ -155,5 +221,64 @@ export function resolveImportedRouting(options: {
   return applyRoutingDefaults(Array.from(routingSet), {
     description,
     needsProof: options.needsProof || sectionUpper.includes('DESIGN'),
+    source: options.source,
+  });
+}
+
+export function inferRoutingSource(orderNumber?: string | null, description?: string | null): RoutingSource {
+  const text = `${orderNumber ?? ''} ${description ?? ''}`.toUpperCase();
+
+  if (
+    text.startsWith('WOO-') ||
+    text.includes('WOOCOMMERCE') ||
+    text.includes('SHOP.WILDE-SIGNS.COM') ||
+    text.includes('ONLINE ORDER')
+  ) {
+    return 'woocommerce';
+  }
+
+  if (text.includes('RECURRING ORDER') || text.includes('AUTO-GENERATED FROM RECURRING')) {
+    return 'recurring';
+  }
+
+  if (text.includes('PRODUCTION LIST')) {
+    return 'production-list';
+  }
+
+  if (text.includes('SPREADSHEET')) {
+    return 'spreadsheet';
+  }
+
+  if (text.includes('QUICKBOOKS') || text.includes('QB ')) {
+    return 'qb';
+  }
+
+  return 'manual';
+}
+
+export function buildInitialStationProgress(
+  routing: readonly PrintingMethod[],
+  options?: {
+    source?: RoutingSource;
+    entryTimestamp?: Date;
+  }
+): InitialStationProgressEntry[] {
+  const source = options?.source ?? 'manual';
+  const entryTimestamp = options?.entryTimestamp ?? new Date();
+
+  return routing.map((station) => {
+    if (station === PrintingMethod.ORDER_ENTRY && source !== 'woocommerce') {
+      return {
+        station,
+        status: StationStatus.COMPLETED,
+        startedAt: entryTimestamp,
+        completedAt: entryTimestamp,
+      };
+    }
+
+    return {
+      station,
+      status: StationStatus.NOT_STARTED,
+    };
   });
 }

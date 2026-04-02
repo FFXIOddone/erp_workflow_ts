@@ -17,7 +17,7 @@ import {
   type WorkOrder,
 } from '@erp/shared';
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { applyRoutingDefaults } from '../lib/routing-defaults.js';
+import { applyRoutingDefaults, inferRoutingSource, type RoutingSource } from '../lib/routing-defaults.js';
 
 export type RoutingStationIntelligence = {
   station: PrintingMethod;
@@ -59,6 +59,7 @@ export interface RoutingOptimizationContext {
   preferredStations?: readonly PrintingMethod[];
   excludedStations?: readonly PrintingMethod[];
   mustIncludeStations?: readonly PrintingMethod[];
+  source?: RoutingSource;
   now?: Date;
 }
 
@@ -242,14 +243,22 @@ function routesMatch(left: readonly PrintingMethod[], right: readonly PrintingMe
   return left.length === right.length && left.every((station, index) => station === right[index]);
 }
 
-function applyRouteDefaults(route: readonly PrintingMethod[], description: string): PrintingMethod[] {
+function applyRouteDefaults(
+  route: readonly PrintingMethod[],
+  description: string,
+  source?: RoutingSource
+): PrintingMethod[] {
   const baseRoute = route.length > 0 ? route : [DEFAULT_ROUTE_STATION];
-  return applyRoutingDefaults([...baseRoute], { description });
+  return applyRoutingDefaults([...baseRoute], { description, source });
 }
 
-function ensureRoute(route: readonly PrintingMethod[] | undefined | null, description: string): PrintingMethod[] {
+function ensureRoute(
+  route: readonly PrintingMethod[] | undefined | null,
+  description: string,
+  source?: RoutingSource
+): PrintingMethod[] {
   const normalized = normalizeRoute(route);
-  return applyRouteDefaults(normalized, description);
+  return applyRouteDefaults(normalized, description, source);
 }
 
 function prioritizeStations(
@@ -772,7 +781,7 @@ function scoreRouteCandidate(
 ): ScoredRoute {
   const stationMap = getStationIntelligenceMap(context.stationIntelligence);
   const now = context.now ?? new Date();
-  const normalizedRoute = applyRouteDefaults(route, context.workOrder.description ?? '');
+  const normalizedRoute = applyRouteDefaults(route, context.workOrder.description ?? '', context.source);
   const explanationFactors: RoutingExplanationFactor[] = [];
   const warnings = new Set<string>();
   const appliedRuleCodes: string[] = [];
@@ -1061,7 +1070,7 @@ function deriveCandidateRoutes(context: RoutingOptimizationContext): PrintingMet
   const baseRoute = normalizeRoute(context.currentRoute?.length ? context.currentRoute : context.workOrder.routing);
 
   const add = (route: readonly PrintingMethod[] | undefined | null): void => {
-    const normalized = ensureRoute(route, description);
+    const normalized = ensureRoute(route, description, context.source);
     if (normalized.length === 0) {
       return;
     }

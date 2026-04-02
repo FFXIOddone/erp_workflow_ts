@@ -21,7 +21,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import { PrintingMethod } from '@erp/shared';
-import { applyRoutingDefaults } from '../lib/routing-defaults.js';
+import { applyRoutingDefaults, buildInitialStationProgress } from '../lib/routing-defaults.js';
 
 const prisma = new PrismaClient();
 
@@ -300,7 +300,7 @@ class WooCommerceService {
 
           // Apply routing defaults (auto-add PRODUCTION, SHIPPING_RECEIVING, etc.)
           const description = `Online order from shop.wilde-signs.com - Order #${order.number}`;
-          routing = applyRoutingDefaults(routing, { description });
+          routing = applyRoutingDefaults(routing, { description, source: 'woocommerce' });
 
           // Create customer name
           const customerName = order.billing.company || 
@@ -331,10 +331,7 @@ class WooCommerceService {
                 })),
               },
               stationProgress: {
-                create: routing.map((station) => ({
-                  station,
-                  status: 'NOT_STARTED',
-                })),
+                create: buildInitialStationProgress(routing, { source: 'woocommerce' }),
               },
               events: {
                 create: {

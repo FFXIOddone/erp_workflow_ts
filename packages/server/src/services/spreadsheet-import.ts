@@ -43,6 +43,11 @@ const PRINTING_STATIONS = new Set<PrintingMethod>([
   PrintingMethod.SCREEN_PRINT,
 ]);
 
+const DESIGN_STATIONS = new Set<PrintingMethod>([
+  PrintingMethod.DESIGN,
+  PrintingMethod.DESIGN_ONLY,
+]);
+
 // ─── Section/header detection ──────────────────────────────────
 const SECTION_HEADERS = [
   'MONTHLY',
@@ -151,7 +156,12 @@ function resolveSpreadsheetRowRouting(row: SpreadsheetRow): PrintingMethod[] {
     description: row.description,
     section: row.section,
     needsProof: Boolean(row.proofedDate || row.approvedDate || row.printSetupDate),
+    source: 'spreadsheet',
   });
+}
+
+function isDesignCompletionStation(station: PrintingMethod): boolean {
+  return DESIGN_STATIONS.has(station);
 }
 
 function getImportedStationStatus(
@@ -159,6 +169,10 @@ function getImportedStationStatus(
   station: PrintingMethod,
   overallStatus: string,
 ): 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' {
+  if (station === PrintingMethod.ORDER_ENTRY) {
+    return 'COMPLETED';
+  }
+
   if (overallStatus === 'COMPLETED') {
     return 'COMPLETED';
   }
@@ -167,11 +181,45 @@ function getImportedStationStatus(
     return 'IN_PROGRESS';
   }
 
-  if ((row.proofedDate || row.approvedDate || row.printSetupDate) && station === PrintingMethod.DESIGN) {
+  if ((row.proofedDate || row.approvedDate || row.printSetupDate) && isDesignCompletionStation(station)) {
     return 'COMPLETED';
   }
 
   return 'NOT_STARTED';
+}
+
+function buildImportedStationProgress(
+  row: SpreadsheetRow,
+  routing: readonly PrintingMethod[],
+  overallStatus: string
+): Array<{
+  station: PrintingMethod;
+  status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
+  startedAt?: Date;
+  completedAt?: Date | null;
+}> {
+  const entryTimestamp = row.createdDate || new Date();
+
+  return routing.map((station) => {
+    const status = getImportedStationStatus(row, station, overallStatus);
+    const entry: {
+      station: PrintingMethod;
+      status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
+      startedAt?: Date;
+      completedAt?: Date | null;
+    } = {
+      station,
+      status,
+    };
+
+    if (station === PrintingMethod.ORDER_ENTRY) {
+      entry.startedAt = entryTimestamp;
+      entry.completedAt = entryTimestamp;
+      entry.status = 'COMPLETED';
+    }
+
+    return entry;
+  });
 }
 
 // ─── WO number validation ──────────────────────────────────────
@@ -447,10 +495,12 @@ export async function importSpreadsheetOrders(
           const newStations = (updateData.routing as PrintingMethod[]).filter(s => !existingStations.has(s));
           if (newStations.length > 0) {
             await prisma.stationProgress.createMany({
-              data: newStations.map((station: PrintingMethod) => ({
+              data: buildImportedStationProgress(row, newStations, spreadsheetStatus).map((entry) => ({
                 orderId: existing.id,
-                station,
-                status: getImportedStationStatus(row, station, spreadsheetStatus),
+                station: entry.station,
+                status: entry.status,
+                ...(entry.startedAt ? { startedAt: entry.startedAt } : {}),
+                ...(entry.completedAt ? { completedAt: entry.completedAt } : {}),
               })),
             });
           }
@@ -511,10 +561,7 @@ export async function importSpreadsheetOrders(
           createdAt: row.createdDate || new Date(),
           ...(matchedCompany ? { companyId: matchedCompany.id } : {}),
           stationProgress: {
-            create: resolvedRouting.map((station) => ({
-              station,
-              status: getImportedStationStatus(row, station, status),
-            })),
+            create: buildImportedStationProgress(row, resolvedRouting, status),
           },
           events: {
             create: {

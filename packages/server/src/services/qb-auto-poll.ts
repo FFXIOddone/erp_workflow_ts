@@ -8,7 +8,7 @@ import { prisma } from '../db/client.js';
 import { PrintingMethod } from '@erp/shared';
 import * as quickbooks from './quickbooks.js';
 import { resolveCustomerId } from '../lib/customer-matching.js';
-import { applyRoutingDefaults } from '../lib/routing-defaults.js';
+import { applyRoutingDefaults, buildInitialStationProgress } from '../lib/routing-defaults.js';
 import { ensureOrderFolder } from '../lib/folder-utils.js';
 import { broadcast } from '../ws/server.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
@@ -273,6 +273,7 @@ async function processQBOrder(params: ProcessQBOrderParams): Promise<boolean> {
   const defaultRouting = [PrintingMethod.DESIGN, PrintingMethod.ROLL_TO_ROLL];
   const routing = applyRoutingDefaults(defaultRouting, {
     description,
+    source: 'qb',
     needsProof: true, // Almost all new orders need proofing
   });
 
@@ -298,10 +299,7 @@ async function processQBOrder(params: ProcessQBOrderParams): Promise<boolean> {
       poNumber: poNumber || lineItemData?.poNumber || undefined,
       // Create station progress entries
       stationProgress: {
-        create: routing.map(station => ({
-          station,
-          status: 'NOT_STARTED',
-        })),
+        create: buildInitialStationProgress(routing, { source: 'qb' }),
       },
       // Create line items from QB data
       lineItems: lineItemData?.lineItems ? {

@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { prisma } from '../db/client.js';
 import {
+  PrintingMethod,
   ProductionListSection,
   ProductionListStyle,
   ProductionListPrintStation,
@@ -29,7 +30,9 @@ import {
   ERP_STATUS_TO_SECTION,
   PRINT_STATION_TO_ERP_METHOD,
   ERP_METHOD_TO_PRINT_STATION,
+  isDesignOnlyOrder,
 } from '@erp/shared';
+import { applyRoutingDefaults, buildInitialStationProgress } from '../lib/routing-defaults.js';
 import type {
   ProductionListRow,
   ProductionListMapping,
@@ -252,7 +255,10 @@ export async function compareWithERP(
     // Compare status mapping — use same smart logic as getERPAsProductionListRows
     let expectedSection = ERP_STATUS_TO_SECTION[erpOrder.status] || ProductionListSection.DESIGN_PRODUCTION;
     const custLowerCmp = erpOrder.customerName.toLowerCase();
-    const isDesignOnlyCmp = erpOrder.description.includes('(DESIGN ONLY)') || (erpOrder.routing?.length > 0 && erpOrder.routing.every((r: string) => r === 'DESIGN'));
+    const isDesignOnlyCmp = isDesignOnlyOrder({
+      description: erpOrder.description,
+      routing: erpOrder.routing as PrintingMethod[],
+    });
     const isOutsourcedCmp = erpOrder.description.includes('(OUTSOURCED)');
     const isHHGlobalCmp = custLowerCmp.includes('hh global') || custLowerCmp.includes('innerworkings') || custLowerCmp.includes('harmony');
     if (isDesignOnlyCmp) expectedSection = ProductionListSection.DESIGN_ONLY;
@@ -501,13 +507,16 @@ export async function syncFromSpreadsheet(
       if (!options.dryRun) {
         try {
           const status = SECTION_TO_ERP_STATUS[row.section as ProductionListSection] || 'PENDING';
-          const routing = parseRoutingFromPrintStatus(row.printStatus);
+          const desc = row.description.replace(/\s*\(\d{1,2}\/\d{1,2}\/\d{2,4}\)\s*$/, '');
+          const syncStartedAt = result.startedAt instanceof Date ? result.startedAt : new Date(result.startedAt);
+          const routing = applyRoutingDefaults(parseRoutingFromPrintStatus(row.printStatus), {
+            description: desc,
+            source: 'production-list',
+          });
           const matchedCompany = companyMap.get(row.customerName.toLowerCase());
 
           // Determine brand from WO# length (4-digit = Port City, 5-digit = Wilde)
           const brand = row.orderNumber.length === 4 ? 'PORT_CITY_SIGNS' : 'WILDE_SIGNS';
-
-          const desc = row.description.replace(/\s*\(\d{1,2}\/\d{1,2}\/\d{2,4}\)\s*$/, '');
 
           const newOrder = await prisma.workOrder.create({
             data: {
@@ -523,12 +532,23 @@ export async function syncFromSpreadsheet(
               createdById: userId,
               isTempOrder: false,
               ...(matchedCompany ? { companyId: matchedCompany.id } : {}),
-              stationProgress: routing.length > 0 ? {
-                create: routing.map(station => ({
-                  station: station as any,
-                  status: (status === 'COMPLETED' ? 'COMPLETED' : 'NOT_STARTED') as any,
-                })),
-              } : undefined,
+              stationProgress: routing.length > 0
+                ? {
+                    create: buildInitialStationProgress(routing, {
+                      source: 'production-list',
+                      entryTimestamp: syncStartedAt,
+                    }).map((entry) => ({
+                      ...entry,
+                      status: status === 'COMPLETED' ? 'COMPLETED' : entry.station === PrintingMethod.ORDER_ENTRY ? 'COMPLETED' : 'NOT_STARTED',
+                      startedAt: status === 'COMPLETED' ? syncStartedAt : entry.startedAt,
+                      completedAt: status === 'COMPLETED'
+                        ? syncStartedAt
+                        : entry.station === PrintingMethod.ORDER_ENTRY
+                          ? syncStartedAt
+                          : entry.completedAt,
+                    })),
+                  }
+                : undefined,
               events: {
                 create: {
                   eventType: 'CREATED',
@@ -630,7 +650,10 @@ export async function getProductionListSummary(): Promise<ProductionListSummary>
 
     const custLower = order.customerName.toLowerCase();
     const isHHGlobal = custLower.includes('hh global') || custLower.includes('innerworkings') || custLower.includes('harmony');
-    const isDesignOnly = order.description.includes('(DESIGN ONLY)') || (order.routing.length > 0 && order.routing.every((r: string) => r === 'DESIGN'));
+    const isDesignOnly = isDesignOnlyOrder({
+      description: order.description,
+      routing: order.routing as PrintingMethod[],
+    });
     const isOutsourced = order.subcontractJobs.length > 0 || order.description.includes('(OUTSOURCED)');
 
     if (isDesignOnly) {
@@ -743,7 +766,10 @@ export async function getERPAsProductionListRows(
 
     const custLower = order.customerName.toLowerCase();
     const isHHGlobal = custLower.includes('hh global') || custLower.includes('innerworkings') || custLower.includes('harmony');
-    const isDesignOnly = order.description.includes('(DESIGN ONLY)') || (order.routing.length > 0 && order.routing.every((r: string) => r === 'DESIGN'));
+    const isDesignOnly = isDesignOnlyOrder({
+      description: order.description,
+      routing: order.routing as PrintingMethod[],
+    });
     const isOutsourced = order.subcontractJobs.length > 0 || order.description.includes('(OUTSOURCED)');
 
     // Category-based overrides (highest priority first, except CUSTOMER date override)
@@ -929,15 +955,15 @@ function buildPrintStatusFromERP(stationProgress: Array<{ station: string; statu
 /**
  * Parse routing stations from print status text (e.g., "RR FB" → PrintingMethod[])
  */
-function parseRoutingFromPrintStatus(printStatus: string | null): string[] {
+function parseRoutingFromPrintStatus(printStatus: string | null): PrintingMethod[] {
   if (!printStatus) return [];
-  const methods: string[] = [];
+  const methods: PrintingMethod[] = [];
   const upper = printStatus.toUpperCase().trim();
   const tokens = upper.split(/\s+/);
 
   for (const token of tokens) {
     const method = PRINT_STATION_TO_ERP_METHOD[token as ProductionListPrintStation];
-    if (method) methods.push(method);
+    if (method) methods.push(method as PrintingMethod);
   }
 
   return methods;

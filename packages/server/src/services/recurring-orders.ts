@@ -8,7 +8,8 @@
 
 import { prisma } from '../db/client.js';
 import { broadcast } from '../ws/server.js';
-import { PrintingMethod } from '@prisma/client';
+import { PrintingMethod } from '@erp/shared';
+import { applyRoutingDefaults, buildInitialStationProgress } from '../lib/routing-defaults.js';
 
 // Result of a processing run
 export interface RecurringOrderProcessResult {
@@ -176,7 +177,10 @@ async function generateOrderFromRecurring(recurringOrderId: string): Promise<{
     }
 
     // Get routing from template or default
-    const routing: PrintingMethod[] = recurring.template?.defaultRouting || [];
+    const routing: PrintingMethod[] = applyRoutingDefaults((recurring.template?.defaultRouting || []) as PrintingMethod[], {
+      description: `${recurring.name} - Auto-generated from recurring order`,
+      source: 'recurring',
+    });
 
     // Create the work order
     const workOrder = await prisma.workOrder.create({
@@ -203,10 +207,7 @@ async function generateOrderFromRecurring(recurringOrderId: string): Promise<{
           })),
         },
         stationProgress: {
-          create: routing.map((station) => ({
-            station,
-            status: 'NOT_STARTED',
-          })),
+          create: buildInitialStationProgress(routing, { source: 'recurring' }),
         },
       },
       include: {

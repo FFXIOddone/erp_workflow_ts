@@ -30,6 +30,28 @@ export const routingRouter = Router();
 routingRouter.use(authenticate);
 
 const PRINTING_METHOD_VALUES = new Set<PrintingMethod>(Object.values(PrintingMethod));
+const STATION_INTELLIGENCE_BASELINE = Object.values(PrintingMethod).map((station) => ({
+  station: station as PrintingMethod,
+}));
+
+let stationIntelligenceBaselinePromise: Promise<void> | null = null;
+
+async function ensureStationIntelligenceBaseline(): Promise<void> {
+  if (!stationIntelligenceBaselinePromise) {
+    stationIntelligenceBaselinePromise = prisma.stationIntelligence
+      .createMany({
+        data: STATION_INTELLIGENCE_BASELINE,
+        skipDuplicates: true,
+      })
+      .then(() => undefined)
+      .catch((error) => {
+        stationIntelligenceBaselinePromise = null;
+        throw error;
+      });
+  }
+
+  return stationIntelligenceBaselinePromise;
+}
 
 interface WorkOrderRow {
   id: string;
@@ -197,6 +219,8 @@ async function recordRoutingActivity(params: {
 }
 
 async function loadRoutingIntelligenceDashboard(): Promise<RoutingIntelligenceDashboard> {
+  await ensureStationIntelligenceBaseline();
+
   const [stationRows, predictionRows, decisionRows] = await Promise.all([
     prisma.stationIntelligence.findMany({
       orderBy: { station: 'asc' },
@@ -263,6 +287,8 @@ async function loadRoutingIntelligenceDashboard(): Promise<RoutingIntelligenceDa
 async function loadRoutingOptimizationContext(
   input: ReturnType<typeof RequestRoutingOptimizationSchema.parse>
 ): Promise<RoutingOptimizationContext> {
+  await ensureStationIntelligenceBaseline();
+
   const workOrder = (await prisma.workOrder.findUnique({
     where: { id: input.workOrderId },
     select: {
