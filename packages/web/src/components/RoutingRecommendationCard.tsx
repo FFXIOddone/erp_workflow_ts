@@ -1,5 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Brain, RefreshCw, Route, Sparkles, AlertTriangle, Clock3 } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
+import { ArrowRight, Brain, RefreshCw, Route, Sparkles, AlertTriangle, Clock3, Pencil } from 'lucide-react';
 import { api } from '../lib/api';
 import { Badge } from './Badge';
 import { PrintingMethod, STATION_DISPLAY_NAMES, type RoutingSuggestion } from '@erp/shared';
@@ -65,6 +66,7 @@ export function RoutingRecommendationCard({
   notes,
   currentRoute,
 }: RoutingRecommendationCardProps) {
+  const queryClient = useQueryClient();
   const queryKey = [
     'routing-preview',
     workOrderId,
@@ -86,6 +88,24 @@ export function RoutingRecommendationCard({
       return response.data.data as RoutingPreviewResponse;
     },
     staleTime: 30_000,
+  });
+
+  const applyRoutingMutation = useMutation({
+    mutationFn: async (route: string[]) => {
+      await api.post(`/orders/${workOrderId}/routing`, { routing: route });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['orders', workOrderId] }),
+        queryClient.invalidateQueries({ queryKey: ['orders'] }),
+        queryClient.invalidateQueries({ queryKey: ['routing'] }),
+        queryClient.invalidateQueries({ queryKey: ['routing-preview'] }),
+      ]);
+      toast.success('Routing updated');
+    },
+    onError: () => {
+      toast.error('Failed to update routing');
+    },
   });
 
   const topRoute = data?.rankedRoutes?.[0];
@@ -228,12 +248,29 @@ export function RoutingRecommendationCard({
                       {route.reasoning[0] && (
                         <p className="text-xs text-gray-500">{route.reasoning[0]}</p>
                       )}
+                      {index === 0 && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                          <span>Current route:</span>
+                          <span className="font-medium text-gray-700">
+                            {currentRoute.length > 0 ? formatRoute(currentRoute) : 'Not set'}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                    <div className="text-right shrink-0">
+                    <div className="flex flex-col items-end gap-2 shrink-0">
                       <div className="text-sm font-semibold text-gray-900">
                         {Math.round(route.score)}
                       </div>
                       <div className="text-xs text-gray-500">{formatDuration(route.estimatedDuration)}</div>
+                      <button
+                        type="button"
+                        onClick={() => applyRoutingMutation.mutate(route.route)}
+                        disabled={applyRoutingMutation.isPending}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 rounded-lg border border-primary-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        {index === 0 ? 'Apply' : 'Use route'}
+                      </button>
                     </div>
                   </div>
                   {route.warnings.length > 0 && (

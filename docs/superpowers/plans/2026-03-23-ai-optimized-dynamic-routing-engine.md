@@ -90,10 +90,10 @@ Validation note: `npx tsc --noEmit -p packages/server/tsconfig.json` passes. `np
 
 - Web UI surfaces should show recommended routes, confidence, reasoning, and manual-override controls.
   - [x] Add an order-detail routing recommendation card that previews the live route, confidence, and reasoning.
-  - [ ] Add manual-override controls and the route-application flow in the web UI.
+  - [x] Add manual-override controls and the route-application flow in the web UI.
   - [ ] Update shop-floor station views only after the order-detail routing card and API payload shape are stable.
 
-Validation note: `npx tsc --noEmit -p packages/web/tsconfig.json` passes. `npm run build -w @erp/web` passes. The order detail page now renders a live routing preview card from `/api/v1/routing/preview`.
+Validation note: `npx tsc --noEmit -p packages/web/tsconfig.json` passes. `npm run build -w @erp/web` passes. The order detail page now renders a live routing preview card from `/api/v1/routing/preview`, and the top route can be applied back through the order routing endpoint.
 
 ## Task 6: Feedback and Rollout
 
