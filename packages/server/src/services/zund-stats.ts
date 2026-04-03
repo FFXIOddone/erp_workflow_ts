@@ -97,6 +97,10 @@ const REFRESH_INTERVAL_MS = 30000; // 30 seconds
 
 // Last refresh timestamps
 const lastRefresh: Record<string, number> = {};
+const refreshInFlight: Record<string, Promise<string> | undefined> = {};
+const refreshCooldownUntil: Record<string, number> = {};
+const REFRESH_BUSY_COOLDOWN_MS = 45_000;
+const REFRESH_GENERIC_COOLDOWN_MS = 5_000;
 type BetterSqliteDatabase = InstanceType<typeof BetterSqlite3>;
 
 // ============ Helpers ============
@@ -137,24 +141,48 @@ async function refreshLocalCopy(zundId: string): Promise<string> {
   const localPath = path.join(LOCAL_CACHE_DIR, `${zundId}_stats.db3`);
 
   const now = Date.now();
-  const lastTime = lastRefresh[zundId] || 0;
+  const localExists = fs.existsSync(localPath);
+  const cooldownUntil = refreshCooldownUntil[zundId] || 0;
 
-  // Only copy if cache is stale
-  if (now - lastTime > REFRESH_INTERVAL_MS || !fs.existsSync(localPath)) {
-    try {
-      await withTimeout(fsP.copyFile(remotePath, localPath), 3000, `copyFile ${zundId}`);
-      lastRefresh[zundId] = now;
-    } catch (err: any) {
-      // If we have a cached copy, use it even if stale
-      if (fs.existsSync(localPath)) {
-        console.warn(`[Zund] Failed to refresh ${zundId} stats, using cached copy: ${err.message}`);
-      } else {
-        throw new Error(`Cannot access Zund stats at ${remotePath}: ${err.message}`);
-      }
-    }
+  if (localExists && now < cooldownUntil) {
+    return localPath;
   }
 
-  return localPath;
+  const lastTime = lastRefresh[zundId] || 0;
+  const needsRefresh = !localExists || now - lastTime > REFRESH_INTERVAL_MS;
+  if (!needsRefresh) {
+    return localPath;
+  }
+
+  const inflight = refreshInFlight[zundId];
+  if (inflight) {
+    return inflight;
+  }
+
+  const refreshPromise = (async () => {
+    try {
+      await withTimeout(fsP.copyFile(remotePath, localPath), 3000, `copyFile ${zundId}`);
+      lastRefresh[zundId] = Date.now();
+      delete refreshCooldownUntil[zundId];
+      return localPath;
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      if (fs.existsSync(localPath)) {
+        const cooldownMs = message.includes('Timeout: copyFile') || isBusyLikeError(err)
+          ? REFRESH_BUSY_COOLDOWN_MS
+          : REFRESH_GENERIC_COOLDOWN_MS;
+        refreshCooldownUntil[zundId] = Date.now() + cooldownMs;
+        console.warn(`[Zund] Failed to refresh ${zundId} stats, using cached copy: ${message}`);
+        return localPath;
+      }
+      throw new Error(`Cannot access Zund stats at ${remotePath}: ${message}`);
+    } finally {
+      delete refreshInFlight[zundId];
+    }
+  })();
+
+  refreshInFlight[zundId] = refreshPromise;
+  return refreshPromise;
 }
 
 async function openDb(zundId: string): Promise<BetterSqliteDatabase> {
@@ -259,6 +287,155 @@ function getMaterialName(guid: string): string {
   return materialNameMap[guid.toLowerCase()] || guid;
 }
 
+function readCutterInfoFromDb(db: BetterSqliteDatabase): ZundCutterInfo {
+  const row = db.prepare('SELECT Cutter, Name, MachineTypeID FROM CutterNames LIMIT 1').get() as any;
+  return {
+    cutterId: row?.Cutter || 'unknown',
+    name: row?.Name || 'Unknown Zund',
+    machineTypeId: row?.MachineTypeID || 0,
+  };
+}
+
+function readCurrentJobFromDb(db: BetterSqliteDatabase): ZundJob | null {
+  const row = db.prepare(`
+    SELECT * FROM ProductionTimeJob
+    ORDER BY ProductionStart DESC
+    LIMIT 1
+  `).get() as any;
+
+  if (!row) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const endTime = row.ProductionEnd || 0;
+  const isActive = endTime === 0 || (now - endTime < 120);
+
+  return {
+    jobId: row.JobID,
+    jobName: row.JobName,
+    productionStart: epochToIso(row.ProductionStart),
+    productionEnd: row.ProductionEnd ? epochToIso(row.ProductionEnd) : null,
+    copyDone: row.CopyDone,
+    copyTotal: row.CopyTotal,
+    material: getMaterialName(row.Material),
+    materialThickness: row.MaterialThickness,
+    cutter: row.Cutter,
+    durationSeconds: row.ProductionEnd
+      ? row.ProductionEnd - row.ProductionStart
+      : now - row.ProductionStart,
+    isActive,
+  };
+}
+
+function readRecentJobsFromDb(db: BetterSqliteDatabase, limit: number = 20): ZundJob[] {
+  const rows = db.prepare(`
+    SELECT * FROM ProductionTimeJob
+    WHERE IsDemoJob = 0
+    ORDER BY ProductionStart DESC
+    LIMIT ?
+  `).all(limit) as any[];
+
+  const now = Math.floor(Date.now() / 1000);
+  return rows.map(row => ({
+    jobId: row.JobID,
+    jobName: row.JobName,
+    productionStart: epochToIso(row.ProductionStart),
+    productionEnd: row.ProductionEnd ? epochToIso(row.ProductionEnd) : null,
+    copyDone: row.CopyDone,
+    copyTotal: row.CopyTotal,
+    material: getMaterialName(row.Material),
+    materialThickness: row.MaterialThickness,
+    cutter: row.Cutter,
+    durationSeconds: row.ProductionEnd
+      ? row.ProductionEnd - row.ProductionStart
+      : now - row.ProductionStart,
+    isActive: !row.ProductionEnd || (now - row.ProductionEnd < 120),
+  }));
+}
+
+function readTodayStatsFromDb(db: BetterSqliteDatabase): ZundDashboard['todayStats'] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayEpoch = Math.floor(today.getTime() / 1000);
+
+  const jobs = db.prepare(`
+    SELECT COUNT(*) as cnt, COALESCE(SUM(CopyDone), 0) as copies
+    FROM ProductionTimeJob
+    WHERE ProductionStart >= ? AND IsDemoJob = 0
+  `).get(todayEpoch) as any;
+
+  const times = db.prepare(`
+    SELECT
+      pt.MethodName,
+      COALESCE(SUM(pt.TotalTime), 0) as totalMs,
+      COALESCE(SUM(pt.LengthDown), 0) as lengthMm
+    FROM ProductionTimes pt
+    JOIN ProductionTimeJob pj ON pt.JobID = pj.JobID
+    WHERE pj.ProductionStart >= ? AND pj.IsDemoJob = 0
+    GROUP BY pt.MethodName
+  `).all(todayEpoch) as any[];
+
+  let cuttingTimeMs = 0;
+  let setupTimeMs = 0;
+  let idleTimeMs = 0;
+  let totalLengthMm = 0;
+
+  for (const t of times) {
+    const name = (t.MethodName || '').toLowerCase();
+    if (name.includes('cut') || name.includes('crease') || name.includes('route') || name.includes('draw')) {
+      cuttingTimeMs += t.totalMs;
+      totalLengthMm += t.lengthMm;
+    } else if (name === 'setup' || name === 'transport') {
+      setupTimeMs += t.totalMs;
+    } else if (name === 'interrupt') {
+      idleTimeMs += t.totalMs;
+    }
+  }
+
+  return {
+    jobCount: jobs.cnt,
+    totalCuttingTimeMinutes: Math.round(cuttingTimeMs / 60000),
+    totalSetupTimeMinutes: Math.round(setupTimeMs / 60000),
+    totalIdleTimeMinutes: Math.round(idleTimeMs / 60000),
+    totalCopiesCut: jobs.copies,
+    totalLengthCutMeters: Math.round(totalLengthMm / 1000),
+  };
+}
+
+function readToolWearFromDb(db: BetterSqliteDatabase): ZundToolUsage[] {
+  const rows = db.prepare(`
+    SELECT * FROM KnifeBitUsage
+    ORDER BY DateTime DESC
+  `).all() as any[];
+
+  const seen = new Map<number, any>();
+  for (const row of rows) {
+    if (!seen.has(row.InsertID)) {
+      seen.set(row.InsertID, row);
+    }
+  }
+
+  return Array.from(seen.values()).map(row => ({
+    insertId: row.InsertID,
+    toolId: row.ToolID,
+    cutter: row.Cutter,
+    runningMeters: Math.round(row.RunningMeters * 100) / 100,
+    maxRunningMeters: row.MaxRunningMeters,
+    materialName: row.MatName || getMaterialName(row.MatGuid || ''),
+    materialThickness: row.MatThickness,
+    lastUsed: epochToIso(row.DateTime),
+    wearPercent: row.MaxRunningMeters > 0
+      ? Math.min(100, Math.round((row.RunningMeters / row.MaxRunningMeters) * 100))
+      : 0,
+  }));
+}
+
+function readDbVersionFromDb(db: BetterSqliteDatabase): string {
+  const rows = db.prepare("SELECT Name, Value FROM DBInfo WHERE Name IN ('MajorVersion','MinorVersion','BugFixVersion') ORDER BY Name").all() as any[];
+  const v: Record<string, number> = {};
+  rows.forEach(r => v[r.Name] = r.Value);
+  return `${v.MajorVersion || 0}.${v.MinorVersion || 0}.${v.BugFixVersion || 0}`;
+}
+
 // ============ Public API ============
 
 /**
@@ -267,12 +444,7 @@ function getMaterialName(guid: string): string {
 export async function getZundCutterInfo(zundId: string = 'zund2'): Promise<ZundCutterInfo> {
   const db = await openDb(zundId);
   try {
-    const row = db.prepare('SELECT Cutter, Name, MachineTypeID FROM CutterNames LIMIT 1').get() as any;
-    return {
-      cutterId: row?.Cutter || 'unknown',
-      name: row?.Name || 'Unknown Zund',
-      machineTypeId: row?.MachineTypeID || 0,
-    };
+    return readCutterInfoFromDb(db);
   } finally {
     db.close();
   }
@@ -284,33 +456,7 @@ export async function getZundCutterInfo(zundId: string = 'zund2'): Promise<ZundC
 export async function getCurrentJob(zundId: string = 'zund2'): Promise<ZundJob | null> {
   const db = await openDb(zundId);
   try {
-    const row = db.prepare(`
-      SELECT * FROM ProductionTimeJob 
-      ORDER BY ProductionStart DESC 
-      LIMIT 1
-    `).get() as any;
-
-    if (!row) return null;
-
-    const now = Math.floor(Date.now() / 1000);
-    const endTime = row.ProductionEnd || 0;
-    const isActive = endTime === 0 || (now - endTime < 120); // Active if ended < 2 mins ago or still running
-
-    return {
-      jobId: row.JobID,
-      jobName: row.JobName,
-      productionStart: epochToIso(row.ProductionStart),
-      productionEnd: row.ProductionEnd ? epochToIso(row.ProductionEnd) : null,
-      copyDone: row.CopyDone,
-      copyTotal: row.CopyTotal,
-      material: getMaterialName(row.Material),
-      materialThickness: row.MaterialThickness,
-      cutter: row.Cutter,
-      durationSeconds: row.ProductionEnd 
-        ? row.ProductionEnd - row.ProductionStart 
-        : now - row.ProductionStart,
-      isActive,
-    };
+    return readCurrentJobFromDb(db);
   } finally {
     db.close();
   }
@@ -322,29 +468,7 @@ export async function getCurrentJob(zundId: string = 'zund2'): Promise<ZundJob |
 export async function getRecentJobs(zundId: string = 'zund2', limit: number = 20): Promise<ZundJob[]> {
   const db = await openDb(zundId);
   try {
-    const rows = db.prepare(`
-      SELECT * FROM ProductionTimeJob 
-      WHERE IsDemoJob = 0
-      ORDER BY ProductionStart DESC 
-      LIMIT ?
-    `).all(limit) as any[];
-
-    const now = Math.floor(Date.now() / 1000);
-    return rows.map(row => ({
-      jobId: row.JobID,
-      jobName: row.JobName,
-      productionStart: epochToIso(row.ProductionStart),
-      productionEnd: row.ProductionEnd ? epochToIso(row.ProductionEnd) : null,
-      copyDone: row.CopyDone,
-      copyTotal: row.CopyTotal,
-      material: getMaterialName(row.Material),
-      materialThickness: row.MaterialThickness,
-      cutter: row.Cutter,
-      durationSeconds: row.ProductionEnd 
-        ? row.ProductionEnd - row.ProductionStart 
-        : now - row.ProductionStart,
-      isActive: !row.ProductionEnd || (now - row.ProductionEnd < 120),
-    }));
+    return readRecentJobsFromDb(db, limit);
   } finally {
     db.close();
   }
@@ -356,55 +480,7 @@ export async function getRecentJobs(zundId: string = 'zund2', limit: number = 20
 export async function getTodayStats(zundId: string = 'zund2') {
   const db = await openDb(zundId);
   try {
-    // Start of today (local time) as epoch
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayEpoch = Math.floor(today.getTime() / 1000);
-
-    // Jobs today
-    const jobs = db.prepare(`
-      SELECT COUNT(*) as cnt, COALESCE(SUM(CopyDone), 0) as copies
-      FROM ProductionTimeJob 
-      WHERE ProductionStart >= ? AND IsDemoJob = 0
-    `).get(todayEpoch) as any;
-
-    // Time breakdowns today
-    const times = db.prepare(`
-      SELECT 
-        pt.MethodName,
-        COALESCE(SUM(pt.TotalTime), 0) as totalMs,
-        COALESCE(SUM(pt.LengthDown), 0) as lengthMm
-      FROM ProductionTimes pt
-      JOIN ProductionTimeJob pj ON pt.JobID = pj.JobID
-      WHERE pj.ProductionStart >= ? AND pj.IsDemoJob = 0
-      GROUP BY pt.MethodName
-    `).all(todayEpoch) as any[];
-
-    let cuttingTimeMs = 0;
-    let setupTimeMs = 0;
-    let idleTimeMs = 0;
-    let totalLengthMm = 0;
-
-    for (const t of times) {
-      const name = (t.MethodName || '').toLowerCase();
-      if (name.includes('cut') || name.includes('crease') || name.includes('route') || name.includes('draw')) {
-        cuttingTimeMs += t.totalMs;
-        totalLengthMm += t.lengthMm;
-      } else if (name === 'setup' || name === 'transport') {
-        setupTimeMs += t.totalMs;
-      } else if (name === 'interrupt') {
-        idleTimeMs += t.totalMs;
-      }
-    }
-
-    return {
-      jobCount: jobs.cnt,
-      totalCuttingTimeMinutes: Math.round(cuttingTimeMs / 60000),
-      totalSetupTimeMinutes: Math.round(setupTimeMs / 60000),
-      totalIdleTimeMinutes: Math.round(idleTimeMs / 60000),
-      totalCopiesCut: jobs.copies,
-      totalLengthCutMeters: Math.round(totalLengthMm / 1000),
-    };
+    return readTodayStatsFromDb(db);
   } finally {
     db.close();
   }
@@ -416,32 +492,7 @@ export async function getTodayStats(zundId: string = 'zund2') {
 export async function getToolWear(zundId: string = 'zund2'): Promise<ZundToolUsage[]> {
   const db = await openDb(zundId);
   try {
-    const rows = db.prepare(`
-      SELECT * FROM KnifeBitUsage 
-      ORDER BY DateTime DESC
-    `).all() as any[];
-
-    // Deduplicate by InsertID (keep most recent entry per insert)
-    const seen = new Map<number, any>();
-    for (const row of rows) {
-      if (!seen.has(row.InsertID)) {
-        seen.set(row.InsertID, row);
-      }
-    }
-
-    return Array.from(seen.values()).map(row => ({
-      insertId: row.InsertID,
-      toolId: row.ToolID,
-      cutter: row.Cutter,
-      runningMeters: Math.round(row.RunningMeters * 100) / 100,
-      maxRunningMeters: row.MaxRunningMeters,
-      materialName: row.MatName || getMaterialName(row.MatGuid || ''),
-      materialThickness: row.MatThickness,
-      lastUsed: epochToIso(row.DateTime),
-      wearPercent: row.MaxRunningMeters > 0 
-        ? Math.min(100, Math.round((row.RunningMeters / row.MaxRunningMeters) * 100))
-        : 0,
-    }));
+    return readToolWearFromDb(db);
   } finally {
     db.close();
   }
@@ -450,32 +501,20 @@ export async function getToolWear(zundId: string = 'zund2'): Promise<ZundToolUsa
 /**
  * Get complete Zund dashboard data.
  */
-export async function getZundDashboard(zundId: string = 'zund2'): Promise<ZundDashboard> {
-  const cutter = await getZundCutterInfo(zundId);
-  const currentJob = await getCurrentJob(zundId);
-  const recentJobs = await getRecentJobs(zundId, 15);
-  const todayStats = await getTodayStats(zundId);
-  const toolWear = await getToolWear(zundId);
-
+export async function getZundDashboard(zundId: string = 'zund2', recentJobLimit = 15): Promise<ZundDashboard> {
   const db = await openDb(zundId);
-  let dbVersion = '';
   try {
-    const rows = db.prepare("SELECT Name, Value FROM DBInfo WHERE Name IN ('MajorVersion','MinorVersion','BugFixVersion') ORDER BY Name").all() as any[];
-    const v: Record<string, number> = {};
-    rows.forEach(r => v[r.Name] = r.Value);
-    dbVersion = `${v.MajorVersion || 0}.${v.MinorVersion || 0}.${v.BugFixVersion || 0}`;
+    return {
+      cutter: readCutterInfoFromDb(db),
+      currentJob: readCurrentJobFromDb(db),
+      recentJobs: readRecentJobsFromDb(db, recentJobLimit),
+      todayStats: readTodayStatsFromDb(db),
+      toolWear: readToolWearFromDb(db),
+      dbVersion: readDbVersionFromDb(db),
+    };
   } finally {
     db.close();
   }
-
-  return {
-    cutter,
-    currentJob,
-    recentJobs,
-    todayStats,
-    toolWear,
-    dbVersion,
-  };
 }
 
 /**

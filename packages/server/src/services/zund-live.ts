@@ -14,17 +14,12 @@
  */
 
 import { promises as fs } from 'fs';
-import * as fsSync from 'fs';
 import path from 'path';
 import { XMLParser } from 'fast-xml-parser';
 import { THRIVE_CONFIG, parseCutFile, parseJobInfo, type ThriveCutJob } from './thrive.js';
 import {
   getAvailableZunds,
-  getRecentJobs,
-  getCurrentJob,
-  getTodayStats,
-  getToolWear,
-  getZundCutterInfo,
+  getZundDashboard,
   isZundStatsAccessible,
   type ZundJob,
   type ZundDashboard,
@@ -32,11 +27,15 @@ import {
 import { normalizeJobName, extractIdentifiers, extractCutId } from './zund-match.js';
 import { prisma } from '../db/client.js';
 import { TtlCache } from '../lib/ttl-cache.js';
-import { loadBetterSqlite3 } from '../lib/better-sqlite3.js';
 
 // Cache Zund live data and queue scans to avoid redundant network I/O
 const zundLiveCache = new TtlCache<ZundLiveData>(60_000);   // 60s TTL
-const queueFileCache = new TtlCache<ZundQueueFile[]>(60_000); // 60s TTL
+interface QueueScanSnapshot {
+  files: ZundQueueFile[];
+  scannedLimit: number;
+}
+const queueFileCache = new TtlCache<QueueScanSnapshot>(60_000); // 60s TTL
+const QUEUE_SCAN_CACHE_KEY = 'zund-queue-files';
 
 /** Race a promise against a timeout. Rejects with TimeoutError on expiry. */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -278,7 +277,7 @@ export interface ZundQueueFile {
  * .busy files adjacent to .zcc files indicate actively cutting (status = 'active').
  * Limits scan to most recent files by modified date to avoid scanning 10k+ files.
  */
-export async function scanZundQueueFiles(limit = 200): Promise<ZundQueueFile[]> {
+async function scanZundQueueFilesRaw(limit = 200): Promise<ZundQueueFile[]> {
   const results: ZundQueueFile[] = [];
 
   // Scan a queue folder for .zcc files
@@ -386,6 +385,53 @@ export async function scanZundQueueFiles(limit = 200): Promise<ZundQueueFile[]> 
   return results;
 }
 
+export async function scanZundQueueFiles(limit = 200): Promise<ZundQueueFile[]> {
+  const cached = queueFileCache.get(QUEUE_SCAN_CACHE_KEY);
+  if (cached && cached.scannedLimit >= limit) {
+    return cached.files.slice(0, limit);
+  }
+
+  if (cached && cached.scannedLimit < limit) {
+    queueFileCache.invalidate(QUEUE_SCAN_CACHE_KEY);
+  }
+
+  const stale = queueFileCache.getStale(QUEUE_SCAN_CACHE_KEY);
+  if (stale && stale.scannedLimit >= limit) {
+    void queueFileCache.getOrFetch(
+      QUEUE_SCAN_CACHE_KEY,
+      async () => ({
+        scannedLimit: limit,
+        files: await scanZundQueueFilesRaw(limit),
+      }),
+    ).catch((err) => {
+      console.warn('[ZundLive] Background queue scan refresh failed:', err.message);
+    });
+    return stale.files.slice(0, limit);
+  }
+
+  const snapshot = await queueFileCache.getOrFetch(
+    QUEUE_SCAN_CACHE_KEY,
+    async () => ({
+      scannedLimit: limit,
+      files: await scanZundQueueFilesRaw(limit),
+    }),
+  );
+
+  if (snapshot.scannedLimit < limit) {
+    queueFileCache.invalidate(QUEUE_SCAN_CACHE_KEY);
+    const refreshed = await queueFileCache.getOrFetch(
+      QUEUE_SCAN_CACHE_KEY,
+      async () => ({
+        scannedLimit: limit,
+        files: await scanZundQueueFilesRaw(limit),
+      }),
+    );
+    return refreshed.files.slice(0, limit);
+  }
+
+  return snapshot.files.slice(0, limit);
+}
+
 // ─── Work Order Matching ──────────────────────────────
 
 const woCache = new Map<string, { id: string; orderNumber: string; customerName: string } | null>();
@@ -479,35 +525,13 @@ async function fetchZundLiveData(
       // Check accessibility inside parallel block to avoid blocking Sources 2 & 3
       const statsAccessible = getAvailableZunds().includes(zundId) && await isZundStatsAccessible(zundId);
       if (!statsAccessible) return { jobs: srcJobs, normalizedNames: srcNames };
-      const Database = await loadBetterSqlite3('ZundLive');
-      if (!Database) {
-        return { jobs: srcJobs, normalizedNames: srcNames };
-      }
       hasStatsDb = true;
-
-      cutter = await getZundCutterInfo(zundId);
-      todayStats = await getTodayStats(zundId);
-      toolWear = await getToolWear(zundId);
-
-      // Get DB version
-      const localPath = path.join(
-        (await import('os')).tmpdir(),
-        'erp-zund-stats',
-        `${zundId}_stats.db3`
-      );
-      if (fsSync.existsSync(localPath)) {
-        const db = new Database(localPath, { readonly: true });
-        try {
-          const rows = db.prepare("SELECT Name, Value FROM DBInfo WHERE Name IN ('MajorVersion','MinorVersion','BugFixVersion') ORDER BY Name").all() as any[];
-          const v: Record<string, number> = {};
-          rows.forEach((r: any) => v[r.Name] = r.Value);
-          dbVersion = `${v.MajorVersion || 0}.${v.MinorVersion || 0}.${v.BugFixVersion || 0}`;
-        } finally {
-          db.close();
-        }
-      }
-
-      const statsJobs = await getRecentJobs(zundId, recentJobLimit);
+      const dashboard = await getZundDashboard(zundId, recentJobLimit);
+      cutter = dashboard.cutter;
+      todayStats = dashboard.todayStats;
+      toolWear = dashboard.toolWear;
+      dbVersion = dashboard.dbVersion;
+      const statsJobs = dashboard.recentJobs;
 
       for (const sj of statsJobs) {
         const info = extractIdentifiers(sj.jobName);
@@ -612,10 +636,7 @@ async function fetchZundLiveData(
     statsOnly ? Promise.resolve(emptyResult) : withTimeout((async (): Promise<SourceResult> => {
       const srcJobs: ZundLiveJob[] = [];
       const srcNames = new Map<string, true>();
-      const queueFiles = await queueFileCache.getOrFetch(
-        `queue-${zccLimit * 2}`,
-        () => scanZundQueueFiles(zccLimit * 2),
-      );
+      const queueFiles = await scanZundQueueFiles(zccLimit * 2);
       for (const qf of queueFiles) {
         const jobName = qf.zccData.jobName || qf.fileName.replace(/\.zcc$/i, '');
         const normalized = normalizeJobName(jobName);
