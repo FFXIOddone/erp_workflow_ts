@@ -2078,6 +2078,21 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
       (j: any) => j.manuallyLinked || !dismissedSet.has(`FIERY_JOB:${j.jobId}`)
     );
 
+    const completedAtByCutId = new Map<string, string>();
+    const completedAtByJobName = new Map<string, string>();
+    for (const job of filteredZundCompleted) {
+      const completedAt = job.productionEnd.toISOString();
+      const cutId = extractCutId(job.jobName || '');
+      if (cutId) {
+        completedAtByCutId.set(cutId.toLowerCase(), completedAt);
+      }
+
+      const normalizedName = zundMatchService.normalizeJobName(job.jobName || '');
+      if (normalizedName) {
+        completedAtByJobName.set(normalizedName, completedAt);
+      }
+    }
+
     const findFileChainLink = (names: Array<string | null | undefined>, cutId?: string | null) => {
       const normalizedCutId = cutId?.toLowerCase() || null;
       const normalizedNames = names
@@ -2114,9 +2129,15 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
     const enrichedZundQueue = filteredZundQueue.map((job: any) => {
       const cutId = extractCutId(job.jobName || '') || extractCutId(job.fileName || '');
       const fileChainLink = findFileChainLink([job.jobName, job.fileName], cutId);
+      const normalizedJobName = zundMatchService.normalizeJobName(job.jobName || job.fileName || '');
+      const completedAt =
+        (cutId && completedAtByCutId.get(cutId.toLowerCase())) ||
+        (normalizedJobName ? completedAtByJobName.get(normalizedJobName) : null) ||
+        (job.status === 'completed' ? job.modified.toISOString() : null);
       return {
         ...job,
         cutId,
+        completedAt,
         fileChainLinked: Boolean(fileChainLink),
         printCutLinkId: fileChainLink?.id || null,
         fileChainStatus: fileChainLink?.status || null,

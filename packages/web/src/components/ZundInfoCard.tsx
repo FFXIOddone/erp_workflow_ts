@@ -42,6 +42,7 @@ interface ZundQueueFile {
   material: string | null;
   creationDate: string | null;
   modified: string;
+  completedAt?: string | null;
   copyDone: number;
   copyTotal: number;
   cutterName: string | null;
@@ -413,7 +414,7 @@ export function ZundInfoCard({ orderNumber }: ZundInfoCardProps) {
                       </button>
                     )}
                     <span className="text-xs text-gray-500">
-                      {qf.modified ? new Date(qf.modified).toLocaleDateString() : ''}
+                      {qf.completedAt ? formatDateTime(qf.completedAt) : (qf.modified ? new Date(qf.modified).toLocaleDateString() : '')}
                     </span>
                   </div>
                 </div>
@@ -698,8 +699,12 @@ export function ZundInfoCard({ orderNumber }: ZundInfoCardProps) {
                     </tr>
                   )}
                   <tr>
-                    <td className="py-2 text-gray-500 font-medium pr-4">Last Modified</td>
-                    <td className="py-2 text-gray-900">{selectedQueueFile.modified ? formatDateTime(selectedQueueFile.modified) : '-'}</td>
+                    <td className="py-2 text-gray-500 font-medium pr-4">{selectedQueueFile.completedAt ? 'Cut Completed' : 'Last Modified'}</td>
+                    <td className="py-2 text-gray-900">
+                      {selectedQueueFile.completedAt
+                        ? formatDateTime(selectedQueueFile.completedAt)
+                        : (selectedQueueFile.modified ? formatDateTime(selectedQueueFile.modified) : '-')}
+                    </td>
                   </tr>
                   <tr>
                     <td className="py-2 text-gray-500 font-medium pr-4">Source</td>
