@@ -11,7 +11,7 @@ export { ToastContainer } from './Toast';
 export { GlobalLoadingIndicator } from './GlobalLoadingIndicator';
 
 // Data Display
-export { Skeleton, TableRowSkeleton, CardSkeleton, StatCardSkeleton, OrderDetailSkeleton } from './Skeleton';
+export { Skeleton, TableRowSkeleton, CardSkeleton, StatCardSkeleton, DashboardSkeleton, OrderDetailSkeleton } from './Skeleton';
 export { Badge, StatusBadge } from './Badge';
 export { StatusDot, ConnectionStatus, OrderStatusIndicator } from './StatusIndicator';
 export { DataTable, type Column } from './DataTable';

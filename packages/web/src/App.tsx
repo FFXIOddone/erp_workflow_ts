@@ -1,7 +1,13 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/auth';
-import { Layout, ErrorBoundary, ToastContainer, GlobalLoadingIndicator } from './components';
+import {
+  Layout,
+  ErrorBoundary,
+  ToastContainer,
+  GlobalLoadingIndicator,
+  DashboardSkeleton,
+} from './components';
 import { LoginPage } from './pages/LoginPage';
 
 // Lazy-loaded pages — each becomes its own chunk
@@ -101,18 +107,28 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function AppShellSkeleton() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 px-4 py-6 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+        <div className="rounded-3xl border border-gray-200/70 bg-white/80 p-5 shadow-soft backdrop-blur dark:border-gray-800 dark:bg-gray-900/80">
+          <div className="space-y-3">
+            <div className="h-8 w-64 rounded-full bg-gray-200 animate-pulse dark:bg-gray-700" />
+            <div className="h-4 w-96 max-w-full rounded-full bg-gray-200 animate-pulse dark:bg-gray-700" />
+          </div>
+        </div>
+        <DashboardSkeleton />
+      </div>
+    </div>
+  );
+}
+
 function App() {
   return (
     <ErrorBoundary>
       <GlobalLoadingIndicator />
       <ToastContainer />
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center h-screen">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
-          </div>
-        }
-      >
+      <Suspense fallback={<AppShellSkeleton />}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route

@@ -15,6 +15,7 @@ import { API_BASE_PATH } from '@erp/shared';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { isOriginAllowed, parseAllowedOrigins } from './lib/origin-allowlist.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -91,23 +92,6 @@ const app: Express = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
-function getOriginHostname(origin: string): string {
-  try {
-    return new URL(origin).hostname.toLowerCase();
-  } catch {
-    return '';
-  }
-}
-
-function isAllowedLanOrigin(origin: string): boolean {
-  const hostname = getOriginHostname(origin);
-
-  return (
-    /^192\.168\.254\.\d{1,3}$/.test(hostname) ||
-    /^[a-z0-9-]+(\.local)?$/i.test(hostname)
-  );
-}
-
 // Middleware
 app.use(helmet({
   contentSecurityPolicy: {
@@ -126,17 +110,27 @@ app.use(helmet({
     },
   },
 }));
-app.use(cors({
+const corsMiddleware = cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true); // non-browser clients
-    const allowedOrigins = env.CORS_ORIGIN.split(',').map(o => o.trim());
-    if (allowedOrigins.includes(origin) || isAllowedLanOrigin(origin)) {
+    const allowedOrigins = parseAllowedOrigins(env.CORS_ORIGIN);
+    if (isOriginAllowed(origin, allowedOrigins)) {
       return callback(null, true);
     }
+    console.warn(`[CORS] Rejected origin: ${origin}`);
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-}));
+});
+app.use((req: Request, res: Response, next: NextFunction) => {
+  corsMiddleware(req, res, (error) => {
+    if (error instanceof Error && error.message === 'Not allowed by CORS') {
+      res.status(403).json({ success: false, error: 'Not allowed by CORS' });
+      return;
+    }
+    next(error);
+  });
+});
 if (isProduction || process.env.ENABLE_HTTP_REQUEST_LOGS === 'true') {
   app.use(morgan('dev'));
 } else {

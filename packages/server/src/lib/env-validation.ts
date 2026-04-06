@@ -7,6 +7,33 @@
 
 import { z } from 'zod';
 
+const DEFAULT_CORS_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://0.0.0.0:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
+  'http://localhost:5180',
+  'http://127.0.0.1:5180',
+  'http://localhost:5181',
+  'http://127.0.0.1:5181',
+  'http://localhost:5182',
+  'http://127.0.0.1:5182',
+  'http://localhost:5183',
+  'http://127.0.0.1:5183',
+  'http://localhost:5184',
+  'http://127.0.0.1:5184',
+  'http://localhost:5185',
+  'http://127.0.0.1:5185',
+  'http://localhost:5186',
+  'http://127.0.0.1:5186',
+  'http://localhost:1420',
+  'http://127.0.0.1:1420',
+  'tauri://localhost',
+  'https://tauri.localhost',
+  'http://tauri.localhost',
+];
+
 // ============ Environment Schema ============
 
 const envSchema = z.object({
@@ -32,7 +59,7 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('7d'),
 
   // Optional: CORS (comma-separated for multiple origins)
-  CORS_ORIGIN: z.string().optional().default('http://localhost:5173,http://localhost:5174,http://localhost:5180,http://localhost:5181,http://localhost:5182,http://localhost:5183,http://localhost:5184,http://localhost:5185,http://localhost:5186,http://localhost:1420,tauri://localhost,https://tauri.localhost,http://tauri.localhost'),
+  CORS_ORIGIN: z.string().optional().default(DEFAULT_CORS_ORIGINS.join(',')),
 
   // Optional: Email (SMTP)
   SMTP_HOST: z.string().optional(),

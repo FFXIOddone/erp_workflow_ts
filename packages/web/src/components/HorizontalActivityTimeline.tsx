@@ -1,8 +1,10 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { History, Info, Printer, Scissors, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { History, Printer, Scissors, ZoomIn, ZoomOut, RotateCcw, Maximize2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { format, startOfDay, setHours, differenceInMinutes } from 'date-fns';
+import { FullscreenPanel } from './FullscreenPanel';
+import { resolveActivityTimelinePresentation, type ActivityTimelinePresentation } from './activityTimelinePresentation';
 
 // ============================================================================
 // Types
@@ -15,6 +17,12 @@ interface TimelineEvent {
   timestamp: string;
   source: 'erp' | 'thrive' | 'zund' | 'email' | 'network';
   user?: string;
+  details?: Record<string, unknown>;
+}
+
+interface TimelineEventWithPresentation extends TimelineEvent {
+  position: number;
+  presentation: ActivityTimelinePresentation;
 }
 
 interface EquipmentActivityItem {
@@ -34,103 +42,28 @@ interface HorizontalActivityTimelineProps {
     description: string;
     createdAt: string;
     user: { displayName: string };
+    details?: Record<string, unknown>;
   }>;
-}
-
-// ============================================================================
-// Color Palette - Muted, cohesive colors for different action types
-// ============================================================================
-
-// Action type to color mapping - uses Tailwind color palette
-// Designed to be distinguishable but not overwhelming
-const ACTION_COLORS: Record<string, { bg: string; border: string; dot: string; label: string }> = {
-  // Creation events - Teal (fresh/new)
-  CREATE: { bg: 'bg-teal-50', border: 'border-teal-300', dot: 'bg-teal-500', label: 'Created' },
-  CREATED: { bg: 'bg-teal-50', border: 'border-teal-300', dot: 'bg-teal-500', label: 'Created' },
-  
-  // Updates - Slate (subtle change)
-  UPDATE: { bg: 'bg-slate-50', border: 'border-slate-300', dot: 'bg-slate-500', label: 'Updated' },
-  UPDATED: { bg: 'bg-slate-50', border: 'border-slate-300', dot: 'bg-slate-500', label: 'Updated' },
-  
-  // Status changes - Indigo (milestone)
-  STATUS_CHANGED: { bg: 'bg-indigo-50', border: 'border-indigo-300', dot: 'bg-indigo-500', label: 'Status Changed' },
-  STATUS_CHANGE: { bg: 'bg-indigo-50', border: 'border-indigo-300', dot: 'bg-indigo-500', label: 'Status Changed' },
-  
-  // Station completion - Emerald (success)
-  STATION_COMPLETE: { bg: 'bg-emerald-50', border: 'border-emerald-300', dot: 'bg-emerald-500', label: 'Station Complete' },
-  STATION_COMPLETED: { bg: 'bg-emerald-50', border: 'border-emerald-300', dot: 'bg-emerald-500', label: 'Station Complete' },
-  
-  // Assignment - Violet (people)
-  ASSIGN: { bg: 'bg-violet-50', border: 'border-violet-300', dot: 'bg-violet-500', label: 'Assigned' },
-  ASSIGNED: { bg: 'bg-violet-50', border: 'border-violet-300', dot: 'bg-violet-500', label: 'Assigned' },
-  UNASSIGN: { bg: 'bg-violet-50', border: 'border-violet-300', dot: 'bg-violet-400', label: 'Unassigned' },
-  
-  // Print events - Sky blue (equipment)
-  PRINT_QUEUED: { bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-400', label: 'Print Queued' },
-  PRINT_PROCESSING: { bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-500', label: 'Printing' },
-  PRINT_READY: { bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-500', label: 'Print Ready' },
-  PRINT_PRINTING: { bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-600', label: 'Printing' },
-  PRINT_COMPLETED: { bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-700', label: 'Print Done' },
-  
-  // Cut events - Orange (equipment)
-  CUT_QUEUED: { bg: 'bg-orange-50', border: 'border-orange-300', dot: 'bg-orange-500', label: 'Cut Queued' },
-  CUT_PROCESSING: { bg: 'bg-orange-50', border: 'border-orange-300', dot: 'bg-orange-600', label: 'Cutting' },
-  CUT_COMPLETED: { bg: 'bg-orange-50', border: 'border-orange-300', dot: 'bg-orange-700', label: 'Cut Done' },
-  
-  // Email - Cyan (communication)
-  EMAIL_SENT: { bg: 'bg-cyan-50', border: 'border-cyan-300', dot: 'bg-cyan-500', label: 'Email Sent' },
-  
-  // Documents - Amber (files)
-  UPLOAD: { bg: 'bg-amber-50', border: 'border-amber-300', dot: 'bg-amber-500', label: 'Uploaded' },
-  DOWNLOAD: { bg: 'bg-amber-50', border: 'border-amber-300', dot: 'bg-amber-400', label: 'Downloaded' },
-  DOCUMENT_ADDED: { bg: 'bg-amber-50', border: 'border-amber-300', dot: 'bg-amber-500', label: 'Document Added' },
-  FILE_CREATED: { bg: 'bg-amber-50', border: 'border-amber-300', dot: 'bg-amber-500', label: 'File Created' },
-  
-  // Shipping - Rose (logistics)
-  SHIP_ORDER: { bg: 'bg-rose-50', border: 'border-rose-300', dot: 'bg-rose-500', label: 'Shipped' },
-  SHIPPED: { bg: 'bg-rose-50', border: 'border-rose-300', dot: 'bg-rose-500', label: 'Shipped' },
-  MARK_DELIVERED: { bg: 'bg-rose-50', border: 'border-rose-300', dot: 'bg-rose-600', label: 'Delivered' },
-  DELIVERED: { bg: 'bg-rose-50', border: 'border-rose-300', dot: 'bg-rose-600', label: 'Delivered' },
-  
-  // Notes/Comments - Blue-gray
-  NOTE_ADDED: { bg: 'bg-blue-50', border: 'border-blue-200', dot: 'bg-blue-400', label: 'Note Added' },
-  COMMENT: { bg: 'bg-blue-50', border: 'border-blue-200', dot: 'bg-blue-400', label: 'Comment' },
-  
-  // Line item changes - Lime (inventory/items)
-  LINE_ADDED: { bg: 'bg-lime-50', border: 'border-lime-300', dot: 'bg-lime-500', label: 'Line Added' },
-  LINE_REMOVED: { bg: 'bg-lime-50', border: 'border-lime-300', dot: 'bg-lime-400', label: 'Line Removed' },
-  LINE_UPDATED: { bg: 'bg-lime-50', border: 'border-lime-300', dot: 'bg-lime-600', label: 'Line Updated' },
-  
-  // Routing changes - Fuchsia (workflow)
-  ROUTING_SET: { bg: 'bg-fuchsia-50', border: 'border-fuchsia-300', dot: 'bg-fuchsia-500', label: 'Routing Set' },
-  
-  // Priority changes - Yellow (attention)
-  PRIORITY_CHANGED: { bg: 'bg-yellow-50', border: 'border-yellow-300', dot: 'bg-yellow-500', label: 'Priority Changed' },
-  
-  // Session events - Gray (low priority)
-  LOGIN: { bg: 'bg-gray-50', border: 'border-gray-300', dot: 'bg-gray-400', label: 'Login' },
-  LOGOUT: { bg: 'bg-gray-50', border: 'border-gray-300', dot: 'bg-gray-400', label: 'Logout' },
-  
-  // Default - Neutral blue
-  DEFAULT: { bg: 'bg-blue-50', border: 'border-blue-200', dot: 'bg-blue-500', label: 'Activity' },
-};
-
-function getActionColor(type: string) {
-  return ACTION_COLORS[type.toUpperCase()] || ACTION_COLORS.DEFAULT;
+  showFullscreenButton?: boolean;
 }
 
 // ============================================================================
 // Component
 // ============================================================================
 
-export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: HorizontalActivityTimelineProps) {
+export function HorizontalActivityTimeline({
+  orderNumber,
+  orderEvents = [],
+  showFullscreenButton = true,
+}: HorizontalActivityTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [hoveredEvent, setHoveredEvent] = useState<TimelineEvent | null>(null);
+  const [hoveredEvent, setHoveredEvent] = useState<TimelineEventWithPresentation | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [isDragging, setIsDragging] = useState(false);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [startX, setStartX] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Fetch equipment activity
   const { data, isLoading } = useQuery({
@@ -155,6 +88,7 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
         timestamp: event.createdAt,
         source: 'erp',
         user: event.user.displayName,
+        details: event.details,
       });
     }
 
@@ -167,6 +101,7 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
           description: activity.description,
           timestamp: activity.timestamp,
           source: activity.source,
+          details: activity.details,
         });
       }
     }
@@ -197,12 +132,13 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
   }, [timelineEvents]);
 
   // Calculate position for each event (0-100%)
-  const eventsWithPositions = useMemo(() => {
+  const eventsWithPositions = useMemo<TimelineEventWithPresentation[]>(() => {
     return timelineEvents.map(event => {
+      const presentation = resolveActivityTimelinePresentation(event);
       const eventTime = new Date(event.timestamp);
       const minutesFromStart = differenceInMinutes(eventTime, startTime);
       const position = Math.max(0, Math.min(100, (minutesFromStart / totalMinutes) * 100));
-      return { ...event, position };
+      return { ...event, position, presentation };
     });
   }, [timelineEvents, startTime, totalMinutes]);
 
@@ -234,7 +170,7 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
   }, [startTime, endTime, totalMinutes]);
 
   // Handle mouse events for tooltip
-  const handleMouseEnter = (event: TimelineEvent, e: React.MouseEvent) => {
+  const handleMouseEnter = (event: TimelineEventWithPresentation, e: React.MouseEvent) => {
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     setTooltipPosition({
       x: rect.left + rect.width / 2,
@@ -265,11 +201,13 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
 
   // Get unique action types for legend
   const actionTypes = useMemo(() => {
-    const types = new Set(eventsWithPositions.map(e => e.type.toUpperCase()));
-    return Array.from(types).map(type => ({
-      type,
-      ...getActionColor(type),
-    }));
+    const types = new Map<string, ActivityTimelinePresentation>();
+    for (const event of eventsWithPositions) {
+      if (!types.has(event.presentation.key)) {
+        types.set(event.presentation.key, event.presentation);
+      }
+    }
+    return Array.from(types.values());
   }, [eventsWithPositions]);
 
   if (isLoading && orderEvents.length === 0) {
@@ -304,17 +242,17 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
   return (
     <div className="bg-white rounded-xl shadow-soft border border-gray-100 overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-3 border-b border-gray-100 px-6 py-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <History className="h-5 w-5 text-primary-600" />
           <h2 className="text-lg font-semibold text-gray-900">Activity Timeline</h2>
           <span className="text-sm text-gray-500">({timelineEvents.length} events)</span>
         </div>
         
         {/* Zoom controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           {data?.summary && (
-            <div className="flex items-center gap-2 mr-4">
+            <div className="flex flex-wrap items-center gap-2 lg:mr-2">
               {data.summary.printJobs > 0 && (
                 <span className="px-2 py-0.5 text-xs font-medium bg-sky-100 text-sky-700 rounded-full flex items-center gap-1">
                   <Printer className="h-3 w-3" />
@@ -350,6 +288,16 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
           >
             <ZoomIn className="h-4 w-4" />
           </button>
+          {showFullscreenButton && (
+            <button
+              type="button"
+              onClick={() => setIsFullscreen(true)}
+              className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+              title="Open full screen"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -366,7 +314,7 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
         }}
       >
         <div 
-          className="relative py-6 px-8"
+          className="relative px-5 py-6 sm:px-8"
           style={{ width: `${Math.max(100, zoom * 100)}%`, minWidth: '600px' }}
         >
           {/* Day markers */}
@@ -397,7 +345,6 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
 
             {/* Event dots */}
             {eventsWithPositions.map((event, idx) => {
-              const colors = getActionColor(event.type);
               const isHovered = hoveredEvent?.id === event.id;
               
               return (
@@ -410,19 +357,16 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
                   }}
                   onMouseEnter={(e) => handleMouseEnter(event, e)}
                   onMouseLeave={() => setHoveredEvent(null)}
-                >
-                  {/* Dot */}
-                  <div
-                    className={`
+                  >
+                    {/* Dot */}
+                    <div
+                      className={`
                       w-4 h-4 rounded-full cursor-pointer
                       transition-all duration-200 ease-out
                       ring-2 ring-white shadow-sm
-                      ${colors.dot}
+                      ${event.presentation.dot}
                       ${isHovered ? 'scale-150 ring-4 ring-opacity-50' : 'hover:scale-125'}
                     `}
-                    style={{
-                      boxShadow: isHovered ? `0 0 0 4px ${colors.dot.replace('bg-', 'rgba(').replace('-500', ', 0.2)')}` : undefined,
-                    }}
                   />
                   
                   {/* Connecting line to tooltip area */}
@@ -448,16 +392,16 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
         >
           <div className={`
             bg-white rounded-lg shadow-lg border px-3 py-2 min-w-[200px] max-w-[300px]
-            ${getActionColor(hoveredEvent.type).border}
+            ${hoveredEvent.presentation.border}
           `}>
             {/* Action type badge */}
             <div className="flex items-center gap-2 mb-1.5">
               <span className={`
                 w-2.5 h-2.5 rounded-full
-                ${getActionColor(hoveredEvent.type).dot}
+                ${hoveredEvent.presentation.dot}
               `} />
               <span className="text-xs font-semibold text-gray-700">
-                {getActionColor(hoveredEvent.type).label}
+                {hoveredEvent.presentation.label}
               </span>
               {hoveredEvent.source !== 'erp' && (
                 <span className={`
@@ -494,10 +438,10 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
       {/* Legend */}
       {actionTypes.length > 1 && (
         <div className="px-6 py-3 border-t border-gray-100 bg-gray-50/50">
-          <div className="flex items-center gap-1 flex-wrap">
+          <div className="flex flex-wrap items-center gap-1">
             <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mr-2">Legend:</span>
-            {actionTypes.map(({ type, dot, label }) => (
-              <div key={type} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-gray-100">
+            {actionTypes.map(({ key, dot, label }) => (
+              <div key={key} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-gray-100">
                 <span className={`w-2 h-2 rounded-full ${dot}`} />
                 <span className="text-[10px] text-gray-600">{label}</span>
               </div>
@@ -505,6 +449,22 @@ export function HorizontalActivityTimeline({ orderNumber, orderEvents = [] }: Ho
           </div>
         </div>
       )}
+
+      <FullscreenPanel
+        open={isFullscreen}
+        title="Activity Timeline"
+        subtitle={`Order #${orderNumber}`}
+        onClose={() => setIsFullscreen(false)}
+        maxWidthClassName="max-w-[1800px]"
+      >
+        <div className="p-4 sm:p-6">
+          <HorizontalActivityTimeline
+            orderNumber={orderNumber}
+            orderEvents={orderEvents}
+            showFullscreenButton={false}
+          />
+        </div>
+      </FullscreenPanel>
     </div>
   );
 }

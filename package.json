@@ -11,6 +11,7 @@
     "autonomy:log": "node --experimental-strip-types scripts/autonomy/record-autonomy-event.ts",
     "clean:workspace:dry-run": "node scripts/clean-workspace.mjs --dry-run",
     "clean:workspace": "node scripts/clean-workspace.mjs",
+    "kpi:serve": "node scripts/serve-kpi-dashboard.mjs",
     "dev": "concurrently -k -p \"[{name}]\" -c \"red,blue\" -n \"API,Web\" \"npm run dev:server\" \"npm run dev:web\"",
     "dev:all": "concurrently -k -p \"[{name}]\" -c \"red,blue,magenta,cyan,yellow\" -n \"API,Web,Portal,ShopFloor,SlipSort\" \"npm run dev:server\" \"npm run dev:web\" \"npm run dev:portal\" \"npm run dev:shop-floor\" \"npm run dev:slip-sort\"",
     "dev:server": "npm run dev -w @erp/server",

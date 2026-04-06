@@ -15,6 +15,7 @@ import { PrinterInfoCard } from '../components/PrinterInfoCard';
 import { ZundInfoCard } from '../components/ZundInfoCard';
 import { HorizontalActivityTimeline } from '../components/HorizontalActivityTimeline';
 import { FileChainTimeline } from '../components/FileChainTimeline';
+import { OrderLinkedDataCard } from '../components/OrderLinkedDataCard';
 
 const PRIORITY_LABELS: Record<number, { label: string; color: string }> = {
   1: { label: 'Low', color: 'text-gray-500' },
@@ -239,15 +240,16 @@ export function OrderDetailPage() {
   }
 
   const priorityInfo = PRIORITY_LABELS[order.priority] ?? DEFAULT_PRIORITY;
+  const sectionCardClass = 'bg-white rounded-xl shadow-soft border border-gray-100 p-6';
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
+      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
         <div className="flex items-start gap-4">
-          <Link 
-            to="/orders" 
-            className="mt-1 p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700"
+          <Link
+            to="/orders"
+            className="mt-1 rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
           >
             <ArrowLeft className="h-5 w-5" />
           </Link>
@@ -255,7 +257,7 @@ export function OrderDetailPage() {
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-gray-900">#{order.orderNumber}</h1>
               <span
-                className="px-3 py-1 text-sm font-medium rounded-full"
+                className="rounded-full px-3 py-1 text-sm font-medium"
                 style={{
                   backgroundColor: `${STATUS_COLORS[order.status]}15`,
                   color: STATUS_COLORS[order.status],
@@ -265,25 +267,25 @@ export function OrderDetailPage() {
               </span>
             </div>
             {order.companyId ? (
-              <Link 
+              <Link
                 to={`/companies/${order.companyId}`}
-                className="text-lg text-primary-600 hover:text-primary-800 hover:underline mt-1 inline-block transition-colors"
+                className="mt-1 inline-block text-lg text-primary-600 transition-colors hover:text-primary-800 hover:underline"
               >
                 {order.customerName}
               </Link>
             ) : order.customerId ? (
-              <Link 
+              <Link
                 to={`/sales/customers/${order.customerId}`}
-                className="text-lg text-primary-600 hover:text-primary-800 hover:underline mt-1 inline-block transition-colors"
+                className="mt-1 inline-block text-lg text-primary-600 transition-colors hover:text-primary-800 hover:underline"
               >
                 {order.customerName}
               </Link>
             ) : (
-              <p className="text-lg text-gray-600 mt-1">{order.customerName}</p>
+              <p className="mt-1 text-lg text-gray-600">{order.customerName}</p>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex flex-wrap items-center justify-end gap-2 text-sm sm:gap-3">
           <span className={`font-semibold ${priorityInfo.color}`}>
             {priorityInfo.label} Priority
           </span>
@@ -291,7 +293,7 @@ export function OrderDetailPage() {
             <>
               <button
                 onClick={() => navigate(`/orders/${id}/edit`)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 rounded-lg border border-primary-200 transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-sm font-medium text-primary-700 transition-colors hover:bg-primary-100"
               >
                 <Pencil className="h-4 w-4" />
                 Edit
@@ -299,7 +301,7 @@ export function OrderDetailPage() {
               <button
                 onClick={() => duplicateOrderMutation.mutate()}
                 disabled={duplicateOrderMutation.isPending}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 rounded-lg border border-primary-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-sm font-medium text-primary-700 transition-colors hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Copy className="h-4 w-4" />
                 {duplicateOrderMutation.isPending ? 'Duplicating...' : 'Duplicate'}
@@ -308,7 +310,7 @@ export function OrderDetailPage() {
           )}
           <button
             onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100"
           >
             <Printer className="h-4 w-4" />
             Print
@@ -321,97 +323,66 @@ export function OrderDetailPage() {
                 }
               }}
               disabled={completeOrderMutation.isPending}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-white transition-colors hover:bg-green-700 disabled:opacity-50"
             >
-              <CheckCircle className="w-4 h-4" />
+              <CheckCircle className="h-4 w-4" />
               {completeOrderMutation.isPending ? 'Completing...' : 'Mark Complete'}
             </button>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Content */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Description */}
-          <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <FileText className="h-5 w-5 text-primary-600" />
-              <h2 className="text-lg font-semibold text-gray-900">Details</h2>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+        <div className={`${sectionCardClass} min-w-0 xl:col-span-7`}>
+          <div className="mb-4 flex items-center gap-2">
+            <FileText className="h-5 w-5 text-primary-600" />
+            <h2 className="text-lg font-semibold text-gray-900">Details</h2>
+          </div>
+          <p className="text-gray-700 leading-relaxed">{order.description}</p>
+          {order.notes && (
+            <div className="mt-4 rounded-lg border border-amber-100 bg-amber-50 p-4">
+              <p className="mb-1 text-sm font-medium text-amber-800">Notes</p>
+              <p className="text-sm text-amber-700">{order.notes}</p>
             </div>
-            <p className="text-gray-700 leading-relaxed">{order.description}</p>
-            {order.notes && (
-              <div className="mt-4 p-4 bg-amber-50 rounded-lg border border-amber-100">
-                <p className="text-sm font-medium text-amber-800 mb-1">Notes</p>
-                <p className="text-sm text-amber-700">{order.notes}</p>
-              </div>
-            )}
-          </div>
-
-          {/* Events / Audit Log - Visual Timeline */}
-          <HorizontalActivityTimeline 
-            orderNumber={order.orderNumber} 
-            orderEvents={order.events} 
-          />
-
-          {/* Equipment Jobs - Print & Cut */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <PrinterInfoCard orderNumber={order.orderNumber} />
-            <div id="zund">
-              <ZundInfoCard orderNumber={order.orderNumber} />
-            </div>
-          </div>
-
-          {/* File Chain Timeline */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">File Chain</h3>
-            <FileChainTimeline orderId={id!} />
-          </div>
-
+          )}
         </div>
 
-        {/* Sidebar */}
-        <div className="space-y-6">
-          {/* Order Info */}
-          <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Order Info</h2>
+        <div className="space-y-6 xl:col-span-5">
+          <div className={sectionCardClass}>
+            <h2 className="mb-4 text-lg font-semibold text-gray-900">Order Info</h2>
             <dl className="space-y-4">
-              <div className="flex justify-between items-center">
-                <dt className="text-gray-500 flex items-center gap-2">
-                  <span className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <dt className="flex items-center gap-2 text-gray-500">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-100">
                     <AlertCircle className="h-4 w-4 text-orange-600" />
                   </span>
                   Priority
                 </dt>
                 <dd className={`font-semibold ${priorityInfo.color}`}>{priorityInfo.label}</dd>
               </div>
-              <div className="flex justify-between items-center">
-                <dt className="text-gray-500 flex items-center gap-2">
-                  <span className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <dt className="flex items-center gap-2 text-gray-500">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-100">
                     <Calendar className="h-4 w-4 text-red-600" />
                   </span>
                   Due Date
                 </dt>
                 <dd className="font-medium text-gray-900">
-                  {order.dueDate
-                    ? formatDate(order.dueDate)
-                    : 'Not scheduled'}
+                  {order.dueDate ? formatDate(order.dueDate) : 'Not scheduled'}
                 </dd>
               </div>
-              <div className="flex justify-between items-center">
-                <dt className="text-gray-500 flex items-center gap-2">
-                  <span className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <dt className="flex items-center gap-2 text-gray-500">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-100">
                     <Calendar className="h-4 w-4 text-green-600" />
                   </span>
                   Created
                 </dt>
-                <dd className="font-medium text-gray-900">
-                  {formatDate(order.createdAt)}
-                </dd>
+                <dd className="font-medium text-gray-900">{formatDate(order.createdAt)}</dd>
               </div>
-              <div className="flex justify-between items-center">
-                <dt className="text-gray-500 flex items-center gap-2">
-                  <span className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <dt className="flex items-center gap-2 text-gray-500">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-100">
                     <User className="h-4 w-4 text-purple-600" />
                   </span>
                   Created By
@@ -420,7 +391,26 @@ export function OrderDetailPage() {
               </div>
             </dl>
           </div>
+        </div>
 
+        <div className="min-w-0 xl:col-span-12">
+          <OrderLinkedDataCard orderId={order.id} orderNumber={order.orderNumber} />
+        </div>
+      </div>
+
+      <HorizontalActivityTimeline orderNumber={order.orderNumber} orderEvents={order.events} />
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+        <div className="min-w-0 xl:col-span-6">
+          <PrinterInfoCard orderNumber={order.orderNumber} />
+        </div>
+        <div id="zund" className="min-w-0 xl:col-span-6">
+          <ZundInfoCard orderNumber={order.orderNumber} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+        <div className="min-w-0 xl:col-span-6">
           <RoutingRecommendationCard
             workOrderId={order.id}
             orderNumber={order.orderNumber}
@@ -430,143 +420,145 @@ export function OrderDetailPage() {
             notes={order.notes ?? null}
             currentRoute={order.routing ?? []}
           />
-
+        </div>
+        <div className="min-w-0 xl:col-span-6">
           <ShippingPanel workOrderId={order.id} orderNumber={order.orderNumber} />
-
-          {/* Station Progress */}
-          <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Hash className="h-5 w-5 text-primary-600" />
-              <h2 className="text-lg font-semibold text-gray-900">Station Progress</h2>
-            </div>
-            <div className="space-y-3">
-              {(() => {
-                type StationEntry = { station: string; id: string; status: string; completedAt: string | null };
-                const stationMap = new Map<string, StationEntry>(
-                  order.stationProgress.map((sp: StationEntry) => [sp.station, sp] as [string, StationEntry])
-                );
-                const subStationKeys = new Set(Object.keys(SUB_STATION_PARENTS));
-
-                return order.stationProgress
-                  .filter((sp: { station: string }) => !subStationKeys.has(sp.station))
-                  .map((sp: { id: string; station: string; status: string; completedAt: string | null }) => {
-                    const subs = PARENT_SUB_STATIONS[sp.station as keyof typeof PARENT_SUB_STATIONS];
-                    const hasSubStations = subs && subs.length > 0;
-                    const hasAccess = canAccessStation(sp.station);
-
-                    return (
-                      <div key={sp.id} className="space-y-1.5">
-                        {/* Station row */}
-                        <div
-                          className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
-                            sp.status === 'COMPLETED'
-                              ? 'bg-green-50 border-green-200'
-                              : sp.status === 'IN_PROGRESS'
-                              ? 'bg-blue-50 border-blue-200'
-                              : 'bg-gray-50 border-gray-200'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            {sp.status === 'COMPLETED' ? (
-                              <CheckCircle className="h-5 w-5 text-green-500" />
-                            ) : sp.status === 'IN_PROGRESS' ? (
-                              <Clock className="h-5 w-5 text-blue-500" />
-                            ) : (
-                              <AlertCircle className="h-5 w-5 text-gray-400" />
-                            )}
-                            <span className="font-medium text-gray-900">
-                              {STATION_DISPLAY_NAMES[sp.station] ?? sp.station}
-                            </span>
-                          </div>
-                          {hasSubStations ? (
-                            <span className="text-xs text-gray-400 italic">Auto</span>
-                          ) : hasAccess ? (
-                            <button
-                              onClick={() =>
-                                sp.status === 'COMPLETED'
-                                  ? uncompleteStationMutation.mutate(sp.station)
-                                  : handleCompleteStation(sp.station)
-                              }
-                              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                                sp.status === 'COMPLETED'
-                                  ? 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-                                  : 'bg-primary-600 text-white hover:bg-primary-700 shadow-sm'
-                              }`}
-                            >
-                              {sp.status === 'COMPLETED' ? 'Undo' : 'Complete'}
-                            </button>
-                          ) : (
-                            <div className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-400">
-                              <Lock className="h-3.5 w-3.5" />
-                              <span>No Access</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Sub-stations (indented) */}
-                        {hasSubStations && subs.map((subStation) => {
-                          const sub = stationMap.get(subStation);
-                          if (!sub) return null;
-                          const subAccess = canAccessStation(sub.station);
-                          return (
-                            <div
-                              key={sub.id}
-                              className={`ml-6 flex items-center justify-between p-2.5 rounded-lg border transition-all ${
-                                sub.status === 'COMPLETED'
-                                  ? 'bg-green-50/70 border-green-100'
-                                  : sub.status === 'IN_PROGRESS'
-                                  ? 'bg-blue-50/70 border-blue-100'
-                                  : 'bg-gray-50/70 border-gray-100'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2">
-                                {sub.status === 'COMPLETED' ? (
-                                  <CheckCircle className="h-4 w-4 text-green-500" />
-                                ) : sub.status === 'IN_PROGRESS' ? (
-                                  <Clock className="h-4 w-4 text-blue-500" />
-                                ) : (
-                                  <AlertCircle className="h-4 w-4 text-gray-400" />
-                                )}
-                                <span className="text-sm font-medium text-gray-800">
-                                  {STATION_DISPLAY_NAMES[sub.station] ?? sub.station}
-                                </span>
-                              </div>
-                              {subAccess ? (
-                                <button
-                                  onClick={() =>
-                                    sub.status === 'COMPLETED'
-                                      ? uncompleteStationMutation.mutate(sub.station)
-                                      : handleCompleteStation(sub.station)
-                                  }
-                                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-                                    sub.status === 'COMPLETED'
-                                      ? 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-                                      : 'bg-primary-600 text-white hover:bg-primary-700 shadow-sm'
-                                  }`}
-                                >
-                                  {sub.status === 'COMPLETED' ? 'Undo' : 'Complete'}
-                                </button>
-                              ) : (
-                                <div className="flex items-center gap-1 px-2.5 py-1 text-xs text-gray-400">
-                                  <Lock className="h-3 w-3" />
-                                  <span>No Access</span>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  });
-              })()}
-            </div>
-          </div>
-
-
-          {/* Network Files */}
-          <NetworkFileBrowser orderId={order.id} orderNumber={order.orderNumber} />
         </div>
       </div>
+
+      <div className="grid grid-cols-1 gap-6">
+        <div className={`${sectionCardClass} min-w-0`}>
+          <div className="mb-4 flex items-center gap-2">
+            <Hash className="h-5 w-5 text-primary-600" />
+            <h2 className="text-lg font-semibold text-gray-900">Station Progress</h2>
+          </div>
+          <div className="space-y-3">
+            {(() => {
+              type StationEntry = { station: string; id: string; status: string; completedAt: string | null };
+              const stationMap = new Map<string, StationEntry>(
+                order.stationProgress.map((sp: StationEntry) => [sp.station, sp] as [string, StationEntry])
+              );
+              const subStationKeys = new Set(Object.keys(SUB_STATION_PARENTS));
+
+              return order.stationProgress
+                .filter((sp: { station: string }) => !subStationKeys.has(sp.station))
+                .map((sp: { id: string; station: string; status: string; completedAt: string | null }) => {
+                  const subs = PARENT_SUB_STATIONS[sp.station as keyof typeof PARENT_SUB_STATIONS];
+                  const hasSubStations = subs && subs.length > 0;
+                  const hasAccess = canAccessStation(sp.station);
+
+                  return (
+                    <div key={sp.id} className="space-y-1.5">
+                      <div
+                        className={`flex flex-col gap-3 rounded-lg border p-3 transition-all sm:flex-row sm:items-center sm:justify-between ${
+                          sp.status === 'COMPLETED'
+                            ? 'border-green-200 bg-green-50'
+                            : sp.status === 'IN_PROGRESS'
+                            ? 'border-blue-200 bg-blue-50'
+                            : 'border-gray-200 bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          {sp.status === 'COMPLETED' ? (
+                            <CheckCircle className="h-5 w-5 text-green-500" />
+                          ) : sp.status === 'IN_PROGRESS' ? (
+                            <Clock className="h-5 w-5 text-blue-500" />
+                          ) : (
+                            <AlertCircle className="h-5 w-5 text-gray-400" />
+                          )}
+                          <span className="min-w-0 break-words font-medium text-gray-900">
+                            {STATION_DISPLAY_NAMES[sp.station] ?? sp.station}
+                          </span>
+                        </div>
+                        {hasSubStations ? (
+                          <span className="self-end text-xs italic text-gray-400 sm:self-auto">Auto</span>
+                        ) : hasAccess ? (
+                          <button
+                            onClick={() =>
+                              sp.status === 'COMPLETED'
+                                ? uncompleteStationMutation.mutate(sp.station)
+                                : handleCompleteStation(sp.station)
+                            }
+                            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                              sp.status === 'COMPLETED'
+                                ? 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-100'
+                                : 'bg-primary-600 text-white shadow-sm hover:bg-primary-700'
+                            }`}
+                          >
+                            {sp.status === 'COMPLETED' ? 'Undo' : 'Complete'}
+                          </button>
+                        ) : (
+                          <div className="flex self-end items-center gap-1.5 px-3 py-1.5 text-sm text-gray-400 sm:self-auto">
+                            <Lock className="h-3.5 w-3.5" />
+                            <span>No Access</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {hasSubStations && subs.map((subStation) => {
+                        const sub = stationMap.get(subStation);
+                        if (!sub) return null;
+                        const subAccess = canAccessStation(sub.station);
+                        return (
+                          <div
+                            key={sub.id}
+                            className={`ml-6 flex flex-col gap-2.5 rounded-lg border p-2.5 transition-all sm:flex-row sm:items-center sm:justify-between ${
+                              sub.status === 'COMPLETED'
+                                ? 'border-green-100 bg-green-50/70'
+                                : sub.status === 'IN_PROGRESS'
+                                ? 'border-blue-100 bg-blue-50/70'
+                                : 'border-gray-100 bg-gray-50/70'
+                            }`}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              {sub.status === 'COMPLETED' ? (
+                                <CheckCircle className="h-4 w-4 text-green-500" />
+                              ) : sub.status === 'IN_PROGRESS' ? (
+                                <Clock className="h-4 w-4 text-blue-500" />
+                              ) : (
+                                <AlertCircle className="h-4 w-4 text-gray-400" />
+                              )}
+                              <span className="min-w-0 break-words text-sm font-medium text-gray-800">
+                                {STATION_DISPLAY_NAMES[sub.station] ?? sub.station}
+                              </span>
+                            </div>
+                            {subAccess ? (
+                              <button
+                                onClick={() =>
+                                  sub.status === 'COMPLETED'
+                                    ? uncompleteStationMutation.mutate(sub.station)
+                                    : handleCompleteStation(sub.station)
+                                }
+                                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                                  sub.status === 'COMPLETED'
+                                    ? 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-100'
+                                  : 'bg-primary-600 text-white shadow-sm hover:bg-primary-700'
+                                }`}
+                              >
+                                {sub.status === 'COMPLETED' ? 'Undo' : 'Complete'}
+                              </button>
+                            ) : (
+                              <div className="flex self-end items-center gap-1 px-2.5 py-1 text-xs text-gray-400 sm:self-auto">
+                                <Lock className="h-3 w-3" />
+                                <span>No Access</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                });
+            })()}
+          </div>
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        <FileChainTimeline orderId={id!} />
+      </div>
+
+      <NetworkFileBrowser orderId={order.id} orderNumber={order.orderNumber} />
     </div>
   );
 }

@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Clock, Printer, Scissors, FileCheck, ChevronRight, Link2, Shield, CheckCircle, X, Lock } from 'lucide-react';
+import { Clock, Printer, Scissors, FileCheck, ChevronRight, Link2, Shield, CheckCircle, X, Lock, Maximize2 } from 'lucide-react';
 import { api } from '../lib/api';
+import { FullscreenPanel } from './FullscreenPanel';
 
 interface FileChainLink {
   id: string;
@@ -71,12 +73,12 @@ function ConfidenceBadge({ confidence, confirmed }: { confidence?: string; confi
 function StepBadge({ label, status, time, icon: Icon }: { label: string; status?: string; time?: string; icon: any }) {
   const color = STATUS_COLORS[status || 'PENDING'] || STATUS_COLORS.PENDING;
   return (
-    <div className={`flex flex-col items-center px-4 py-3 rounded-xl border ${color} min-w-[120px]`}>
-      <Icon className="w-5 h-5 mb-1" />
+    <div className={`flex min-w-[104px] flex-col items-center rounded-xl border px-3 py-2.5 text-center ${color}`}>
+      <Icon className="mb-1 h-5 w-5" />
       <span className="text-xs font-semibold">{label}</span>
-      <span className="text-[10px] mt-0.5 capitalize">{(status || 'pending').toLowerCase().replace(/_/g, ' ')}</span>
+      <span className="mt-0.5 text-[10px] capitalize">{(status || 'pending').toLowerCase().replace(/_/g, ' ')}</span>
       {time && (
-        <span className="text-[10px] opacity-70 mt-0.5">
+        <span className="mt-0.5 text-[10px] opacity-70">
           {new Date(time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
         </span>
       )}
@@ -84,8 +86,9 @@ function StepBadge({ label, status, time, icon: Icon }: { label: string; status?
   );
 }
 
-export function FileChainTimeline({ orderId }: { orderId: string }) {
+export function FileChainTimeline({ orderId, showFullscreenButton = true }: { orderId: string; showFullscreenButton?: boolean }) {
   const queryClient = useQueryClient();
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const { data: links, isLoading } = useQuery({
     queryKey: ['file-chain', orderId],
@@ -132,110 +135,199 @@ export function FileChainTimeline({ orderId }: { orderId: string }) {
     },
   });
 
+  const renderRows = () => (
+    <div className="space-y-4">
+      {(links ?? []).map((link) => (
+        <div key={link.id} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1 overflow-x-auto pb-1">
+              <div className="flex min-w-max items-center gap-2">
+                <StepBadge
+                  label="Design"
+                  status={link.printFilePath ? 'COMPLETED' : 'PENDING'}
+                  icon={FileCheck}
+                />
+                <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" />
+
+                <StepBadge
+                  label="RIP"
+                  status={link.ripStatus || (link.rippedAt ? 'COMPLETED' : 'PENDING')}
+                  time={link.rippedAt}
+                  icon={Printer}
+                />
+                <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" />
+
+                <StepBadge
+                  label="Print"
+                  status={link.printStatus || (link.printedAt ? 'COMPLETED' : 'PENDING')}
+                  time={link.printedAt}
+                  icon={Printer}
+                />
+                <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" />
+
+                <StepBadge
+                  label="Cut"
+                  status={link.cutStatus || (link.cutCompletedAt || link.cutAt ? 'COMPLETED' : link.cutFilePath ? 'IN_PROGRESS' : 'PENDING')}
+                  time={link.cutCompletedAt || link.cutAt}
+                  icon={Scissors}
+                />
+              </div>
+            </div>
+
+            <div className="min-w-0 space-y-1 text-xs text-gray-500 xl:w-72 xl:shrink-0">
+              {link.printFileName && (
+                <div className="truncate font-medium text-gray-700" title={link.printFileName}>
+                  {link.printFileName}
+                </div>
+              )}
+              {link.cutFileName && (
+                <div className="flex items-center gap-1 truncate text-blue-600" title={link.cutFileName}>
+                  <Link2 className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{link.cutFileName}</span>
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {link.cutId && (
+                  <span className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600" title="CutID">
+                    {link.cutId}
+                  </span>
+                )}
+                <ConfidenceBadge confidence={link.linkConfidence} confirmed={link.confirmed} />
+                {link.cutFileName && !link.confirmed && link.linkConfidence !== 'MANUAL' && (
+                  <span className="inline-flex items-center gap-1">
+                    <button
+                      onClick={() => confirmMutation.mutate(link.id)}
+                      disabled={confirmMutation.isPending}
+                      className="rounded p-0.5 text-gray-400 transition-colors hover:bg-green-100 hover:text-green-600"
+                      title="Confirm this link"
+                    >
+                      <CheckCircle className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => dismissMutation.mutate(link.id)}
+                      disabled={dismissMutation.isPending}
+                      className="rounded p-0.5 text-gray-400 transition-colors hover:bg-red-100 hover:text-red-600"
+                      title="Dismiss this link"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                )}
+                {link.cutFileSource && <span className="text-[10px] text-gray-400">{link.cutFileSource}</span>}
+                {link.printerName && <span className="text-[10px] text-gray-400">{link.printerName}</span>}
+                {link.cutterName && <span className="text-[10px] text-gray-400">{link.cutterName}</span>}
+              </div>
+              {(link.width && link.height) || link.quantity ? (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
+                  {link.width && link.height && <span>{link.width}" x {link.height}"</span>}
+                  {link.quantity && <span>Qty: {link.quantity}</span>}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   if (isLoading) {
     return (
-      <div className="animate-pulse h-24 bg-gray-100 rounded-xl" />
+      <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6 animate-pulse">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="h-5 bg-gray-200 rounded w-32" />
+          <div className="h-8 bg-gray-200 rounded w-8" />
+        </div>
+        <div className="h-24 bg-gray-100 rounded-lg" />
+      </div>
     );
   }
 
   if (!links || links.length === 0) {
     return (
-      <div className="text-sm text-gray-400 text-center py-6 bg-gray-50 rounded-xl border border-dashed border-gray-200">
-        No file chain data yet
+      <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <FileCheck className="h-5 w-5 text-primary-600" />
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">File Chain</h3>
+              <p className="text-xs text-gray-500">Print, RIP, and cut chain for this order</p>
+            </div>
+          </div>
+          {showFullscreenButton && (
+            <button
+              type="button"
+              onClick={() => setIsFullscreen(true)}
+              className="self-start rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 sm:self-auto"
+              title="Open full screen"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-6 text-center text-sm text-gray-400">
+          No file chain data yet
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-3">
-      {links.map((link) => (
-        <div key={link.id} className="flex items-center gap-2 overflow-x-auto pb-2">
-          {/* Design step */}
-          <StepBadge
-            label="Design"
-            status={link.printFilePath ? 'COMPLETED' : 'PENDING'}
-            icon={FileCheck}
-          />
-          <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
-
-          {/* RIP step */}
-          <StepBadge
-            label="RIP"
-            status={link.ripStatus || (link.rippedAt ? 'COMPLETED' : 'PENDING')}
-            time={link.rippedAt}
-            icon={Printer}
-          />
-          <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
-
-          {/* Print step */}
-          <StepBadge
-            label="Print"
-            status={link.printStatus || (link.printedAt ? 'COMPLETED' : 'PENDING')}
-            time={link.printedAt}
-            icon={Printer}
-          />
-          <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
-
-          {/* Cut step */}
-          <StepBadge
-            label="Cut"
-            status={link.cutStatus || (link.cutCompletedAt || link.cutAt ? 'COMPLETED' : link.cutFilePath ? 'IN_PROGRESS' : 'PENDING')}
-            time={link.cutCompletedAt || link.cutAt}
-            icon={Scissors}
-          />
-
-          {/* Metadata */}
-          <div className="ml-3 text-xs text-gray-500 shrink-0 space-y-0.5">
-            {link.printFileName && <div className="truncate max-w-[200px]" title={link.printFileName}>{link.printFileName}</div>}
-            {link.cutFileName && (
-              <div className="flex items-center gap-1 text-blue-600 truncate max-w-[200px]" title={link.cutFileName}>
-                <Link2 className="h-3 w-3 shrink-0" />
-                {link.cutFileName}
-              </div>
-            )}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {link.cutId && (
-                <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono bg-gray-100 text-gray-600 rounded" title="CutID">
-                  {link.cutId}
-                </span>
-              )}
-              <ConfidenceBadge confidence={link.linkConfidence} confirmed={link.confirmed} />
-              {/* Confirm/Dismiss buttons for unconfirmed auto-linked suggestions */}
-              {link.cutFileName && !link.confirmed && link.linkConfidence !== 'MANUAL' && (
-                <span className="inline-flex items-center gap-1 ml-1">
-                  <button
-                    onClick={() => confirmMutation.mutate(link.id)}
-                    disabled={confirmMutation.isPending}
-                    className="p-0.5 rounded hover:bg-green-100 text-gray-400 hover:text-green-600 transition-colors"
-                    title="Confirm this link"
-                  >
-                    <CheckCircle className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => dismissMutation.mutate(link.id)}
-                    disabled={dismissMutation.isPending}
-                    className="p-0.5 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-colors"
-                    title="Dismiss this link"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </span>
-              )}
-              {link.cutFileSource && (
-                <span className="text-[10px] text-gray-400">{link.cutFileSource}</span>
-              )}
-              {link.printerName && (
-                <span className="text-[10px] text-gray-400">{link.printerName}</span>
-              )}
-              {link.cutterName && (
-                <span className="text-[10px] text-gray-400">{link.cutterName}</span>
-              )}
+    <>
+      <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <FileCheck className="h-5 w-5 text-primary-600" />
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">File Chain</h3>
+              <p className="text-xs text-gray-500">Print, RIP, and cut chain for this order</p>
             </div>
-            {link.width && link.height && <div>{link.width}" x {link.height}"</div>}
-            {link.quantity && <div>Qty: {link.quantity}</div>}
+          </div>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+              {(links ?? []).length} link{(links ?? []).length === 1 ? '' : 's'}
+            </span>
+            {showFullscreenButton && (
+              <button
+                type="button"
+                onClick={() => setIsFullscreen(true)}
+                className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                title="Open full screen"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
-      ))}
-    </div>
+        {renderRows()}
+      </div>
+
+      <FullscreenPanel
+        open={isFullscreen}
+        title="File Chain"
+        subtitle={`Order #${orderId}`}
+        onClose={() => setIsFullscreen(false)}
+        maxWidthClassName="max-w-[1800px]"
+      >
+        <div className="p-4 sm:p-6">
+          <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 items-center gap-2">
+                <FileCheck className="h-5 w-5 text-primary-600" />
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">File Chain</h3>
+                  <p className="text-xs text-gray-500">Print, RIP, and cut chain for this order</p>
+                </div>
+              </div>
+              <div className="self-start sm:self-auto">
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+                  {(links ?? []).length} link{(links ?? []).length === 1 ? '' : 's'}
+                </span>
+              </div>
+            </div>
+            {renderRows()}
+          </div>
+        </div>
+      </FullscreenPanel>
+    </>
   );
 }

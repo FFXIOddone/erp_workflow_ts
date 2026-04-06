@@ -480,23 +480,95 @@ function buildThriveJobLookupFromData(printJobs: Array<{ fileName: string; jobNa
   return lookup;
 }
 
+function cloneFieryJob(job: FieryJob): FieryJob {
+  return {
+    ...job,
+    media: job.media
+      ? {
+          ...job.media,
+          description: null,
+        }
+      : null,
+    inks: [...job.inks],
+    workOrderNumber: null,
+    customerName: null,
+    thriveFilePath: null,
+    thriveJobMatch: false,
+  };
+}
+
+async function enrichFieryJobs(
+  baseJobs: FieryJob[],
+  thriveLookup: Map<string, ThriveLookupEntry>
+): Promise<FieryJob[]> {
+  const jobs = baseJobs.map(cloneFieryJob);
+
+  for (const job of jobs) {
+    const normalizedFieryName = normalizeJobName(job.jobName);
+    const thriveMatch = thriveLookup.get(normalizedFieryName);
+    if (thriveMatch) {
+      const pathInfo = parseThrivePath(thriveMatch.fileName);
+      job.workOrderNumber = pathInfo.workOrderNumber;
+      job.customerName = pathInfo.customerName;
+      job.thriveFilePath = thriveMatch.fileName;
+      job.thriveJobMatch = true;
+      // Keep the Thrive print-media label separate from the RIP substrate.
+      // The actual RIP-side media remains in `vutekMedia` from the parsed JDF.
+      if (thriveMatch.printMedia) {
+        job.media = {
+          brand: job.media?.brand ?? null,
+          description: thriveMatch.printMedia,
+          type: job.media?.type ?? null,
+          vutekMedia: job.media?.vutekMedia ?? null,
+        };
+      }
+    }
+  }
+
+  // For recent unlinked jobs, try file server search fallback
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const unlinkedRecent = jobs.filter(
+    (j) => !j.thriveJobMatch && j.timestamp && new Date(j.timestamp).getTime() > weekAgo
+  );
+  // Limit file server searches to avoid slow responses
+  const searchBatch = unlinkedRecent.slice(0, 20);
+  if (searchBatch.length > 0) {
+    await Promise.all(
+      searchBatch.map(async (job) => {
+        try {
+          const sourcePath = await searchFileServerForSource(job.jobName);
+          if (sourcePath) {
+            const pathInfo = parseThrivePath(sourcePath);
+            job.workOrderNumber = pathInfo.workOrderNumber;
+            job.customerName = pathInfo.customerName;
+            job.thriveFilePath = sourcePath;
+          }
+        } catch {}
+      })
+    );
+  }
+
+  return jobs;
+}
+
 /**
  * Get all Fiery jobs with Thrive cross-reference.
  * Optionally accepts pre-fetched Thrive print jobs to avoid a duplicate network call.
  */
 export async function getAllFieryJobs(preFetchedPrintJobs?: Array<{ fileName: string; jobName: string }>): Promise<FieryJob[]> {
-  // Return cached result if still valid (and no pre-fetched data to override lookup)
-  if (!preFetchedPrintJobs && fieryJobsCache && Date.now() < fieryJobsCache.expiresAt) {
-    return fieryJobsCache.data;
-  }
-
-  const jdfFiles = await getAllJdfFiles();
-  
   // Build thrive lookup from pre-fetched data or fetch fresh
   const thriveLookup = preFetchedPrintJobs
     ? buildThriveJobLookupFromData(preFetchedPrintJobs)
     : await buildThriveJobLookup();
-  
+
+  // Return cached JDF parse if still valid, then re-apply the current Thrive lookup
+  // so callers with fresh pre-fetched queue data still get fast responses.
+  if (fieryJobsCache && Date.now() < fieryJobsCache.expiresAt) {
+    return enrichFieryJobs(fieryJobsCache.data, thriveLookup);
+  }
+
+  const jdfFiles = await getAllJdfFiles();
+
   // Parse JDF files in parallel (batches of 10 to avoid too many open file handles)
   const BATCH_SIZE = 10;
   const jobs: FieryJob[] = [];
@@ -504,54 +576,14 @@ export async function getAllFieryJobs(preFetchedPrintJobs?: Array<{ fileName: st
     const batch = jdfFiles.slice(i, i + BATCH_SIZE);
     const parsed = await Promise.all(batch.map(f => parseJdfFile(f)));
     for (const job of parsed) {
-      if (job) {
-        const normalizedFieryName = normalizeJobName(job.jobName);
-        const thriveMatch = thriveLookup.get(normalizedFieryName);
-        if (thriveMatch) {
-          const pathInfo = parseThrivePath(thriveMatch.fileName);
-          job.workOrderNumber = pathInfo.workOrderNumber;
-          job.customerName = pathInfo.customerName;
-          job.thriveFilePath = thriveMatch.fileName;
-          job.thriveJobMatch = true;
-          // Keep the Thrive print-media label separate from the RIP substrate.
-          // The actual RIP-side media remains in `vutekMedia` from the parsed JDF.
-          if (thriveMatch.printMedia) {
-            job.media = {
-              ...job.media!,
-              description: thriveMatch.printMedia,
-            };
-          }
-        }
-        jobs.push(job);
-      }
+      if (job) jobs.push(job);
     }
   }
-  
-  // For recent unlinked jobs, try file server search fallback
-  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const unlinkedRecent = jobs.filter(j =>
-    !j.thriveJobMatch && j.timestamp && new Date(j.timestamp).getTime() > weekAgo
-  );
-  // Limit file server searches to avoid slow responses
-  const searchBatch = unlinkedRecent.slice(0, 20);
-  if (searchBatch.length > 0) {
-    await Promise.all(searchBatch.map(async (job) => {
-      try {
-        const sourcePath = await searchFileServerForSource(job.jobName);
-        if (sourcePath) {
-          const pathInfo = parseThrivePath(sourcePath);
-          job.workOrderNumber = pathInfo.workOrderNumber;
-          job.customerName = pathInfo.customerName;
-          job.thriveFilePath = sourcePath;
-        }
-      } catch {}
-    }));
-  }
 
-  // Cache result
+  // Cache the parsed JDF snapshot; Thrive enrichment is applied per call.
   fieryJobsCache = { data: jobs, expiresAt: Date.now() + FIERY_CACHE_TTL_MS };
-  
-  return jobs;
+
+  return enrichFieryJobs(jobs, thriveLookup);
 }
 
 async function scanFieryDownloadFiles(dir: string, depth: number): Promise<FieryDownloadFile[]> {

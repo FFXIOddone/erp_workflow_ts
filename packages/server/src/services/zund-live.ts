@@ -36,6 +36,15 @@ interface QueueScanSnapshot {
 }
 const queueFileCache = new TtlCache<QueueScanSnapshot>(60_000); // 60s TTL
 const QUEUE_SCAN_CACHE_KEY = 'zund-queue-files';
+const QUEUE_REACHABILITY_TIMEOUT_MS = 3000;
+const REALTIME_SOURCE_TIMEOUT_MS = 5000;
+const QUEUE_SCAN_TIME_BUDGET_MS = 5000;
+const QUEUE_ACCESS_SUCCESS_TTL_MS = 30_000;
+const QUEUE_ACCESS_FAILURE_TTL_MS = 5_000;
+const QUEUE_SCAN_FAILURE_TTL_MS = 30_000;
+const queueAccessCache = new Map<string, { result: boolean; expiresAt: number }>();
+const queueAccessInFlight = new Map<string, Promise<boolean>>();
+const queueScanCooldown = new Map<string, number>();
 
 /** Race a promise against a timeout. Rejects with TimeoutError on expiry. */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -142,7 +151,7 @@ interface ThriveCutFileInfo {
 
 /**
  * Scan all Thrive Cut Center folders for pending cut files (.xml, .xml_tmp).
- * Machines are scanned in parallel with a 3s timeout per machine.
+ * Machines are scanned in parallel with a 5s timeout per machine.
  */
 async function scanThriveCutFiles(): Promise<ThriveCutFileInfo[]> {
   const machineResults = await Promise.allSettled(
@@ -175,7 +184,7 @@ async function scanThriveCutFiles(): Promise<ThriveCutFileInfo[]> {
           }
         }
         return results;
-      })(), 5000, `scanThriveCut-${machine.name}`))
+      })(), REALTIME_SOURCE_TIMEOUT_MS, `scanThriveCut-${machine.name}`))
   );
 
   const results: ThriveCutFileInfo[] = [];
@@ -271,6 +280,44 @@ export interface ZundQueueFile {
   busyInfo: BusyInfo | null;
 }
 
+async function isQueueFolderAccessible(folderPath: string, label: string): Promise<boolean> {
+  const cached = queueAccessCache.get(folderPath);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.result;
+  }
+
+  const inflight = queueAccessInFlight.get(folderPath);
+  if (inflight) {
+    return inflight;
+  }
+
+  const accessPromise = (async () => {
+    try {
+      await withTimeout(fs.access(folderPath), QUEUE_REACHABILITY_TIMEOUT_MS, label);
+      queueAccessCache.set(folderPath, {
+        result: true,
+        expiresAt: Date.now() + QUEUE_ACCESS_SUCCESS_TTL_MS,
+      });
+      return true;
+    } catch {
+      queueAccessCache.set(folderPath, {
+        result: false,
+        expiresAt: Date.now() + QUEUE_ACCESS_FAILURE_TTL_MS,
+      });
+      return false;
+    } finally {
+      queueAccessInFlight.delete(folderPath);
+    }
+  })();
+
+  queueAccessInFlight.set(folderPath, accessPromise);
+  return accessPromise;
+}
+
+function getRemainingBudget(deadline: number): number {
+  return Math.max(1, Math.min(REALTIME_SOURCE_TIMEOUT_MS, deadline - Date.now()));
+}
+
 /**
  * Scan both JobQueue and JobDoneQueue folders for .zcc files.
  * JobQueue = incomplete/queued, JobDoneQueue = completed.
@@ -279,11 +326,25 @@ export interface ZundQueueFile {
  */
 async function scanZundQueueFilesRaw(limit = 200): Promise<ZundQueueFile[]> {
   const results: ZundQueueFile[] = [];
+  const deadline = Date.now() + QUEUE_SCAN_TIME_BUDGET_MS;
 
   // Scan a queue folder for .zcc files
   async function scanFolder(folderPath: string, defaultStatus: ZundLiveJobStatus, maxFiles: number) {
+    if (Date.now() >= deadline) {
+      return;
+    }
+
+    const cooldownUntil = queueScanCooldown.get(folderPath);
+    if (cooldownUntil && cooldownUntil > Date.now()) {
+      return;
+    }
+
     try {
-      const entries = await fs.readdir(folderPath, { withFileTypes: true });
+      const entries = await withTimeout(
+        fs.readdir(folderPath, { withFileTypes: true }),
+        getRemainingBudget(deadline),
+        `readdir ${path.basename(folderPath)}`,
+      );
       const zccEntries: { name: string; stat: Awaited<ReturnType<typeof fs.stat>> }[] = [];
       const busyFileNames = new Set<string>();
 
@@ -305,11 +366,19 @@ async function scanZundQueueFilesRaw(limit = 200): Promise<ZundQueueFile[]> {
       // Stat files in parallel batches of 20 to avoid thread pool exhaustion
       const BATCH_SIZE = 20;
       for (let i = 0; i < zccNames.length; i += BATCH_SIZE) {
+        if (Date.now() >= deadline) {
+          break;
+        }
+
         const batch = zccNames.slice(i, i + BATCH_SIZE);
         const batchResults = await Promise.allSettled(
           batch.map(async (name) => {
             const fullPath = path.join(folderPath, name);
-            const stat = await fs.stat(fullPath);
+            const stat = await withTimeout(
+              fs.stat(fullPath),
+              getRemainingBudget(deadline),
+              `stat ${name}`,
+            );
             return { name, stat };
           })
         );
@@ -326,6 +395,10 @@ async function scanZundQueueFilesRaw(limit = 200): Promise<ZundQueueFile[]> {
       const limited = zccEntries.slice(0, maxFiles);
 
       for (const { name, stat } of limited) {
+        if (Date.now() >= deadline) {
+          break;
+        }
+
         const fullPath = path.join(folderPath, name);
         
         // Check for .busy file — indicates actively cutting
@@ -341,7 +414,11 @@ async function scanZundQueueFilesRaw(limit = 200): Promise<ZundQueueFile[]> {
 
         if (actualBusyFile) {
           try {
-            const busyContent = await fs.readFile(path.join(folderPath, actualBusyFile), 'utf-8');
+            const busyContent = await withTimeout(
+              fs.readFile(path.join(folderPath, actualBusyFile), 'utf-8'),
+              getRemainingBudget(deadline),
+              `readBusy ${actualBusyFile}`,
+            );
             busyInfo = parseBusyFile(busyContent);
             status = 'active'; // Has .busy file = actively cutting
           } catch { /* ignore */ }
@@ -350,12 +427,23 @@ async function scanZundQueueFilesRaw(limit = 200): Promise<ZundQueueFile[]> {
         // Parse .zcc XML for metadata (read only first 4KB for speed)
         let zccData: ZccParsed = { jobName: '', material: null, materialBrand: null, creationDate: null, orderId: null };
         try {
-          const fd = await fs.open(fullPath, 'r');
-          const buf = Buffer.alloc(4096);
-          await fd.read(buf, 0, 4096, 0);
-          await fd.close();
-          const xmlStr = buf.toString('utf-8').replace(/\0+$/, '');
-          zccData = parseZccXml(xmlStr);
+          const fd = await withTimeout(
+            fs.open(fullPath, 'r'),
+            getRemainingBudget(deadline),
+            `open ${name}`,
+          );
+          try {
+            const buf = Buffer.alloc(4096);
+            await withTimeout(
+              fd.read(buf, 0, 4096, 0),
+              getRemainingBudget(deadline),
+              `read ${name}`,
+            );
+            const xmlStr = buf.toString('utf-8').replace(/\0+$/, '');
+            zccData = parseZccXml(xmlStr);
+          } finally {
+            await fd.close().catch(() => {});
+          }
         } catch { /* skip unparseable */ }
 
         results.push({
@@ -368,18 +456,27 @@ async function scanZundQueueFilesRaw(limit = 200): Promise<ZundQueueFile[]> {
           busyInfo,
         });
       }
+      queueScanCooldown.delete(folderPath);
     } catch (err) {
+      queueScanCooldown.set(folderPath, Date.now() + QUEUE_SCAN_FAILURE_TTL_MS);
       console.warn(`[ZundLive] Cannot scan Zund queue folder ${folderPath}:`, (err as Error).message);
     }
   }
 
-  // Scan both folders — allocate more to job queue (active/pending), fewer to done
-  // Each folder scan has a 10s timeout to avoid hanging on unreachable shares
+  const [jobQueueAccessible, doneQueueAccessible] = await Promise.all([
+    isQueueFolderAccessible(ZUND_JOB_QUEUE, 'access JobQueue'),
+    isQueueFolderAccessible(ZUND_JOB_DONE_QUEUE, 'access DoneQueue'),
+  ]);
+
+  // Scan both folders — allocate more to job queue (active/pending), fewer to done.
+  // Once a share is reachable, let the active scan finish instead of timing it out mid-read.
   await Promise.all([
-    withTimeout(scanFolder(ZUND_JOB_QUEUE, 'queued', Math.ceil(limit * 0.6)), 10_000, 'scanZundJobQueue')
-      .catch(err => console.warn('[ZundLive] JobQueue scan failed:', err.message)),
-    withTimeout(scanFolder(ZUND_JOB_DONE_QUEUE, 'completed', Math.floor(limit * 0.4)), 10_000, 'scanZundDoneQueue')
-      .catch(err => console.warn('[ZundLive] DoneQueue scan failed:', err.message)),
+    jobQueueAccessible
+      ? scanFolder(ZUND_JOB_QUEUE, 'queued', Math.ceil(limit * 0.6))
+      : Promise.resolve(),
+    doneQueueAccessible
+      ? scanFolder(ZUND_JOB_DONE_QUEUE, 'completed', Math.floor(limit * 0.4))
+      : Promise.resolve(),
   ]);
 
   return results;
@@ -506,9 +603,9 @@ async function fetchZundLiveData(
   // NOTE: isZundStatsAccessible moved inside Source 1 so it runs in parallel with Sources 2 & 3
 
   let hasStatsDb = false;
-  let cutter = null;
+  let cutter: ZundLiveData['cutter'] = null;
   let dbVersion: string | null = null;
-  let todayStats = null;
+  let todayStats: ZundDashboard['todayStats'] | null = null;
   let toolWear: ZundDashboard['toolWear'] = [];
 
   // ── Run sources in parallel ──
@@ -583,9 +680,9 @@ async function fetchZundLiveData(
         });
       }
       return { jobs: srcJobs, normalizedNames: srcNames };
-    })(), 15_000, 'Source1-StatsDB'),
+    })(), REALTIME_SOURCE_TIMEOUT_MS, 'Source1-StatsDB'),
 
-    // Source 2: Thrive Cut Center (5s timeout) — skip in statsOnly mode
+    // Source 2: Thrive Cut Center — skip in statsOnly mode
     statsOnly ? Promise.resolve(emptyResult) : withTimeout((async (): Promise<SourceResult> => {
       const srcJobs: ZundLiveJob[] = [];
       const srcNames = new Map<string, true>();
@@ -630,9 +727,9 @@ async function fetchZundLiveData(
         });
       }
       return { jobs: srcJobs, normalizedNames: srcNames };
-    })(), 15_000, 'Source2-ThriveCut'),
+    })(), REALTIME_SOURCE_TIMEOUT_MS, 'Source2-ThriveCut'),
 
-    // Source 3: File Server Zund Queue (5s timeout) — skip in statsOnly mode
+    // Source 3: File Server Zund Queue — skip in statsOnly mode
     statsOnly ? Promise.resolve(emptyResult) : withTimeout((async (): Promise<SourceResult> => {
       const srcJobs: ZundLiveJob[] = [];
       const srcNames = new Map<string, true>();
@@ -687,7 +784,7 @@ async function fetchZundLiveData(
         });
       }
       return { jobs: srcJobs, normalizedNames: srcNames };
-    })(), 15_000, 'Source3-ZundQueue'),
+    })(), REALTIME_SOURCE_TIMEOUT_MS, 'Source3-ZundQueue'),
   ]);
 
   // ── Merge results with deduplication (priority: stats > cut > queue) ──
@@ -710,17 +807,48 @@ async function fetchZundLiveData(
     }
   }
 
-  // ── Cross-reference unlinked jobs with Thrive print logs (3s total timeout) ──
-  // For jobs without a WO match, try to find the Cut ID (GUID) in Thrive print job names
-  try {
-    const unlinked = jobs.filter(j => !j.workOrderNumber && j.jobName);
-    if (unlinked.length > 0) {
-      await withTimeout((async () => {
+  const buildResult = (): ZundLiveData => {
+    const activeCount = jobs.filter(j => j.status === 'active').length;
+    const queuedCount = jobs.filter(j => j.status === 'queued').length;
+    const completedCount = jobs.filter(j => j.status === 'completed').length;
+    const linkedCount = jobs.filter(j => j.workOrderNumber).length;
+    const unlinkedCount = jobs.filter(j => !j.workOrderNumber).length;
+
+    return {
+      zundId,
+      hasStatsDb,
+      cutter,
+      dbVersion,
+      todayStats,
+      toolWear,
+      jobs: jobs.map((job) => ({ ...job })),
+      summary: {
+        activeCount,
+        queuedCount,
+        completedCount,
+        totalJobs: jobs.length,
+        linkedCount,
+        unlinkedCount,
+      },
+      timestamp: new Date().toISOString(),
+    };
+  };
+
+  const result = buildResult();
+
+  // Clear WO cache after each request to keep it fresh
+  woCache.clear();
+
+  // Store in cache before optional background enrichment so the UI can paint quickly.
+  zundLiveCache.set(cacheKey, result);
+
+  const unlinked = jobs.filter(j => !j.workOrderNumber && j.jobName);
+  if (!statsOnly && unlinked.length > 0) {
+    void withTimeout((async () => {
       const { thriveService } = await import('./thrive.js');
       const { printJobs } = await thriveService.getAllJobs();
       const linkedPrint = await thriveService.linkJobsToWorkOrders(printJobs);
 
-      // Build maps: normalized name → WO, CutID → WO, GUID → WO
       type WoInfo = { wo: string; woId?: string; customer?: string };
       const printJobMap = new Map<string, WoInfo>();
       const cutIdMap = new Map<string, WoInfo>();
@@ -734,17 +862,13 @@ async function fetchZundLiveData(
           };
           const norm = normalizeJobName(job.jobName);
           printJobMap.set(norm, info);
-          // Index by CutID (strongest signal — same ID on print and cut sides)
           const cutId = extractCutId(job.jobName);
           if (cutId) cutIdMap.set(cutId.toLowerCase(), info);
-          // Index by GUID if available
           if (job.jobGuid) guidMap.set(job.jobGuid.toLowerCase(), info);
         }
       }
 
-      // Try to match unlinked jobs
       for (const uj of unlinked) {
-        // 1. CutID match (highest confidence — shared between print and cut file names)
         const ujCutId = extractCutId(uj.jobName);
         if (ujCutId) {
           const cutIdMatch = cutIdMap.get(ujCutId.toLowerCase());
@@ -758,8 +882,6 @@ async function fetchZundLiveData(
         }
 
         const norm = normalizeJobName(uj.jobName);
-
-        // 2. Direct normalized name match
         const directMatch = printJobMap.get(norm);
         if (directMatch) {
           uj.workOrderNumber = directMatch.wo;
@@ -769,9 +891,8 @@ async function fetchZundLiveData(
           continue;
         }
 
-        // 3. Check if any print job name contains the Zund job name or vice versa
         for (const [printNorm, info] of printJobMap) {
-          if (printNorm.length < 5) continue; // Skip very short names
+          if (printNorm.length < 5) continue;
           if (norm.includes(printNorm) || printNorm.includes(norm)) {
             uj.workOrderNumber = info.wo;
             uj.workOrderId = info.woId ?? null;
@@ -781,7 +902,6 @@ async function fetchZundLiveData(
           }
         }
 
-        // 4. If GUID available, try GUID match
         if (!uj.workOrderNumber && uj.guid) {
           const guidMatch = guidMap.get(uj.guid.toLowerCase());
           if (guidMatch) {
@@ -792,43 +912,15 @@ async function fetchZundLiveData(
           }
         }
       }
-      })(), 8000, 'cross-ref-all');
-    }
-  } catch (err) {
-    console.warn('[ZundLive] Cross-ref error:', (err as Error).message);
+    })(), REALTIME_SOURCE_TIMEOUT_MS, 'cross-ref-all')
+      .then(() => {
+        woCache.clear();
+        zundLiveCache.set(cacheKey, buildResult());
+      })
+      .catch((err) => {
+        console.warn('[ZundLive] Cross-ref error:', (err as Error).message);
+      });
   }
-
-  // ── Build summary ──
-  const activeCount = jobs.filter(j => j.status === 'active').length;
-  const queuedCount = jobs.filter(j => j.status === 'queued').length;
-  const completedCount = jobs.filter(j => j.status === 'completed').length;
-  const linkedCount = jobs.filter(j => j.workOrderNumber).length;
-  const unlinkedCount = jobs.filter(j => !j.workOrderNumber).length;
-
-  // Clear WO cache after each request to keep it fresh
-  woCache.clear();
-
-  const result: ZundLiveData = {
-    zundId,
-    hasStatsDb,
-    cutter,
-    dbVersion,
-    todayStats,
-    toolWear,
-    jobs,
-    summary: {
-      activeCount,
-      queuedCount,
-      completedCount,
-      totalJobs: jobs.length,
-      linkedCount,
-      unlinkedCount,
-    },
-    timestamp: new Date().toISOString(),
-  };
-
-  // Store in cache
-  zundLiveCache.set(cacheKey, result);
 
   return result;
 }

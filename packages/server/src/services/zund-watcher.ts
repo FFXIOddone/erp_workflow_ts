@@ -96,10 +96,13 @@ async function processNewZccFile(fileName: string, fullPath: string): Promise<st
   let zccMeta: ZccMetadata = { jobName: '', material: null, orderId: null };
   try {
     const fd = await fs.open(fullPath, 'r');
-    const buf = Buffer.alloc(4096);
-    await fd.read(buf, 0, 4096, 0);
-    await fd.close();
-    zccMeta = parseZccHeader(buf.toString('utf-8').replace(/\0+$/, ''));
+    try {
+      const buf = Buffer.alloc(4096);
+      await fd.read(buf, 0, 4096, 0);
+      zccMeta = parseZccHeader(buf.toString('utf-8').replace(/\0+$/, ''));
+    } finally {
+      await fd.close().catch(() => {});
+    }
   } catch { /* will work with filename alone */ }
 
   const displayName = zccMeta.jobName || fileName;

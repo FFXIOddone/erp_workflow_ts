@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { promises as fs } from 'fs';
 import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
@@ -55,6 +56,32 @@ import {
 } from '@erp/shared';
 
 const router = Router();
+const REMOTE_SHARE_REACHABILITY_TIMEOUT_MS = 3000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timeout: ${label} (${ms}ms)`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function isRemotePathAccessible(path: string, label: string): Promise<boolean> {
+  try {
+    await withTimeout(fs.access(path), REMOTE_SHARE_REACHABILITY_TIMEOUT_MS, label);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // All routes require authentication
 router.use(authenticate);
@@ -1479,29 +1506,12 @@ router.get('/zund/:zundId/live', async (req: AuthRequest, res) => {
     const { zundId } = req.params;
     const limit = parseInt(req.query.limit as string) || 50;
     const zccLimit = parseInt(req.query.zccLimit as string) || 50;
-
-    // Hard 20s timeout — if data takes longer, return 504
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Zund live data timeout (20s)')), 20_000)
-    );
-
-    const data = await Promise.race([
-      getZundLiveData(zundId, { recentJobLimit: limit, zccLimit, statsOnly: true }),
-      timeout,
-    ]);
+    const data = await getZundLiveData(zundId, { recentJobLimit: limit, zccLimit, statsOnly: true });
 
     res.json({ success: true, data });
   } catch (err: any) {
-    if (err.message?.includes('timeout')) {
-      console.warn('[Zund Live] Request timed out for', req.params.zundId);
-      res.status(504).json({
-        success: false,
-        error: 'Zund live data timed out. Retrying will use cached data.',
-      });
-    } else {
-      console.error('[Zund Live]', err);
-      res.status(500).json({ success: false, error: err.message });
-    }
+    console.error('[Zund Live]', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1797,7 +1807,7 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
       // ─── Zund Queue Files ───
       (async () => {
         try {
-          const allQueueFiles = await scanZundQueueFiles(500);
+          const allQueueFiles = await scanZundQueueFiles(100);
           return allQueueFiles
             .filter((f) => {
               const name = f.zccData.jobName || f.fileName;
@@ -1868,7 +1878,11 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
                 continue;
               }
               // Strategy 2: CutID lookup in Thrive print history logs
-              const thriveLogEntry = await thriveService.findJobByCutId(zundCutId);
+              const thriveLogEntry = await withTimeout(
+                thriveService.findJobByCutId(zundCutId),
+                2000,
+                `findJobByCutId ${zundCutId}`,
+              ).catch(() => null);
               if (thriveLogEntry) {
                 const woInfo = parseJobInfo(
                   thriveLogEntry.sourceFilePath ||
@@ -1893,7 +1907,11 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
       // ─── Fiery Jobs (pass pre-fetched Thrive data to avoid duplicate network call) ───
       (async () => {
         try {
-          const allFieryJobs = await getAllFieryJobs(printJobs);
+          const allFieryJobs = await withTimeout(
+            getAllFieryJobs(printJobs),
+            3000,
+            'getAllFieryJobs',
+          ).catch(() => []);
           return allFieryJobs
             .filter((fj) => {
               if (fj.workOrderNumber === orderNumber || fj.workOrderNumber === `WO${bareNumber}`)
@@ -2294,34 +2312,33 @@ router.get('/thrive/trace-file', async (req, res) => {
 // GET /equipment/thrive/status - Check connectivity to all production equipment
 router.get('/thrive/status', async (_req, res) => {
   const status: Record<string, { online: boolean; error?: string }> = {};
-  const fs = await import('fs/promises');
 
   for (const machine of thriveService.config.machines) {
-    try {
-      await fs.access(machine.share);
+    const reachable = await isRemotePathAccessible(machine.share, `access ${machine.id}`);
+    if (reachable) {
       status[machine.id] = { online: true };
-    } catch (error: any) {
-      status[machine.id] = { online: false, error: error.code || error.message };
+    } else {
+      status[machine.id] = { online: false, error: 'timeout-or-unreachable' };
     }
   }
 
   for (const zund of thriveService.config.zundMachines) {
     if (zund.statisticsPath) {
-      try {
-        await fs.access(zund.statisticsPath);
+      const reachable = await isRemotePathAccessible(zund.statisticsPath, `access ${zund.id}`);
+      if (reachable) {
         status[zund.id] = { online: true };
-      } catch (error: any) {
-        status[zund.id] = { online: false, error: error.code || error.message };
+      } else {
+        status[zund.id] = { online: false, error: 'timeout-or-unreachable' };
       }
     }
   }
 
   if (thriveService.config.fiery.exportPath) {
-    try {
-      await fs.access(thriveService.config.fiery.exportPath);
+    const reachable = await isRemotePathAccessible(thriveService.config.fiery.exportPath, 'access fiery');
+    if (reachable) {
       status['fiery'] = { online: true };
-    } catch (error: any) {
-      status['fiery'] = { online: false, error: error.code || error.message };
+    } else {
+      status['fiery'] = { online: false, error: 'timeout-or-unreachable' };
     }
   }
 

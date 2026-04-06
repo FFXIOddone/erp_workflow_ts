@@ -485,18 +485,10 @@ export async function getAllThriveJobs(): Promise<{
   const printJobs = printResults.flatMap((r) => r.jobs);
   const cutJobs = cutResults.flatMap((r) => r.jobs);
 
-  try {
-    const jobLogEntries = await getAllThriveJobLogEntries();
-    for (const entry of jobLogEntries) {
-      if (!entry.cutId) continue;
-      const matchedJob = matchThriveQueueJobToLogEntry(entry, printJobs);
-      if (matchedJob && !matchedJob.cutId) {
-        matchedJob.cutId = entry.cutId;
-      }
-    }
-  } catch {
-    // JobLog enrichment is best-effort. Live queue data should still return without it.
-  }
+  // Keep the live queue snapshot on the critical path only.
+  // JobLog enrichment is best-effort and should warm in the background so a cold
+  // or slow network share does not hold the order-detail print/cut cards hostage.
+  void getAllThriveJobLogEntries().catch(() => {});
 
   return { printJobs, cutJobs };
 }

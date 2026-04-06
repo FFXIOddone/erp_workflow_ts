@@ -24,9 +24,10 @@ import {
   PrintingMethod,
   PARENT_SUB_STATIONS,
   SUB_STATION_PARENTS,
+  UserRole,
 } from '@erp/shared';
 import { prisma } from '../db/client.js';
-import { authenticate, type AuthRequest } from '../middleware/auth.js';
+import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError, BadRequestError } from '../middleware/error-handler.js';
 import { broadcast } from '../ws/server.js';
 import { createNotification, notifyAdminsAndManagers } from './notifications.js';
@@ -47,6 +48,10 @@ import {
   inferRoutingSource,
 } from '../lib/routing-defaults.js';
 import { recordRoutingOutcome, type RoutingOptimizationContext } from '../services/routing-optimization.js';
+import {
+  getOrderLinkedDataSummary,
+  repairOrderLinkedDataIntegrity,
+} from '../services/order-linked-data.js';
 
 export const ordersRouter = Router();
 const MATERIAL_DEDUCTION_STATIONS = ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT', 'CUT', 'FABRICATION', 'INSTALLATION'];
@@ -1122,6 +1127,17 @@ ordersRouter.get('/:id([0-9a-fA-F-]{36})', async (req: AuthRequest, res: Respons
   }
 
   res.json({ success: true, data: order });
+});
+
+// GET /orders/:id/linked-data - Get linked ERP data for the order detail page
+ordersRouter.get('/:id([0-9a-fA-F-]{36})/linked-data', async (req: AuthRequest, res: Response) => {
+  const summary = await getOrderLinkedDataSummary(req.params.id);
+
+  if (!summary) {
+    throw NotFoundError('Order not found');
+  }
+
+  res.json({ success: true, data: summary });
 });
 
 // POST /orders - Create order
@@ -2614,6 +2630,20 @@ ordersRouter.post('/:id/proof-status', async (req: AuthRequest, res: Response) =
       });
     }
 
+    await prisma.workEvent.create({
+      data: {
+        orderId: id,
+        eventType: 'STATUS_CHANGED',
+        description: 'Proof approved',
+        userId,
+        details: {
+          status: 'APPROVED',
+          revision: latestProof?.revision ?? revision ?? null,
+          ...(comments ? { comments } : {}),
+        },
+      },
+    });
+
     broadcast({
       type: 'PROOF_STATUS_CHANGED',
       payload: { orderId: id, orderNumber: order.orderNumber, status: 'APPROVED' },
@@ -2786,6 +2816,31 @@ ordersRouter.post('/:id/shipping-qc', async (req: AuthRequest, res: Response) =>
     userId,
   });
 
+  await prisma.workEvent.create({
+    data: {
+      orderId: id,
+      eventType: 'STATION_COMPLETED',
+      description: 'Shipping QC completed',
+      userId,
+      details: {
+        station: 'SHIPPING_QC',
+        checks,
+        allPassed,
+      },
+    },
+  });
+
+  broadcast({
+    type: 'STATION_COMPLETED',
+    payload: {
+      orderId: id,
+      orderNumber: order.orderNumber,
+      station: 'SHIPPING_QC',
+      allPassed,
+    },
+    timestamp: new Date(),
+  });
+
   res.json({ success: true, data: { allPassed, checks } });
 });
 
@@ -2884,3 +2939,39 @@ ordersRouter.post('/batch/fix-printing-routing', async (req: AuthRequest, res: R
 
   res.json({ success: true, data: { fixed: updated.length, orders: updated } });
 });
+
+// POST /orders/batch/repair-linked-data - Repair routing, file chains, and shipment scaffolding
+ordersRouter.post(
+  '/batch/repair-linked-data',
+  requireRole(UserRole.ADMIN, UserRole.MANAGER),
+  async (req: AuthRequest, res: Response) => {
+    const { orderIds } = req.body ?? {};
+
+    if (orderIds !== undefined && (!Array.isArray(orderIds) || orderIds.some((id) => typeof id !== 'string'))) {
+      throw BadRequestError('orderIds must be an array of order id strings');
+    }
+
+    const result = await repairOrderLinkedDataIntegrity({
+      orderIds,
+      actorUserId: req.userId!,
+    });
+
+    await logActivity({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: 'system',
+      description: `Linked data repair scanned ${result.scanned} order(s), updated ${result.routingUpdated} routing record(s), backfilled ${result.stationProgressBackfilled} station progress row(s), created ${result.fileChainsCreated} file chain placeholder(s), and created ${result.shipmentsCreated} shipment placeholder(s)`,
+      userId: req.userId!,
+      req,
+      details: {
+        scanned: result.scanned,
+        routingUpdated: result.routingUpdated,
+        stationProgressBackfilled: result.stationProgressBackfilled,
+        fileChainsCreated: result.fileChainsCreated,
+        shipmentsCreated: result.shipmentsCreated,
+      },
+    });
+
+    res.json({ success: true, data: result });
+  },
+);

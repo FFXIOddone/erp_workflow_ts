@@ -94,6 +94,13 @@ const LOCAL_CACHE_DIR = path.join(os.tmpdir(), 'erp-zund-stats');
 
 // How often to re-copy the DB from SMB (in ms)
 const REFRESH_INTERVAL_MS = 30000; // 30 seconds
+const ZUND_REACHABILITY_TIMEOUT_MS = 3000;
+const MATERIAL_REACHABILITY_TIMEOUT_MS = 5000;
+const MATERIAL_COPY_TIMEOUT_MS = 5000;
+const ACCESS_CACHE_SUCCESS_TTL_MS = 30_000;
+const ACCESS_CACHE_FAILURE_TTL_MS = 5_000;
+const MATERIAL_ACCESS_SUCCESS_TTL_MS = 30_000;
+const MATERIAL_ACCESS_FAILURE_TTL_MS = 5_000;
 
 // Last refresh timestamps
 const lastRefresh: Record<string, number> = {};
@@ -129,7 +136,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 /**
  * Copy the Zund stats DB from the SMB share to a local temp file.
  * This avoids lock contention with ZCC writing to the DB.
- * Now async with a 3-second timeout to avoid blocking when SMB is unreachable.
+ * Uses a fast reachability check up front, then lets an active copy finish.
  */
 async function refreshLocalCopy(zundId: string): Promise<string> {
   const remotePath = ZUND_STATS_PATHS[zundId];
@@ -156,18 +163,23 @@ async function refreshLocalCopy(zundId: string): Promise<string> {
 
   const inflight = refreshInFlight[zundId];
   if (inflight) {
-    return inflight;
+    return localExists ? localPath : inflight;
   }
 
-  const refreshPromise = (async () => {
+  const runRefresh = async (hasFallbackCopy: boolean): Promise<string> => {
     try {
-      await withTimeout(fsP.copyFile(remotePath, localPath), 3000, `copyFile ${zundId}`);
+      const accessible = await isZundStatsAccessible(zundId);
+      if (!accessible) {
+        throw new Error(`Timeout: access ${zundId} (${ZUND_REACHABILITY_TIMEOUT_MS}ms)`);
+      }
+
+      await safeReplaceFromRemote(remotePath, localPath, null, `copyFile ${zundId}`);
       lastRefresh[zundId] = Date.now();
       delete refreshCooldownUntil[zundId];
       return localPath;
     } catch (err: any) {
       const message = err?.message ?? String(err);
-      if (fs.existsSync(localPath)) {
+      if (hasFallbackCopy && fs.existsSync(localPath)) {
         const cooldownMs = message.includes('Timeout: copyFile') || isBusyLikeError(err)
           ? REFRESH_BUSY_COOLDOWN_MS
           : REFRESH_GENERIC_COOLDOWN_MS;
@@ -179,8 +191,14 @@ async function refreshLocalCopy(zundId: string): Promise<string> {
     } finally {
       delete refreshInFlight[zundId];
     }
-  })();
+  };
 
+  if (localExists) {
+    refreshInFlight[zundId] = runRefresh(true).catch(() => localPath);
+    return localPath;
+  }
+
+  const refreshPromise = runRefresh(false);
   refreshInFlight[zundId] = refreshPromise;
   return refreshPromise;
 }
@@ -206,16 +224,28 @@ let materialNameMap: Record<string, string> = {};
 let materialMapLoadedAt = 0;
 const MATERIAL_MAP_TTL_MS = 86_400_000; // 24h
 let materialMapLoadPromise: Promise<void> | null = null;
+const materialAccessCache: Record<string, { result: boolean; expiresAt: number }> = {};
+const materialAccessInFlight: Record<string, Promise<boolean> | undefined> = {};
 
 function isBusyLikeError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return message.includes('EBUSY') || message.includes('EPERM') || message.includes('resource busy or locked');
 }
 
-async function safeReplaceFromRemote(remotePath: string, localPath: string, timeoutMs: number, label: string): Promise<void> {
+async function safeReplaceFromRemote(
+  remotePath: string,
+  localPath: string,
+  timeoutMs: number | null,
+  label: string,
+): Promise<void> {
   const tempPath = `${localPath}.${process.pid}.${Date.now()}.tmp`;
   try {
-    await withTimeout(fsP.copyFile(remotePath, tempPath), timeoutMs, label);
+    const copyPromise = fsP.copyFile(remotePath, tempPath);
+    if (timeoutMs == null) {
+      await copyPromise;
+    } else {
+      await withTimeout(copyPromise, timeoutMs, label);
+    }
     await fsP.rename(tempPath, localPath);
   } catch (err) {
     try {
@@ -226,6 +256,74 @@ async function safeReplaceFromRemote(remotePath: string, localPath: string, time
       // best effort cleanup
     }
     throw err;
+  }
+}
+
+async function isZundMaterialAccessible(zundId: string): Promise<boolean> {
+  const remotePath = ZUND_MATERIAL_PATHS[zundId];
+  if (!remotePath) return false;
+
+  const cached = materialAccessCache[zundId];
+  if (cached && Date.now() < cached.expiresAt) return cached.result;
+
+  const inflight = materialAccessInFlight[zundId];
+  if (inflight) {
+    return inflight;
+  }
+
+  const accessPromise = (async () => {
+    try {
+      await withTimeout(
+        fsP.access(remotePath, fs.constants.R_OK),
+        MATERIAL_REACHABILITY_TIMEOUT_MS,
+        `accessMaterial ${zundId}`,
+      );
+      materialAccessCache[zundId] = {
+        result: true,
+        expiresAt: Date.now() + MATERIAL_ACCESS_SUCCESS_TTL_MS,
+      };
+      return true;
+    } catch {
+      materialAccessCache[zundId] = {
+        result: false,
+        expiresAt: Date.now() + MATERIAL_ACCESS_FAILURE_TTL_MS,
+      };
+      return false;
+    } finally {
+      delete materialAccessInFlight[zundId];
+    }
+  })();
+
+  materialAccessInFlight[zundId] = accessPromise;
+  return accessPromise;
+}
+
+async function ensureLocalMaterialCopy(zundId: string, remotePath: string): Promise<string | null> {
+  const localPath = path.join(LOCAL_CACHE_DIR, `${zundId}_material.db3`);
+  const hasCachedCopy = fs.existsSync(localPath);
+
+  const accessible = await isZundMaterialAccessible(zundId);
+  if (!accessible) {
+    if (!hasCachedCopy) {
+      console.warn(
+        `[Zund] Cannot load Material.db3 for ${zundId}: Timeout: accessMaterial ${zundId} (${MATERIAL_REACHABILITY_TIMEOUT_MS}ms)`,
+      );
+      return null;
+    }
+    return localPath;
+  }
+
+  try {
+    await safeReplaceFromRemote(remotePath, localPath, MATERIAL_COPY_TIMEOUT_MS, `copyMaterial ${zundId}`);
+    return localPath;
+  } catch (err: any) {
+    if (!hasCachedCopy) {
+      console.warn(`[Zund] Cannot load Material.db3 for ${zundId}: ${err.message}`);
+      return null;
+    }
+    const severity = isBusyLikeError(err) ? 'log' : 'warn';
+    console[severity](`[Zund] Using cached Material.db3 for ${zundId}: ${err.message}`);
+    return localPath;
   }
 }
 
@@ -242,21 +340,18 @@ export async function loadMaterialMap(): Promise<void> {
   const newMap: Record<string, string> = {};
   ensureCacheDir();
 
-  for (const [zundId, remotePath] of Object.entries(ZUND_MATERIAL_PATHS)) {
-    const localPath = path.join(LOCAL_CACHE_DIR, `${zundId}_material.db3`);
-    try {
-      await safeReplaceFromRemote(remotePath, localPath, 5000, `copyMaterial ${zundId}`);
-    } catch (err: any) {
-      if (!fs.existsSync(localPath)) {
-        console.warn(`[Zund] Cannot load Material.db3 for ${zundId}: ${err.message}`);
-        continue;
-      }
-      const severity = isBusyLikeError(err) ? 'log' : 'warn';
-      console[severity](`[Zund] Using cached Material.db3 for ${zundId}: ${err.message}`);
-    }
+  const localMaterialCopies = await Promise.all(
+    Object.entries(ZUND_MATERIAL_PATHS).map(async ([zundId, remotePath]) => ({
+      zundId,
+      localPath: await ensureLocalMaterialCopy(zundId, remotePath),
+    })),
+  );
+
+  for (const materialSource of localMaterialCopies) {
+    if (!materialSource.localPath) continue;
 
     try {
-      const db = new Database(localPath, { readonly: true });
+      const db = new Database(materialSource.localPath, { readonly: true });
       const rows = db.prepare('SELECT GUID, Name FROM Material WHERE Hidden = 0').all() as { GUID: string; Name: string }[];
       for (const row of rows) {
         // Normalize GUID to lowercase for case-insensitive lookup
@@ -264,7 +359,7 @@ export async function loadMaterialMap(): Promise<void> {
       }
       db.close();
     } catch (err: any) {
-      console.warn(`[Zund] Failed to read Material.db3 for ${zundId}: ${err.message}`);
+      console.warn(`[Zund] Failed to read Material.db3 for ${materialSource.zundId}: ${err.message}`);
     }
   }
 
@@ -525,9 +620,10 @@ export function getAvailableZunds(): string[] {
 }
 
 /**
- * Check if a Zund stats DB is accessible (async with 2s timeout + 30s cache).
+ * Check if a Zund stats DB is accessible (async with a 3s timeout + short cache).
  */
 const accessCache: Record<string, { result: boolean; expiresAt: number }> = {};
+const accessInFlight: Record<string, Promise<boolean> | undefined> = {};
 
 export async function isZundStatsAccessible(zundId: string): Promise<boolean> {
   const remotePath = ZUND_STATS_PATHS[zundId];
@@ -536,12 +632,34 @@ export async function isZundStatsAccessible(zundId: string): Promise<boolean> {
   const cached = accessCache[zundId];
   if (cached && Date.now() < cached.expiresAt) return cached.result;
 
-  try {
-    await withTimeout(fsP.access(remotePath, fs.constants.R_OK), 2000, `access ${zundId}`);
-    accessCache[zundId] = { result: true, expiresAt: Date.now() + 30_000 };
-    return true;
-  } catch {
-    accessCache[zundId] = { result: false, expiresAt: Date.now() + 30_000 };
-    return false;
+  const inflight = accessInFlight[zundId];
+  if (inflight) {
+    return inflight;
   }
+
+  const accessPromise = (async () => {
+    try {
+      await withTimeout(
+        fsP.access(remotePath, fs.constants.R_OK),
+        ZUND_REACHABILITY_TIMEOUT_MS,
+        `access ${zundId}`,
+      );
+      accessCache[zundId] = {
+        result: true,
+        expiresAt: Date.now() + ACCESS_CACHE_SUCCESS_TTL_MS,
+      };
+      return true;
+    } catch {
+      accessCache[zundId] = {
+        result: false,
+        expiresAt: Date.now() + ACCESS_CACHE_FAILURE_TTL_MS,
+      };
+      return false;
+    } finally {
+      delete accessInFlight[zundId];
+    }
+  })();
+
+  accessInFlight[zundId] = accessPromise;
+  return accessPromise;
 }

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Printer, Scissors, Clock, CheckCircle, Loader2, AlertCircle, History, Mail, FileText } from 'lucide-react';
 import { api } from '../lib/api';
 import { formatRelativeTime } from '../lib/date';
+import { resolveActivityTimelinePresentation } from './activityTimelinePresentation';
 
 interface EquipmentActivityProps {
   orderNumber: string;
@@ -11,12 +12,29 @@ interface EquipmentActivityProps {
     description: string;
     createdAt: string;
     user: { displayName: string };
+    details?: Record<string, unknown>;
   }>;
 }
 
 interface EquipmentActivityItem {
   id: string;
-  type: 'PRINT_QUEUED' | 'PRINT_PROCESSING' | 'PRINT_READY' | 'PRINT_PRINTING' | 'PRINT_COMPLETED' | 'CUT_QUEUED' | 'CUT_COMPLETED' | 'EMAIL_SENT' | 'FILE_CREATED';
+  type:
+    | 'PRINT_QUEUED'
+    | 'PRINT_PROCESSING'
+    | 'PRINT_READY'
+    | 'PRINT_PRINTING'
+    | 'PRINT_COMPLETED'
+    | 'PRINTED'
+    | 'IN_RIP_QUEUE'
+    | 'CUT_QUEUED'
+    | 'CUT_COMPLETED'
+    | 'EMAIL_SENT'
+    | 'FILE_CREATED'
+    | 'PROOFED'
+    | 'APPROVED'
+    | 'FINISHING_DONE'
+    | 'QC_DONE'
+    | 'INSTALLED';
   description: string;
   timestamp: string;
   source: 'thrive' | 'zund' | 'email' | 'network';
@@ -24,15 +42,22 @@ interface EquipmentActivityItem {
 }
 
 const TYPE_CONFIG: Record<string, { icon: typeof Printer; color: string; bgColor: string }> = {
+  IN_RIP_QUEUE: { icon: Clock, color: 'text-sky-500', bgColor: 'bg-sky-100' },
   PRINT_QUEUED: { icon: Clock, color: 'text-gray-500', bgColor: 'bg-gray-100' },
   PRINT_PROCESSING: { icon: Loader2, color: 'text-blue-500', bgColor: 'bg-blue-100' },
   PRINT_READY: { icon: Printer, color: 'text-cyan-500', bgColor: 'bg-cyan-100' },
   PRINT_PRINTING: { icon: Printer, color: 'text-purple-500', bgColor: 'bg-purple-100' },
   PRINT_COMPLETED: { icon: CheckCircle, color: 'text-green-500', bgColor: 'bg-green-100' },
+  PRINTED: { icon: CheckCircle, color: 'text-green-500', bgColor: 'bg-green-100' },
   CUT_QUEUED: { icon: Scissors, color: 'text-orange-500', bgColor: 'bg-orange-100' },
   CUT_COMPLETED: { icon: CheckCircle, color: 'text-green-500', bgColor: 'bg-green-100' },
   EMAIL_SENT: { icon: Mail, color: 'text-cyan-500', bgColor: 'bg-cyan-100' },
   FILE_CREATED: { icon: FileText, color: 'text-amber-500', bgColor: 'bg-amber-100' },
+  PROOFED: { icon: FileText, color: 'text-violet-500', bgColor: 'bg-violet-100' },
+  APPROVED: { icon: CheckCircle, color: 'text-indigo-500', bgColor: 'bg-indigo-100' },
+  FINISHING_DONE: { icon: CheckCircle, color: 'text-orange-500', bgColor: 'bg-orange-100' },
+  QC_DONE: { icon: CheckCircle, color: 'text-cyan-500', bgColor: 'bg-cyan-100' },
+  INSTALLED: { icon: CheckCircle, color: 'text-emerald-500', bgColor: 'bg-emerald-100' },
 };
 
 export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: EquipmentActivityProps) {
@@ -53,6 +78,7 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
     timestamp: string;
     source: 'erp' | 'thrive' | 'zund' | 'email' | 'network';
     user?: string;
+    details?: Record<string, unknown>;
   }> = [];
 
   // Add order events
@@ -64,6 +90,7 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
       timestamp: event.createdAt,
       source: 'erp',
       user: event.user.displayName,
+      details: event.details,
     });
   }
 
@@ -76,6 +103,7 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
         description: activity.description,
         timestamp: activity.timestamp,
         source: activity.source,
+        details: activity.details,
       });
     }
   }
@@ -143,7 +171,8 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
             
             <div className="space-y-4">
               {combinedTimeline.map((item, index) => {
-                const config = TYPE_CONFIG[item.type] || { 
+                const presentation = resolveActivityTimelinePresentation(item);
+                const config = TYPE_CONFIG[presentation.key] || { 
                   icon: AlertCircle, 
                   color: 'text-gray-500', 
                   bgColor: 'bg-gray-100' 
@@ -151,6 +180,17 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
                 const Icon = config.icon;
                 
                 const isEquipment = item.source === 'thrive' || item.source === 'zund';
+                const showBadge = item.source === 'thrive' || item.source === 'zund' || item.source === 'network';
+                const badgeLabel = item.source === 'thrive'
+                  ? 'PRINT'
+                  : item.source === 'zund'
+                    ? 'CUT'
+                    : presentation.label;
+                const badgeClass = item.source === 'thrive'
+                  ? 'bg-blue-100 text-blue-700'
+                  : item.source === 'zund'
+                    ? 'bg-orange-100 text-orange-700'
+                    : `${config.bgColor} ${config.color}`;
                 
                 return (
                   <div key={item.id} className="relative pl-10">
@@ -170,15 +210,11 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
                           ? 'bg-primary-50/50 border border-primary-100' 
                           : 'bg-gray-50/50 border border-gray-100'
                     }`}>
-                      <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start justify-between gap-2">
                         <p className="text-sm text-gray-900 font-medium">{item.description}</p>
-                        {isEquipment && (
-                          <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
-                            item.source === 'thrive' 
-                              ? 'bg-blue-100 text-blue-700' 
-                              : 'bg-orange-100 text-orange-700'
-                          }`}>
-                            {item.source === 'thrive' ? 'PRINT' : 'CUT'}
+                        {showBadge && (
+                          <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${badgeClass}`}>
+                            {badgeLabel}
                           </span>
                         )}
                       </div>
