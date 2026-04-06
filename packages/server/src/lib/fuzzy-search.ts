@@ -1,4 +1,4 @@
-import { splitSearchTerms } from '@erp/shared';
+import { parseSearchQuery } from '@erp/shared';
 
 type SearchWhere = Record<string, unknown>;
 
@@ -20,14 +20,22 @@ export function buildTokenizedSearchWhere(
   query: string | undefined,
   fields: string[],
 ): SearchWhere | null {
-  const terms = splitSearchTerms(query || '');
+  const terms = parseSearchQuery(query || '');
   if (terms.length === 0 || fields.length === 0) {
     return null;
   }
 
-  return {
-    AND: terms.map((term) => ({
-      OR: fields.map((field) => buildNestedContainsCondition(field, term)),
-    })),
-  };
+  const andConditions: SearchWhere[] = [];
+
+  for (const term of terms) {
+    const fieldConditions = fields.map((field) => buildNestedContainsCondition(field, term.value));
+    if (term.excluded) {
+      andConditions.push({ NOT: { OR: fieldConditions } });
+      continue;
+    }
+
+    andConditions.push({ OR: fieldConditions });
+  }
+
+  return andConditions.length > 0 ? { AND: andConditions } : null;
 }
