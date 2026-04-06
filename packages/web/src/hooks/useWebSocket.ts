@@ -241,19 +241,15 @@ export function useWebSocket() {
       
       // Targeted order invalidation — only invalidates the specific order
       // if possible, falling back to list invalidation
-      const invalidateOrder = (orderNumber?: string) => {
-        if (orderNumber) {
-          // Invalidate only the specific order detail query
-          queryClient.invalidateQueries({ queryKey: ['order', orderNumber] });
-          queryClient.invalidateQueries({ queryKey: ['orders', orderNumber] });
-        }
-        // Always invalidate order lists (they show status/counts)
-        scheduleInvalidation('orders', 'dashboard', 'shop-floor-orders', 'order-entry-orders');
+      const invalidateOrder = () => {
+        // Keep the whole order family fresh because the detail page, linked
+        // data, file chain, and timeline all fan out from the same record.
+        scheduleInvalidation('orders', 'dashboard', 'shop-floor-orders', 'order-entry-orders', 'equipment-activity');
       };
 
       switch (message.type) {
         case 'ORDER_CREATED' as WsMessageType:
-          invalidateOrder(message.payload?.orderNumber);
+          invalidateOrder();
           if (message.payload?.orderNumber) {
             toast.success(`New order #${message.payload.orderNumber} created`, {
               icon: '📋',
@@ -262,22 +258,20 @@ export function useWebSocket() {
           }
           break;
         case 'ORDER_UPDATED' as WsMessageType:
-          invalidateOrder(message.payload?.orderNumber);
+          invalidateOrder();
           break;
         case 'ORDER_DELETED' as WsMessageType:
-          invalidateOrder(message.payload?.orderNumber);
+          invalidateOrder();
           break;
         case WsMessageType.FILE_CHAIN_UPDATED: {
           const fileChainPayload = message.payload as { workOrderId?: string; orderId?: string } | undefined;
-          const orderId = fileChainPayload?.workOrderId ?? fileChainPayload?.orderId;
-          if (orderId) {
-            queryClient.invalidateQueries({ queryKey: ['file-chain', orderId] });
-            queryClient.invalidateQueries({ queryKey: ['orders', orderId] });
+          if (fileChainPayload?.workOrderId || fileChainPayload?.orderId) {
+            scheduleInvalidation('file-chain', 'orders', 'equipment-activity');
           }
           break;
         }
         case 'STATION_UPDATED' as WsMessageType:
-          invalidateOrder(message.payload?.orderNumber);
+          invalidateOrder();
           if (message.payload?.orderNumber && message.payload?.station) {
             toast(`Station ${message.payload.station} updated on #${message.payload.orderNumber}`, {
               icon: '🔄',
@@ -302,10 +296,10 @@ export function useWebSocket() {
         case 'PRINT_QUEUE_CREATED' as WsMessageType:
         case 'PRINT_QUEUE_UPDATED' as WsMessageType:
         case 'PRINT_QUEUE_DELETED' as WsMessageType:
-          scheduleInvalidation('print-queue');
+          scheduleInvalidation('print-queue', 'orders', 'equipment-activity');
           break;
         case 'PRINT_JOB_STATUS_CHANGED' as WsMessageType: {
-          scheduleInvalidation('print-queue');
+          scheduleInvalidation('print-queue', 'orders', 'equipment-activity');
           const printPayload = message.payload as { jobNumber?: string; status?: string } | undefined;
           if (printPayload?.jobNumber && printPayload?.status) {
             const statusLabel = printPayload.status === 'PRINTING' ? 'started printing' :
@@ -320,16 +314,16 @@ export function useWebSocket() {
           break;
         }
         case 'PRINTER_STATUS_CHANGED' as WsMessageType:
-          scheduleInvalidation('print-queue');
+          scheduleInvalidation('print-queue', 'equipment-activity');
           break;
         case 'RIP_JOB_CREATED' as WsMessageType:
         case 'RIP_JOB_UPDATED' as WsMessageType:
         case 'RIP_JOB_DELETED' as WsMessageType:
         case 'RIP_JOB_STATUS_SYNC' as WsMessageType:
-          scheduleInvalidation('rip-queue');
+          scheduleInvalidation('rip-queue', 'orders', 'equipment-activity');
           break;
         case 'RIP_JOB_STATUS_CHANGED' as WsMessageType: {
-          scheduleInvalidation('rip-queue');
+          scheduleInvalidation('rip-queue', 'orders', 'equipment-activity');
           const ripPayload = message.payload as { sourceFileName?: string; status?: string } | undefined;
           if (ripPayload?.sourceFileName && ripPayload?.status) {
             const ripLabel = ripPayload.status === 'PROCESSING' ? 'is being RIPped' :
@@ -365,7 +359,7 @@ export function useWebSocket() {
         case 'EQUIPMENT_DELETED' as WsMessageType:
         case 'EQUIPMENT_DOWN' as WsMessageType:
         case 'EQUIPMENT_RESTORED' as WsMessageType:
-          scheduleInvalidation('equipment', 'equipment-status', 'equipment-live-status');
+          scheduleInvalidation('equipment', 'equipment-status', 'equipment-live-status', 'equipment-activity');
           break;
 
         // Equipment watch alert events
@@ -447,7 +441,7 @@ export function useWebSocket() {
         case 'SHIPMENT_CREATED' as WsMessageType:
         case 'SHIPMENT_UPDATED' as WsMessageType:
         case 'SHIPMENT_DELETED' as WsMessageType:
-          scheduleInvalidation('shipments', 'orders', 'dashboard', 'shop-floor-orders');
+          scheduleInvalidation('shipments', 'orders', 'dashboard', 'shop-floor-orders', 'equipment-activity');
           break;
 
         // Import events

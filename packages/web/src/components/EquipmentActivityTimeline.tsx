@@ -37,7 +37,7 @@ interface EquipmentActivityItem {
     | 'INSTALLED';
   description: string;
   timestamp: string;
-  source: 'thrive' | 'zund' | 'email' | 'network';
+  source: 'thrive' | 'zund' | 'email' | 'network' | 'erp';
   details?: Record<string, unknown>;
 }
 

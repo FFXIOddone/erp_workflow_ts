@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { History, Printer, Scissors, ZoomIn, ZoomOut, RotateCcw, Maximize2 } from 'lucide-react';
+import { CheckCircle2, History, Printer, Scissors, Truck, ZoomIn, ZoomOut, RotateCcw, Maximize2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { format, startOfDay, setHours, differenceInMinutes } from 'date-fns';
 import { FullscreenPanel } from './FullscreenPanel';
@@ -30,7 +30,7 @@ interface EquipmentActivityItem {
   type: string;
   description: string;
   timestamp: string;
-  source: 'thrive' | 'zund' | 'email' | 'network';
+  source: 'thrive' | 'zund' | 'email' | 'network' | 'erp';
   details?: Record<string, unknown>;
 }
 
@@ -259,10 +259,22 @@ export function HorizontalActivityTimeline({
                   {data.summary.printJobs}
                 </span>
               )}
+              {data.summary.printCompleted > 0 && (
+                <span className="px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700 rounded-full flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" />
+                  {data.summary.printCompleted}
+                </span>
+              )}
               {data.summary.cutJobs > 0 && (
                 <span className="px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full flex items-center gap-1">
                   <Scissors className="h-3 w-3" />
                   {data.summary.cutJobs}
+                </span>
+              )}
+              {data.summary.shipments > 0 && (
+                <span className="px-2 py-0.5 text-xs font-medium bg-rose-100 text-rose-700 rounded-full flex items-center gap-1">
+                  <Truck className="h-3 w-3" />
+                  {data.summary.shipments}
                 </span>
               )}
             </div>

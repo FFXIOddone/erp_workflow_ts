@@ -38,6 +38,17 @@ export type LinkedFileChainSummary = {
   chainStatus: string;
 };
 
+export type LinkedFileChainLinkSummary = {
+  id: string;
+  printFileName: string;
+  cutFileName: string | null;
+  status: string;
+  printStatus: string;
+  cutStatus: string;
+  printedAt: Date | string | null;
+  cutCompletedAt: Date | string | null;
+};
+
 export type OrderLinkedDataSummary = {
   orderId: string;
   orderNumber: string;
@@ -53,6 +64,7 @@ export type OrderLinkedDataSummary = {
   latestShipments: LinkedShipmentSummary[];
   latestAttachments: LinkedAttachmentSummary[];
   fileChainSummary: LinkedFileChainSummary | null;
+  latestFileChainLinks: LinkedFileChainLinkSummary[];
   warnings: string[];
 };
 
@@ -210,6 +222,18 @@ export async function getOrderLinkedDataSummary(orderId: string): Promise<OrderL
         chainStatus: fileChainSummary.chainStatus,
       }
     : null;
+  const latestFileChainLinks = fileChainSummary
+    ? fileChainSummary.links.slice(0, 5).map((link) => ({
+        id: link.id,
+        printFileName: link.printFileName,
+        cutFileName: link.cutFileName ?? null,
+        status: link.effectiveStatus,
+        printStatus: link.printStatus,
+        cutStatus: link.cutStatus,
+        printedAt: link.printedAt,
+        cutCompletedAt: link.cutCompletedAt,
+      }))
+    : [];
 
   const warnings: string[] = [];
   if (order.routing.length === 0) {
@@ -256,6 +280,7 @@ export async function getOrderLinkedDataSummary(orderId: string): Promise<OrderL
       uploadedByDisplayName: attachment.uploadedBy?.displayName ?? null,
     })),
     fileChainSummary: normalizedFileChain,
+    latestFileChainLinks,
     warnings,
   };
 }

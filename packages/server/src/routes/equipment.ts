@@ -10,6 +10,7 @@ import {
   checkDeviceConnectivity,
   pollAllEquipment,
   getAllCachedStatuses,
+  getAllCachedEWSData,
   setCachedStatus,
   getLastPollTime,
   setLastPollTime,
@@ -1523,6 +1524,7 @@ import {
   clearManualCutFileLinkForOrder,
   syncManualJobLinksToPrintCutLinks,
 } from '../services/file-chain.js';
+import { deriveFileChainLinkState } from '../services/file-chain-state.js';
 
 // GET /equipment/thrive/config - Get Thrive equipment configuration
 router.get('/thrive/config', async (_req, res) => {
@@ -2784,7 +2786,20 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
   const bareNumber = orderNumber.replace(/^WO/i, '');
 
   try {
-    const { printJobs, cutJobs } = await thriveService.getAllJobs();
+    const [thriveResult, order] = await Promise.all([
+      thriveService.getAllJobs(),
+      prisma.workOrder.findFirst({
+        where: {
+          OR: [
+            { orderNumber },
+            { orderNumber: bareNumber },
+            { orderNumber: `WO${bareNumber}` },
+          ],
+        },
+        select: { id: true, customerName: true, status: true },
+      }),
+    ]);
+    const { printJobs, cutJobs } = thriveResult;
 
     // Filter jobs for this work order
     const matchingPrintJobs = printJobs.filter(
@@ -2807,6 +2822,8 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
       | 'PRINT_COMPLETED'
       | 'CUT_QUEUED'
       | 'CUT_COMPLETED'
+      | 'SHIP_ORDER'
+      | 'SHIPPED'
       | 'EMAIL_SENT'
       | 'FILE_CREATED';
 
@@ -2815,7 +2832,7 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
       type: ActivityType;
       description: string;
       timestamp: string;
-      source: 'thrive' | 'zund' | 'email' | 'network';
+      source: 'thrive' | 'zund' | 'email' | 'network' | 'erp';
       details?: Record<string, unknown>;
     }> = [];
 
@@ -2925,15 +2942,157 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
       console.log(`Warning: Could not fetch Zund completed jobs for activity: ${zundError}`);
     }
 
+    // Add print confirmations from cached printer EWS jobs so "Printed" shows
+    // even when the Thrive queue is only showing the pre-RIP state.
+    let printCompletedCount = 0;
+    try {
+      if (order) {
+        const printCutLinks = await prisma.printCutLink.findMany({
+          where: { workOrderId: order.id },
+          select: {
+            id: true,
+            status: true,
+            printFileName: true,
+            cutFileName: true,
+            printStartedAt: true,
+            printCompletedAt: true,
+            cutStartedAt: true,
+            cutCompletedAt: true,
+            ripJob: {
+              select: {
+                status: true,
+                rippedAt: true,
+                printStartedAt: true,
+                printCompletedAt: true,
+              },
+            },
+          },
+        });
+
+        const pushedPrintEvents = new Set<string>();
+
+        for (const link of printCutLinks) {
+          const state = deriveFileChainLinkState(link);
+          const printedAt = state.printedAt ? new Date(state.printedAt) : null;
+          if (state.printStatus === 'COMPLETED' && printedAt) {
+            const eventId = `printcut-${link.id}`;
+            if (pushedPrintEvents.has(eventId)) continue;
+            pushedPrintEvents.add(eventId);
+            printCompletedCount++;
+            activity.push({
+              id: eventId,
+              type: 'PRINT_COMPLETED',
+              description: `Printed: ${link.printFileName}${link.cutFileName ? ` -> ${link.cutFileName}` : ''}`,
+              timestamp: printedAt.toISOString(),
+              source: 'erp',
+              details: {
+                printFileName: link.printFileName,
+                cutFileName: link.cutFileName,
+                fileChainStatus: state.effectiveStatus,
+                printStatus: state.printStatus,
+                cutStatus: state.cutStatus,
+              },
+            });
+          }
+        }
+
+        if (printCompletedCount === 0) {
+          const ewsData = getAllCachedEWSData();
+          for (const [equipmentId, ews] of ewsData.entries()) {
+            for (const job of ews.jobs ?? []) {
+              const jobOrderNumber =
+                job.workOrderNumber?.replace(/^WO/i, '') ||
+                parseJobInfo(job.name).workOrderNumber?.replace(/^WO/i, '');
+
+              if (jobOrderNumber !== bareNumber) continue;
+
+              const jobStatus = job.status.toUpperCase();
+              const completionStatus = job.completionStatus.toUpperCase();
+              const isCompleted =
+                jobStatus === 'COMPLETED' ||
+                jobStatus === 'PRINTED' ||
+                completionStatus === 'OK' ||
+                Boolean(job.completedAt);
+
+              if (!isCompleted || !job.completedAt) continue;
+
+              const eventId = `ews-print-${equipmentId}-${job.uuid}`;
+              if (pushedPrintEvents.has(eventId)) continue;
+              pushedPrintEvents.add(eventId);
+              printCompletedCount++;
+              activity.push({
+                id: eventId,
+                type: 'PRINT_COMPLETED',
+                description: `Printed: ${job.name.slice(0, 50)}${job.name.length > 50 ? '...' : ''}${ews.identity?.productName ? ` on ${ews.identity.productName}` : ''}`,
+                timestamp: job.completedAt,
+                source: 'erp',
+                details: {
+                  printerName: ews.identity?.productName ?? null,
+                  equipmentId,
+                  jobUuid: job.uuid,
+                  jobName: job.name,
+                  status: job.status,
+                  completionStatus: job.completionStatus,
+                  printedCopies: job.printedCopies,
+                  copies: job.copies,
+                },
+              });
+            }
+          }
+        }
+      }
+    } catch (printError) {
+      console.log(`Warning: Could not fetch print confirmations for activity: ${printError}`);
+    }
+
+    // Add shipment records when they exist so shipping completion appears in
+    // the order timeline alongside the print/cut sources.
+    let shipmentCount = 0;
+    try {
+      if (order) {
+        const shipments = await prisma.shipment.findMany({
+          where: { workOrderId: order.id },
+          orderBy: { shipDate: 'desc' },
+          select: {
+            id: true,
+            carrier: true,
+            trackingNumber: true,
+            status: true,
+            shipDate: true,
+            estimatedDelivery: true,
+            actualDelivery: true,
+            createdAt: true,
+            createdBy: { select: { displayName: true } },
+          },
+        });
+
+        for (const shipment of shipments) {
+          shipmentCount++;
+          const shippedAt = shipment.shipDate || shipment.createdAt;
+          activity.push({
+            id: `shipment-${shipment.id}`,
+            type: shipment.status === 'DELIVERED' ? 'SHIPPED' : 'SHIP_ORDER',
+            description: `${shipment.status === 'DELIVERED' ? 'Shipment delivered' : 'Shipment created'}: ${shipment.carrier}${shipment.trackingNumber ? ` • Tracking ${shipment.trackingNumber}` : ''}`,
+            timestamp: shippedAt.toISOString(),
+            source: 'erp',
+            details: {
+              carrier: shipment.carrier,
+              trackingNumber: shipment.trackingNumber,
+              shipmentStatus: shipment.status,
+              estimatedDelivery: shipment.estimatedDelivery?.toISOString() ?? null,
+              actualDelivery: shipment.actualDelivery?.toISOString() ?? null,
+              createdBy: shipment.createdBy?.displayName ?? null,
+            },
+          });
+        }
+      }
+    } catch (shipmentError) {
+      console.log(`Warning: Could not fetch shipments for activity: ${shipmentError}`);
+    }
+
     // Add emails from EmailQueue
     let emailCount = 0;
     try {
-      // Get the order to find its ID
-      const order = await prisma.workOrder.findFirst({
-        where: { orderNumber },
-        select: { id: true, customerName: true },
-      });
-
       if (order) {
         const emails = await prisma.emailQueue.findMany({
           where: {
@@ -2969,12 +3128,12 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
     let fileCount = 0;
     try {
       const settings = await prisma.systemSettings.findFirst();
-      const order = await prisma.workOrder.findFirst({
+      const orderRecord = await prisma.workOrder.findFirst({
         where: { orderNumber },
         select: { customerName: true },
       });
 
-      if (settings?.networkDriveBasePath && order) {
+      if (settings?.networkDriveBasePath && orderRecord) {
         const fs = await import('fs');
         const path = await import('path');
 
@@ -2989,8 +3148,8 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
 
         const customerFolder = customerFolders.find(
           (f) =>
-            f.name.toLowerCase().includes(order.customerName.toLowerCase()) ||
-            order.customerName.toLowerCase().includes(f.name.toLowerCase())
+            f.name.toLowerCase().includes(orderRecord.customerName.toLowerCase()) ||
+            orderRecord.customerName.toLowerCase().includes(f.name.toLowerCase())
         );
 
         if (customerFolder) {
@@ -3052,6 +3211,8 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
           printJobs: matchingPrintJobs.length,
           cutJobs: matchingCutJobs.length,
           zundCompleted: zundCompletedCount,
+          printCompleted: printCompletedCount,
+          shipments: shipmentCount,
           emails: emailCount,
           files: fileCount,
         },

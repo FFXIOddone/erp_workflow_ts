@@ -39,6 +39,17 @@ type LinkedFileChainSummary = {
   chainStatus: string;
 };
 
+type LinkedFileChainLinkSummary = {
+  id: string;
+  printFileName: string;
+  cutFileName: string | null;
+  status: string;
+  printStatus: string;
+  cutStatus: string;
+  printedAt: string | null;
+  cutCompletedAt: string | null;
+};
+
 type OrderLinkedDataSummary = {
   orderId: string;
   orderNumber: string;
@@ -54,6 +65,7 @@ type OrderLinkedDataSummary = {
   latestShipments: LinkedShipmentSummary[];
   latestAttachments: LinkedAttachmentSummary[];
   fileChainSummary: LinkedFileChainSummary | null;
+  latestFileChainLinks: LinkedFileChainLinkSummary[];
   warnings: string[];
 };
 
@@ -97,6 +109,28 @@ function getShipmentBadgeVariant(
     case 'red':
       return 'danger';
     case 'blue':
+      return 'info';
+    default:
+      return 'neutral';
+  }
+}
+
+function getFileChainBadgeVariant(
+  status: string,
+): 'default' | 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
+  switch (status) {
+    case 'FINISHED':
+    case 'CUT_COMPLETE':
+      return 'success';
+    case 'FAILED':
+      return 'danger';
+    case 'CUTTING':
+    case 'PRINTING':
+      return 'warning';
+    case 'READY_TO_PRINT':
+    case 'SENT_TO_RIP':
+    case 'PRINTED':
+    case 'CUT_PENDING':
       return 'info';
     default:
       return 'neutral';
@@ -322,6 +356,34 @@ export function OrderLinkedDataCard({ orderId, orderNumber }: OrderLinkedDataCar
           )}
         </section>
       </div>
+
+      {data.latestFileChainLinks.length > 0 && (
+        <section className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-900">
+            <FileText className="h-4 w-4 text-primary-600" />
+            Latest File Chain Links
+          </div>
+          <div className="space-y-2">
+            {data.latestFileChainLinks.map((link) => (
+              <div key={link.id} className="rounded-lg border border-white bg-white px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={getFileChainBadgeVariant(link.status)} size="sm">
+                    {link.status}
+                  </Badge>
+                  <span className="font-medium text-gray-900">{link.printFileName}</span>
+                  {link.cutFileName && <span className="text-xs text-gray-500">→ {link.cutFileName}</span>}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
+                  <span>Print: {link.printStatus}</span>
+                  <span>Cut: {link.cutStatus}</span>
+                  {link.printedAt && <span>Printed {formatDate(link.printedAt)}</span>}
+                  {link.cutCompletedAt && <span>Cut {formatDate(link.cutCompletedAt)}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

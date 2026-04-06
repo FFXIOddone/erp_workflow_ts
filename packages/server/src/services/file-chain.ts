@@ -1342,10 +1342,11 @@ async function matchZundCompletedCuts(
 ) {
   if (zundJobs.length === 0) return;
 
-  // Get links that are pending cut or cutting
+  // Ready-to-print links can still complete if the Zund side already has a
+  // matching finished job and the daemon has not yet backfilled the status.
   const pendingCutLinks = await prisma.printCutLink.findMany({
     where: {
-      status: { in: ['CUT_PENDING', 'CUTTING'] },
+      status: { in: ['READY_TO_PRINT', 'CUT_PENDING', 'CUTTING'] },
     },
     include: {
       workOrder: { select: { orderNumber: true } },
