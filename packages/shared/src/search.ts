@@ -146,8 +146,7 @@ export function filterBySearchFields<T>(
   getValues: (item: T) => SearchValue[],
   options: { limit?: number; minScore?: number } = {},
 ): T[] {
-  const normalizedQuery = normalizeSearchText(query);
-  if (!normalizedQuery) {
+  if (!query.trim()) {
     return items;
   }
 
@@ -156,7 +155,7 @@ export function filterBySearchFields<T>(
     .map((item, index) => ({
       item,
       index,
-      score: scoreSearchFields(getValues(item), normalizedQuery),
+      score: scoreSearchFields(getValues(item), query),
     }))
     .filter(({ score }) => score >= minScore)
     .sort((a, b) => {
