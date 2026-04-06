@@ -1,25 +1,26 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Wrench,
-  Play,
-  Pause,
-  Square,
-  Camera,
-  MapPin,
-  Clock,
-  RefreshCw,
   AlertCircle,
+  Camera,
   CheckCircle,
-  Upload,
-  Timer,
+  Copy,
+  Eye,
+  FileImage,
+  FolderOpen,
+  Link2,
+  Loader2,
+  MapPin,
+  QrCode,
+  RefreshCw,
+  Wrench,
 } from 'lucide-react';
+import { apiFetch, apiGet } from '../lib/api';
+import { openExternalPath } from '../lib/order-files';
 import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import { useWebSocket } from '../lib/useWebSocket';
-import { invoke, isTauri } from '../lib/tauri-bridge';
+import { PARENT_SUB_STATIONS } from '@erp/shared';
 import toast from 'react-hot-toast';
-
-type TimerState = 'idle' | 'running' | 'paused';
 
 interface StationProgress {
   station: string;
@@ -34,27 +35,47 @@ interface InstallJob {
   address?: string;
   routing: string[];
   stationProgress: StationProgress[];
+  notes?: string | null;
 }
 
-async function ensureOk(response: Response): Promise<void> {
-  if (response.ok) {
-    return;
-  }
-
-  const body = await response.text().catch(() => '');
-  throw new Error(body || `API ${response.status}`);
+interface OrderAttachment {
+  id: string;
+  fileName: string;
+  filePath?: string | null;
+  fileType: string;
+  uploadedAt: string;
+  uploadedBy?: { displayName: string } | null;
 }
 
-/** Check if all stations before this one in the routing are COMPLETED */
+interface InstallOrderDetails extends InstallJob {
+  attachments?: OrderAttachment[];
+}
+
+interface PhotoUploadData {
+  qrDataUrl: string;
+  photoUrl: string;
+  expiresIn: number;
+}
+
+function getStationFamily(station: string): string[] {
+  return [...new Set([station, ...(PARENT_SUB_STATIONS[station] || [])])];
+}
+
 function isCurrentStation(order: InstallJob, station: string): boolean {
-  const idx = order.routing.indexOf(station);
-  if (idx === -1) return false;
-  for (let i = 0; i < idx; i++) {
-    const prev = order.stationProgress.find(p => p.station === order.routing[i]);
-    if (!prev || prev.status !== 'COMPLETED') return false;
+  const family = getStationFamily(station);
+  for (const routeStation of order.routing) {
+    const progress = order.stationProgress.find((entry) => entry.station === routeStation);
+    if (!progress || progress.status !== 'COMPLETED') {
+      return family.includes(routeStation);
+    }
   }
-  const self = order.stationProgress.find(p => p.station === station);
-  return !self || self.status !== 'COMPLETED';
+  return false;
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleString();
 }
 
 export function InstallationStation() {
@@ -63,193 +84,239 @@ export function InstallationStation() {
   const [jobs, setJobs] = useState<InstallJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeJob, setActiveJob] = useState<InstallJob | null>(null);
+  const [selectedJob, setSelectedJob] = useState<InstallJob | null>(null);
+  const [selectedDetails, setSelectedDetails] = useState<InstallOrderDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [installerNote, setInstallerNote] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [completingOrderId, setCompletingOrderId] = useState<string | null>(null);
+  const [photoUploadOpen, setPhotoUploadOpen] = useState(false);
+  const [photoUploadData, setPhotoUploadData] = useState<PhotoUploadData | null>(null);
+  const [photoUploadLoading, setPhotoUploadLoading] = useState(false);
 
-  // Timer state
-  const [timerState, setTimerState] = useState<TimerState>('idle');
-  const [elapsed, setElapsed] = useState(0);
-  const [startTime, setStartTime] = useState<number | null>(null);
-  const [pauseAccum, setPauseAccum] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Photos
-  const [photos, setPhotos] = useState<string[]>([]);
-  const [notes, setNotes] = useState('');
-
-  // WebSocket for real-time updates
   const { subscribe } = useWebSocket();
   const fetchJobsRef = useRef<() => void | Promise<void>>(() => {});
+  const loadDetailsRef = useRef<
+    ((orderId: string, options?: { silent?: boolean }) => Promise<InstallOrderDetails | null>) | null
+  >(null);
+  const selectedJobRef = useRef<InstallJob | null>(null);
 
   useEffect(() => {
-    const unsub = subscribe((msg) => {
-      if (['STATION_COMPLETED', 'ORDER_CREATED'].includes(msg.type)) {
-        void fetchJobsRef.current();
-      }
-    });
-    return unsub;
-  }, [subscribe]);
+    selectedJobRef.current = selectedJob;
+  }, [selectedJob]);
 
   const fetchJobs = useCallback(async () => {
     if (!token) return;
+
     try {
-      // Fetch only orders that have INSTALLATION in their routing
-      // and are either pending or in progress.
       const params = new URLSearchParams({
         status: 'PENDING,IN_PROGRESS',
         station: 'INSTALLATION',
         limit: '100',
         lightweight: 'true',
       });
-      const response = await fetch(`${config.apiUrl}/orders?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error(`API ${response.status}`);
-      const json = await response.json();
-      const items = json.data?.items ?? json.data ?? [];
-      const allItems: InstallJob[] = Array.isArray(items) ? items : [];
-      // Client-side: only show orders where INSTALLATION is the current active station
-      const installJobs = allItems.filter(order => isCurrentStation(order, 'INSTALLATION'));
+      const data = await apiGet<{ items?: InstallJob[] }>(`/orders?${params.toString()}`);
+      const items = Array.isArray(data.items) ? data.items : [];
+      const installJobs = items.filter((order) => isCurrentStation(order, 'INSTALLATION'));
       setJobs(installJobs);
       setError(null);
     } catch (err: any) {
-      setError(err.message);
+      setError(err?.message || 'Failed to load installation jobs');
     } finally {
       setLoading(false);
     }
-  }, [config.apiUrl, token]);
+  }, [token]);
   fetchJobsRef.current = fetchJobs;
 
+  const loadSelectedOrderDetails = useCallback(
+    async (orderId: string, options?: { silent?: boolean }) => {
+      if (!options?.silent) {
+        setDetailsLoading(true);
+      }
+
+      try {
+        const details = await apiGet<InstallOrderDetails>(`/orders/${orderId}`);
+        setSelectedDetails(details);
+        return details;
+      } catch (err: any) {
+        if (!options?.silent) {
+          toast.error(err?.message || 'Failed to load order details');
+        }
+        return null;
+      } finally {
+        if (!options?.silent) {
+          setDetailsLoading(false);
+        }
+      }
+    },
+    [],
+  );
+  loadDetailsRef.current = loadSelectedOrderDetails;
+
   useEffect(() => {
-    fetchJobs();
+    const unsubscribe = subscribe((msg) => {
+      if (
+        [
+          'ORDER_CREATED',
+          'ORDER_UPDATED',
+          'STATION_COMPLETED',
+          'PHOTO_UPLOADED',
+          'ATTACHMENT_ADDED',
+          'NOTE_ADDED',
+        ].includes(msg.type)
+      ) {
+        void fetchJobsRef.current();
+      }
+
+      const currentSelected = selectedJobRef.current;
+      if (!currentSelected) {
+        return;
+      }
+
+      if (
+        ['ORDER_UPDATED', 'PHOTO_UPLOADED', 'ATTACHMENT_ADDED', 'NOTE_ADDED', 'STATION_COMPLETED'].includes(
+          msg.type,
+        )
+      ) {
+        const payload = msg.payload && typeof msg.payload === 'object' ? (msg.payload as Record<string, unknown>) : null;
+        const orderId = payload && typeof payload.orderId === 'string' ? payload.orderId : null;
+
+        if (!orderId || orderId === currentSelected.id) {
+          void loadDetailsRef.current?.(currentSelected.id, { silent: true });
+        }
+      }
+    });
+
+    return unsubscribe;
+  }, [subscribe]);
+
+  useEffect(() => {
+    void fetchJobs();
+    const timer = setInterval(fetchJobs, 15000);
+    return () => clearInterval(timer);
   }, [fetchJobs]);
 
-  // Timer tick
   useEffect(() => {
-    if (timerState === 'running') {
-      timerRef.current = setInterval(() => {
-        setElapsed(Math.floor((Date.now() - (startTime || 0)) / 1000) + pauseAccum);
-      }, 500);
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [timerState, startTime, pauseAccum]);
-
-  const formatTime = (secs: number) => {
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    const s = secs % 60;
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
-  const startTimer = () => {
-    setStartTime(Date.now());
-    setTimerState('running');
-  };
-
-  const pauseTimer = () => {
-    setPauseAccum(elapsed);
-    setTimerState('paused');
-  };
-
-  const resumeTimer = () => {
-    setStartTime(Date.now());
-    setTimerState('running');
-  };
-
-  const stopTimer = async () => {
-    setTimerState('idle');
-    if (!activeJob) return;
-
-    try {
-      const endedAt = new Date();
-      const startedAt = new Date(endedAt.getTime() - elapsed * 1000);
-      const notesWithPhotoCount = photos.length > 0
-        ? [notes.trim(), `Captured photos locally: ${photos.length}`].filter(Boolean).join('\n')
-        : notes.trim();
-
-      const logTimeResponse = await fetch(`${config.apiUrl}/orders/${activeJob.id}/time`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          station: 'INSTALLATION',
-          startTime: startedAt.toISOString(),
-          endTime: endedAt.toISOString(),
-          notes: notesWithPhotoCount || null,
-        }),
-      });
-      await ensureOk(logTimeResponse);
-      toast.success(`Session logged: ${formatTime(elapsed)}`);
-    } catch {
-      toast.error('Failed to save session — will retry when online');
-      // TODO: queue for offline sync
-    }
-
-    setElapsed(0);
-    setPauseAccum(0);
-    setStartTime(null);
-    setPhotos([]);
-    setNotes('');
-  };
-
-  const capturePhoto = async () => {
-    if (!isTauri()) {
-      toast.error('Camera only available in desktop app');
+    if (!selectedJob) {
+      setSelectedDetails(null);
+      setInstallerNote('');
       return;
     }
+
+    setInstallerNote('');
+    void loadSelectedOrderDetails(selectedJob.id);
+  }, [loadSelectedOrderDetails, selectedJob]);
+
+  const handleSelectJob = (job: InstallJob) => {
+    setSelectedJob(job);
+    setPhotoUploadOpen(false);
+    setPhotoUploadData(null);
+  };
+
+  const handleMarkComplete = async () => {
+    if (!selectedJob) return;
+    if (!window.confirm(`Mark ${selectedJob.orderNumber} installation complete?`)) return;
+
+    setCompletingOrderId(selectedJob.id);
     try {
-      // Use file dialog to pick a photo
-      const path = await invoke<string>('pick_file');
-      if (path) {
-        setPhotos((prev) => [...prev, path]);
-        toast.success('Photo added');
-      }
-    } catch {
-      // Fall back to file input
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.capture = 'environment';
-      input.onchange = (e: any) => {
-        if (e.target.files?.[0]) {
-          setPhotos((prev) => [...prev, URL.createObjectURL(e.target.files[0])]);
-          toast.success('Photo added');
-        }
-      };
-      input.click();
+      await apiFetch(`/orders/${selectedJob.id}/stations/INSTALLATION/complete`, {
+        method: 'POST',
+      });
+      await apiFetch(`/orders/${selectedJob.id}/complete`, {
+        method: 'POST',
+      });
+      toast.success(`${selectedJob.orderNumber} installation complete`);
+      setSelectedJob(null);
+      setSelectedDetails(null);
+      setPhotoUploadOpen(false);
+      setPhotoUploadData(null);
+      await fetchJobs();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to complete installation');
+    } finally {
+      setCompletingOrderId(null);
     }
   };
 
-  const handleMarkComplete = async (orderId: string, orderNumber: string) => {
-    if (!window.confirm(`Mark ${orderNumber} installation complete?`)) return;
+  const handleSaveInstallerNote = async () => {
+    if (!selectedJob) return;
+    const note = installerNote.trim();
+    if (!note) {
+      toast.error('Enter an installer note first');
+      return;
+    }
+
+    setSavingNote(true);
     try {
-      // Mark INSTALLATION station completed
-      const completeStationResponse = await fetch(
-        `${config.apiUrl}/orders/${orderId}/stations/INSTALLATION/complete`,
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-      await ensureOk(completeStationResponse);
-      // Mark order complete
-      const res = await fetch(`${config.apiUrl}/orders/${orderId}/complete`, {
+      await apiFetch(`/orders/${selectedJob.id}/installation-notes`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ note }),
       });
-      await ensureOk(res);
-      toast.success(`${orderNumber} installation complete`);
-      setActiveJob(null);
-      fetchJobs();
-    } catch {
-      toast.error('Failed to complete installation');
+      toast.success('Installer note saved');
+      setInstallerNote('');
+      await loadSelectedOrderDetails(selectedJob.id);
+      await fetchJobs();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to save installer note');
+    } finally {
+      setSavingNote(false);
     }
   };
+
+  const handleOpenPhotoUpload = async () => {
+    if (!selectedJob) return;
+
+    setPhotoUploadOpen(true);
+    setPhotoUploadLoading(true);
+    setPhotoUploadData(null);
+
+    try {
+      const data = await apiGet<PhotoUploadData>(`/qrcode/photo-upload/${selectedJob.id}`);
+      setPhotoUploadData(data);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to prepare photo upload link');
+      setPhotoUploadOpen(false);
+    } finally {
+      setPhotoUploadLoading(false);
+    }
+  };
+
+  const handleCopyPhotoLink = async () => {
+    if (!photoUploadData?.photoUrl) return;
+
+    try {
+      await navigator.clipboard.writeText(photoUploadData.photoUrl);
+      toast.success('Photo upload link copied');
+    } catch {
+      window.prompt('Copy photo upload link', photoUploadData.photoUrl);
+    }
+  };
+
+  const handleOpenProof = async (attachment: OrderAttachment) => {
+    if (!attachment.filePath) {
+      toast.error('Proof file path is missing');
+      return;
+    }
+
+    try {
+      const result = await openExternalPath(attachment.filePath, 'file');
+      if (result === 'opened') {
+        toast.success(`Opened ${attachment.fileName}`);
+      } else {
+        toast.success(`${attachment.fileName} path copied`);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to open proof file');
+    }
+  };
+
+  const proofAttachments = (selectedDetails?.attachments || [])
+    .filter((attachment) => attachment.fileType === 'PROOF')
+    .sort((a, b) => {
+      const left = Date.parse(b.uploadedAt) || 0;
+      const right = Date.parse(a.uploadedAt) || 0;
+      return left - right;
+    });
 
   if (loading) {
     return (
@@ -260,170 +327,310 @@ export function InstallationStation() {
   }
 
   return (
-    <div className="flex h-full">
-      {/* Job list sidebar */}
-      <div className="w-80 border-r bg-white overflow-auto">
+    <div className="flex h-full bg-gray-50">
+      <aside className="w-80 border-r bg-white overflow-auto">
         <div className="p-3 border-b bg-amber-50">
           <h3 className="font-semibold text-amber-900 flex items-center gap-2">
             <Wrench className="w-4 h-4" />
             Install Jobs
           </h3>
         </div>
-        {jobs.length === 0 && (
-          <div className="p-8 text-center text-gray-400 text-sm">
-            No install jobs
+
+        {error && (
+          <div className="m-3 p-3 rounded-lg border border-red-200 bg-red-50 text-sm text-red-700 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            {error}
           </div>
         )}
+
+        {jobs.length === 0 && !error && (
+          <div className="p-8 text-center text-gray-400 text-sm">No install jobs</div>
+        )}
+
         {jobs.map((job) => (
-          <div
+          <button
             key={job.id}
-            onClick={() => {
-              if (timerState !== 'idle') {
-                toast.error('Stop current timer first');
-                return;
-              }
-              setActiveJob(job);
-            }}
-            className={`w-full text-left p-3 border-b hover:bg-amber-50 cursor-pointer ${
-              activeJob?.id === job.id ? 'bg-amber-100 border-l-4 border-l-amber-500' : ''
+            onClick={() => handleSelectJob(job)}
+            className={`w-full text-left p-3 border-b hover:bg-amber-50 ${
+              selectedJob?.id === job.id ? 'bg-amber-100 border-l-4 border-l-amber-500' : ''
             }`}
           >
             <div className="font-bold text-sm">{job.orderNumber}</div>
             <div className="text-xs text-gray-500 truncate">{job.customerName}</div>
             <div className="text-xs text-gray-400 truncate">{job.description}</div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleMarkComplete(job.id, job.orderNumber);
-              }}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm text-green-600 hover:bg-green-50 rounded-lg mt-1"
-              title="Mark order complete"
-            >
-              <CheckCircle className="w-4 h-4" />
-              Done
-            </button>
-          </div>
+          </button>
         ))}
-      </div>
+      </aside>
 
-      {/* Main panel */}
-      <div className="flex-1 flex flex-col">
-        {!activeJob ? (
-          <div className="flex-1 flex items-center justify-center text-gray-400">
+      <main className="flex-1 overflow-auto">
+        {!selectedJob ? (
+          <div className="flex items-center justify-center h-full text-gray-400">
             <div className="text-center">
               <Wrench className="w-16 h-16 mx-auto mb-4 opacity-20" />
               <p>Select an install job to begin</p>
             </div>
           </div>
         ) : (
-          <>
-            {/* Job header */}
-            <div className="bg-white border-b px-6 py-4">
-              <h2 className="text-xl font-bold text-gray-900">
-                {activeJob.orderNumber} — {activeJob.customerName}
-              </h2>
-              <p className="text-sm text-gray-500">{activeJob.description}</p>
-              {activeJob.address && (
-                <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                  <MapPin className="w-3 h-3" />
-                  {activeJob.address}
-                </p>
-              )}
-            </div>
+          <div className="max-w-6xl mx-auto p-6 space-y-6">
+            <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    <Wrench className="w-4 h-4" />
+                    Installation
+                  </div>
+                  <h2 className="text-2xl font-bold text-gray-900">{selectedJob.orderNumber}</h2>
+                  <p className="text-sm text-gray-600">{selectedJob.customerName}</p>
+                  <p className="text-sm text-gray-500 max-w-3xl">{selectedJob.description}</p>
+                  {selectedDetails?.address && (
+                    <p className="text-sm text-gray-500 flex items-center gap-1">
+                      <MapPin className="w-4 h-4" />
+                      {selectedDetails.address}
+                    </p>
+                  )}
+                  {selectedJob.routing.length > 0 && (
+                    <p className="text-xs text-gray-400">
+                      Route: {selectedJob.routing.join(' > ')}
+                    </p>
+                  )}
+                </div>
 
-            {/* Timer */}
-            <div className="bg-gray-50 px-6 py-8 flex flex-col items-center">
-              <div className="text-6xl font-mono font-bold text-gray-900 mb-6 tabular-nums">
-                {formatTime(elapsed)}
-              </div>
-              <div className="flex items-center gap-4">
-                {timerState === 'idle' && (
-                  <button
-                    onClick={startTimer}
-                    className="flex items-center gap-2 px-8 py-3 bg-green-600 text-white rounded-xl text-lg hover:bg-green-700"
-                  >
-                    <Play className="w-5 h-5" />
-                    Start
-                  </button>
-                )}
-                {timerState === 'running' && (
-                  <>
-                    <button
-                      onClick={pauseTimer}
-                      className="flex items-center gap-2 px-6 py-3 bg-yellow-500 text-white rounded-xl text-lg hover:bg-yellow-600"
-                    >
-                      <Pause className="w-5 h-5" />
-                      Pause
-                    </button>
-                    <button
-                      onClick={stopTimer}
-                      className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl text-lg hover:bg-red-700"
-                    >
-                      <Square className="w-5 h-5" />
-                      Stop & Save
-                    </button>
-                  </>
-                )}
-                {timerState === 'paused' && (
-                  <>
-                    <button
-                      onClick={resumeTimer}
-                      className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-lg hover:bg-green-700"
-                    >
-                      <Play className="w-5 h-5" />
-                      Resume
-                    </button>
-                    <button
-                      onClick={stopTimer}
-                      className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl text-lg hover:bg-red-700"
-                    >
-                      <Square className="w-5 h-5" />
-                      Stop & Save
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Photos & Notes */}
-            <div className="flex-1 overflow-auto p-6 space-y-4">
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                  <Camera className="w-4 h-4" />
-                  Photos ({photos.length})
-                </h3>
                 <div className="flex flex-wrap gap-2">
-                  {photos.map((p, i) => (
-                    <div
-                      key={i}
-                      className="w-20 h-20 bg-gray-200 rounded-lg flex items-center justify-center text-xs text-gray-500"
-                    >
-                      Photo {i + 1}
-                    </div>
-                  ))}
                   <button
-                    onClick={capturePhoto}
-                    className="w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:border-amber-400 hover:text-amber-600"
+                    onClick={handleMarkComplete}
+                    disabled={Boolean(completingOrderId)}
+                    className="flex items-center gap-2 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
                   >
-                    <Camera className="w-5 h-5" />
-                    <span className="text-xs">Add</span>
+                    {completingOrderId === selectedJob.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <CheckCircle className="w-4 h-4" />
+                    )}
+                    Done
+                  </button>
+                  <button
+                    onClick={handleOpenPhotoUpload}
+                    className="flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-700"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Camera Upload
+                  </button>
+                  <button
+                    onClick={() => void loadSelectedOrderDetails(selectedJob.id)}
+                    disabled={detailsLoading}
+                    className="flex items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${detailsLoading ? 'animate-spin' : ''}`} />
+                    Refresh
                   </button>
                 </div>
               </div>
+            </section>
 
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-2">Notes</h3>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Installation notes, issues, measurements..."
-                  className="w-full h-32 px-4 py-2 border border-gray-300 rounded-lg text-sm resize-none"
-                />
-              </div>
+            <div className="grid gap-6 lg:grid-cols-2">
+              <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <FileImage className="w-4 h-4 text-sky-600" />
+                    <h3 className="font-semibold text-gray-900">Proof Files</h3>
+                  </div>
+                  <span className="text-xs rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
+                    {proofAttachments.length} files
+                  </span>
+                </div>
+
+                {detailsLoading ? (
+                  <div className="mt-4 flex items-center gap-2 text-sm text-gray-500">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading order details...
+                  </div>
+                ) : proofAttachments.length > 0 ? (
+                  <div className="mt-4 space-y-3">
+                    {proofAttachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="rounded-xl border border-sky-100 bg-sky-50/50 p-4"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 break-all">{attachment.fileName}</p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {formatDateTime(attachment.uploadedAt)}
+                              {attachment.uploadedBy?.displayName
+                                ? ` • ${attachment.uploadedBy.displayName}`
+                                : ''}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => handleOpenProof(attachment)}
+                            className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-sky-700 hover:bg-sky-100"
+                          >
+                            <Eye className="w-4 h-4" />
+                            Open
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
+                    No proof files have been linked yet.
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Link2 className="w-4 h-4 text-amber-600" />
+                    <h3 className="font-semibold text-gray-900">Order Notes</h3>
+                  </div>
+                  <span className="text-xs rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
+                    Installer saved notes
+                  </span>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                    Current Notes
+                  </p>
+                  <div className="whitespace-pre-wrap text-sm text-gray-700 min-h-24">
+                    {selectedDetails?.notes?.trim() || 'No notes on this order yet.'}
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                    Add Installer Note
+                  </label>
+                  <textarea
+                    value={installerNote}
+                    onChange={(e) => setInstallerNote(e.target.value)}
+                    placeholder="Measurements, install issues, customer feedback, site notes..."
+                    className="w-full h-32 resize-none rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                  />
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => setInstallerNote('')}
+                      className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={handleSaveInstallerNote}
+                      disabled={!installerNote.trim() || savingNote}
+                      className="flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+                    >
+                      {savingNote ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                      Save Note
+                    </button>
+                  </div>
+                </div>
+              </section>
             </div>
-          </>
+
+            <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <QrCode className="w-4 h-4 text-violet-600" />
+                  <h3 className="font-semibold text-gray-900">Phone Photo Upload</h3>
+                </div>
+                <button
+                  onClick={handleOpenPhotoUpload}
+                  className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-violet-700 hover:bg-violet-50"
+                >
+                  <Camera className="w-4 h-4" />
+                  Open QR
+                </button>
+              </div>
+
+              <p className="mt-3 text-sm text-gray-600">
+                Open the QR code, scan it with the installer&apos;s phone camera, and the mobile
+                upload page will attach photos directly to this order.
+              </p>
+            </section>
+          </div>
         )}
-      </div>
+      </main>
+
+      {photoUploadOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={() => {
+            setPhotoUploadOpen(false);
+            setPhotoUploadData(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Phone Upload QR</h3>
+                <p className="text-sm text-gray-500">{selectedJob?.orderNumber}</p>
+              </div>
+              <button
+                onClick={() => {
+                  setPhotoUploadOpen(false);
+                  setPhotoUploadData(null);
+                }}
+                className="rounded-lg px-2 py-1 text-sm text-gray-500 hover:bg-gray-100"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5">
+              {photoUploadLoading ? (
+                <div className="flex flex-col items-center justify-center py-8 text-gray-500">
+                  <Loader2 className="w-6 h-6 animate-spin text-violet-600" />
+                  <p className="mt-2 text-sm">Preparing photo upload link...</p>
+                </div>
+              ) : photoUploadData ? (
+                <>
+                  <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                    <img
+                      src={photoUploadData.qrDataUrl}
+                      alt="Photo upload QR code"
+                      className="w-full rounded-xl bg-white"
+                    />
+                  </div>
+                  <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                    Scan this QR code with the installer&apos;s phone camera. The mobile page opens
+                    the camera on the phone so they can take and upload photos directly to the ERP.
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href={photoUploadData.photoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
+                    >
+                      <Eye className="w-4 h-4" />
+                      Open Link
+                    </a>
+                    <button
+                      onClick={handleCopyPhotoLink}
+                      className="flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    >
+                      <Copy className="w-4 h-4" />
+                      Copy Link
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400">
+                    Link expires in about {Math.ceil(photoUploadData.expiresIn / 60)} minutes.
+                  </p>
+                </>
+              ) : (
+                <div className="flex items-center justify-center py-8 text-gray-500">
+                  No photo upload link available.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

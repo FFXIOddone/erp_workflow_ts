@@ -42,6 +42,7 @@ export type LinkedFileChainLinkSummary = {
   id: string;
   printFileName: string;
   cutFileName: string | null;
+  cutId: string | null;
   status: string;
   printStatus: string;
   cutStatus: string;
@@ -64,6 +65,7 @@ export type OrderLinkedDataSummary = {
   latestShipments: LinkedShipmentSummary[];
   latestAttachments: LinkedAttachmentSummary[];
   fileChainSummary: LinkedFileChainSummary | null;
+  fileChainLinks: LinkedFileChainLinkSummary[];
   latestFileChainLinks: LinkedFileChainLinkSummary[];
   warnings: string[];
 };
@@ -227,6 +229,20 @@ export async function getOrderLinkedDataSummary(orderId: string): Promise<OrderL
         id: link.id,
         printFileName: link.printFileName,
         cutFileName: link.cutFileName ?? null,
+        cutId: link.cutId ?? null,
+        status: link.effectiveStatus,
+        printStatus: link.printStatus,
+        cutStatus: link.cutStatus,
+        printedAt: link.printedAt,
+        cutCompletedAt: link.cutCompletedAt,
+      }))
+    : [];
+  const fileChainLinks = fileChainSummary
+    ? fileChainSummary.links.map((link) => ({
+        id: link.id,
+        printFileName: link.printFileName,
+        cutFileName: link.cutFileName ?? null,
+        cutId: link.cutId ?? null,
         status: link.effectiveStatus,
         printStatus: link.printStatus,
         cutStatus: link.cutStatus,
@@ -280,6 +296,7 @@ export async function getOrderLinkedDataSummary(orderId: string): Promise<OrderL
       uploadedByDisplayName: attachment.uploadedBy?.displayName ?? null,
     })),
     fileChainSummary: normalizedFileChain,
+    fileChainLinks,
     latestFileChainLinks,
     warnings,
   };

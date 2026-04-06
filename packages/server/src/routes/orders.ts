@@ -62,6 +62,11 @@ function isDesignCompletionStation(station: string): boolean {
   return station === PrintingMethod.DESIGN || station === PrintingMethod.DESIGN_ONLY;
 }
 
+function getStationFilterTargets(station: string): string[] {
+  const targets = [station, ...(PARENT_SUB_STATIONS[station] || [])];
+  return [...new Set(targets)];
+}
+
 // All routes require authentication
 ordersRouter.use(authenticate);
 
@@ -432,7 +437,7 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
   }
 
   if (station) {
-    where.routing = { has: station };
+    where.routing = { hasSome: getStationFilterTargets(station) };
   }
 
   if (myStations && req.user?.allowedStations?.length) {
@@ -1633,6 +1638,59 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
   }
 
   res.json({ success: true, data: order });
+});
+
+// POST /orders/:id/installation-notes - Append an installer note to the order
+ordersRouter.post('/:id/installation-notes', async (req: AuthRequest, res: Response) => {
+  const userId = req.userId!;
+  const note = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+
+  if (!note) {
+    throw BadRequestError('note is required');
+  }
+
+  const order = await prisma.workOrder.findUnique({
+    where: { id: req.params.id },
+    select: {
+      id: true,
+      orderNumber: true,
+      notes: true,
+    },
+  });
+
+  if (!order) {
+    throw NotFoundError('Order not found');
+  }
+
+  const stampedNote = `[Installation Note ${new Date().toISOString()}]\n${note}`;
+  const nextNotes = [order.notes?.trim(), stampedNote].filter(Boolean).join('\n\n');
+
+  const updatedOrder = await prisma.workOrder.update({
+    where: { id: req.params.id },
+    data: {
+      notes: nextNotes,
+    },
+  });
+
+  await prisma.workEvent.create({
+    data: {
+      orderId: req.params.id,
+      eventType: 'NOTE_ADDED',
+      description: 'Installer note added',
+      userId,
+      details: {
+        note,
+      },
+    },
+  });
+
+  broadcast({
+    type: 'ORDER_UPDATED',
+    payload: { orderId: req.params.id },
+    timestamp: new Date(),
+  });
+
+  res.json({ success: true, data: updatedOrder });
 });
 
 // DELETE /orders/:id

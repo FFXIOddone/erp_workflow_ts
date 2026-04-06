@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Factory,
   Scissors,
@@ -119,6 +119,19 @@ interface ProductionCutSummary {
   zundCompletedCount?: number;
   zundQueueFileCount?: number;
   manualLinkCount?: number;
+}
+
+interface ProductionLinkedFileChainLink {
+  id: string;
+  printFileName: string;
+  cutFileName: string | null;
+  cutId: string | null;
+}
+
+interface ProductionLinkedDataSummary {
+  orderId: string;
+  fileChainLinks: ProductionLinkedFileChainLink[];
+  latestFileChainLinks: ProductionLinkedFileChainLink[];
 }
 
 interface ProductionCutData {
@@ -291,6 +304,48 @@ function getLiveCutMatches(cutData: ProductionCutData | null | undefined): LiveC
   return [...queueMatches, ...cutJobMatches, ...completedMatches].slice(0, 4);
 }
 
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function scoreSearchMatch(haystack: string, query: string): number {
+  const normalizedHaystack = normalizeSearchText(haystack);
+  const normalizedQuery = normalizeSearchText(query);
+
+  if (!normalizedQuery) {
+    return 1;
+  }
+
+  if (!normalizedHaystack) {
+    return 0;
+  }
+
+  if (normalizedHaystack === normalizedQuery) {
+    return 1000;
+  }
+
+  if (normalizedHaystack.includes(normalizedQuery)) {
+    return 800 + normalizedQuery.length;
+  }
+
+  const tokens = normalizedQuery.split(' ').filter(Boolean);
+  let score = 0;
+
+  for (const token of tokens) {
+    const index = normalizedHaystack.indexOf(token);
+    if (index === -1) {
+      return 0;
+    }
+    score += 100 - Math.min(50, index);
+  }
+
+  return score;
+}
+
 function buildCutCandidates(unlinkedData: UnlinkedCutData | null): ProductionCutCandidate[] {
   if (!unlinkedData) return [];
 
@@ -320,6 +375,9 @@ export function ProductionStation() {
   const [orders, setOrders] = useState<ProductionOrder[]>([]);
   const [fileChainByOrder, setFileChainByOrder] = useState<
     Record<string, ShopFloorFileChainLink[]>
+  >({});
+  const [linkedDataByOrderId, setLinkedDataByOrderId] = useState<
+    Record<string, ProductionLinkedDataSummary>
   >({});
   const [cutDataByOrderNumber, setCutDataByOrderNumber] = useState<
     Record<string, ProductionCutData>
@@ -491,6 +549,25 @@ export function ProductionStation() {
     }
   }, []);
 
+  const loadLinkedData = useCallback(
+    async (orderId: string, options?: { silent?: boolean }) => {
+      try {
+        const data = await apiGet<ProductionLinkedDataSummary>(`/orders/${orderId}/linked-data`);
+        setLinkedDataByOrderId((prev) => ({
+          ...prev,
+          [orderId]: data,
+        }));
+        return data;
+      } catch (err: any) {
+        if (!options?.silent) {
+          toast.error(err?.message || 'Failed to load linked order data');
+        }
+        return null;
+      }
+    },
+    [],
+  );
+
   const closeLinkCutModal = useCallback(() => {
     setLinkCutModalOrder(null);
     setCutLinkSearch('');
@@ -508,6 +585,22 @@ export function ProductionStation() {
   }, [fetchOrders]);
 
   useEffect(() => {
+    if (orders.length === 0) {
+      return;
+    }
+
+    const missingIds = orders
+      .filter((order) => !linkedDataByOrderId[order.id])
+      .map((order) => order.id);
+
+    if (missingIds.length === 0) {
+      return;
+    }
+
+    void Promise.all(missingIds.map((orderId) => loadLinkedData(orderId, { silent: true })));
+  }, [linkedDataByOrderId, loadLinkedData, orders]);
+
+  useEffect(() => {
     const unsubscribe = subscribe((msg) => {
       const shouldRefreshOrders = [
         'STATION_COMPLETED',
@@ -521,6 +614,37 @@ export function ProductionStation() {
         void fetchOrders();
       }
 
+      const payload =
+        msg.payload && typeof msg.payload === 'object'
+          ? (msg.payload as Record<string, unknown>)
+          : null;
+      const payloadOrderId =
+        payload && typeof payload.orderId === 'string' ? payload.orderId : null;
+      const payloadWorkOrderId =
+        payload && typeof payload.workOrderId === 'string' ? payload.workOrderId : null;
+
+      if (msg.type === 'ORDER_UPDATED') {
+        setLinkedDataByOrderId((prev) => {
+          if (!payloadOrderId || !prev[payloadOrderId]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[payloadOrderId];
+          return next;
+        });
+      }
+
+      if (msg.type === 'FILE_CHAIN_UPDATED') {
+        setLinkedDataByOrderId((prev) => {
+          if (!payloadWorkOrderId || !prev[payloadWorkOrderId]) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[payloadWorkOrderId];
+          return next;
+        });
+      }
+
       if (!expandedOrder) return;
 
       if (msg.type === 'ORDER_UPDATED') {
@@ -528,14 +652,7 @@ export function ProductionStation() {
       }
 
       if (msg.type === 'FILE_CHAIN_UPDATED') {
-        const payload =
-          msg.payload && typeof msg.payload === 'object'
-            ? (msg.payload as Record<string, unknown>)
-            : null;
-        const workOrderId =
-          payload && typeof payload.workOrderId === 'string' ? payload.workOrderId : null;
-
-        if (!workOrderId || workOrderId === expandedOrder.id) {
+        if (!payloadWorkOrderId || payloadWorkOrderId === expandedOrder.id) {
           void loadFileChain(expandedOrder.id, { silent: true });
           void loadOrderCutData(expandedOrder.orderNumber, { silent: true });
         }
@@ -788,31 +905,74 @@ export function ProductionStation() {
 
   const FABRICATION_STATIONS = ['FABRICATION', 'CUT', 'PRODUCTION_ZUND', 'PRODUCTION_FINISHING'];
 
-  const productionOrders = orders.filter((order) => {
-    const all = [
-      ...(order.routing ?? []),
-      ...(order.stationProgress ?? []).map((sp) => sp.station),
-    ];
-    return all.some((s) => PRODUCTION_SIDE_STATIONS.includes(s));
-  });
+  const productionOrders = useMemo(
+    () =>
+      orders.filter((order) => {
+        const all = [
+          ...(order.routing ?? []),
+          ...(order.stationProgress ?? []).map((sp) => sp.station),
+        ];
+        return all.some((station) => PRODUCTION_SIDE_STATIONS.includes(station));
+      }),
+    [orders],
+  );
 
-  const filtered = productionOrders.filter((order) => {
-    const all = [
-      ...(order.routing ?? []),
-      ...(order.stationProgress ?? []).map((sp) => sp.station),
-    ];
+  const filtered = useMemo(() => {
+    const normalizedQuery = searchQuery.trim();
+    const scored = productionOrders
+      .filter((order) => {
+        const all = [
+          ...(order.routing ?? []),
+          ...(order.stationProgress ?? []).map((sp) => sp.station),
+        ];
 
-    if (stationFilter === 'production' && !all.includes('PRODUCTION')) return false;
-    if (stationFilter === 'screen_print' && !all.includes('SCREEN_PRINT')) return false;
-    if (stationFilter === 'fabrication' && !all.some((s) => FABRICATION_STATIONS.includes(s)))
-      return false;
+        if (stationFilter === 'production' && !all.includes('PRODUCTION')) return false;
+        if (stationFilter === 'screen_print' && !all.includes('SCREEN_PRINT')) return false;
+        if (stationFilter === 'fabrication' && !all.some((station) => FABRICATION_STATIONS.includes(station)))
+          return false;
 
-    return (
-      !searchQuery ||
-      order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.customerName.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  });
+        return true;
+      })
+      .map((order) => {
+        const linkedData = linkedDataByOrderId[order.id];
+        const fileChainLinks = [
+          ...(fileChainByOrder[order.id] || []),
+          ...(linkedData?.fileChainLinks || []),
+          ...(linkedData?.latestFileChainLinks || []),
+        ];
+        const liveCutData = cutDataByOrderNumber[order.orderNumber];
+
+        const searchParts = [
+          order.orderNumber,
+          order.customerName,
+          order.description,
+          ...(fileChainLinks.flatMap((link) => [link.printFileName, link.cutFileName, link.cutId])),
+          ...(liveCutData?.cutJobs.flatMap((job) => [job.jobName, job.fileName, job.cutId]) || []),
+          ...(liveCutData?.zundQueueFiles.flatMap((file) => [file.jobName, file.fileName, file.cutId]) || []),
+          ...(liveCutData?.zundCompletedJobs.flatMap((job) => [job.jobName, job.cutId]) || []),
+          ...(liveCutData?.summary?.manualLinkCount ? ['manual link'] : []),
+        ].filter((value): value is string => Boolean(value && value.trim()));
+
+        return {
+          order,
+          score: normalizedQuery ? scoreSearchMatch(searchParts.join(' '), normalizedQuery) : 1,
+        };
+      });
+
+    return normalizedQuery
+      ? scored
+          .filter((entry) => entry.score > 0)
+          .sort((a, b) => b.score - a.score || a.order.orderNumber.localeCompare(b.order.orderNumber))
+          .map((entry) => entry.order)
+      : scored.map((entry) => entry.order);
+  }, [
+    cutDataByOrderNumber,
+    fileChainByOrder,
+    linkedDataByOrderId,
+    productionOrders,
+    searchQuery,
+    stationFilter,
+  ]);
 
   const cutCandidates = buildCutCandidates(unlinkedCutData).filter((candidate) => {
     if (!cutLinkSearch.trim()) return true;
@@ -845,7 +1005,7 @@ export function ProductionStation() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search orders..."
+            placeholder="Search order number, customer, description, file name, or CutID..."
             className="w-full pl-4 pr-4 py-2 border border-gray-300 rounded-lg text-sm"
           />
         </div>
