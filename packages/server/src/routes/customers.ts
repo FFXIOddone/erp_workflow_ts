@@ -2,6 +2,7 @@ import { Router, type Response } from 'express';
 import { prisma } from '../db/client.js';
 import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../middleware/error-handler.js';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import {
   CreateCustomerSchema,
   UpdateCustomerSchema,
@@ -23,12 +24,10 @@ customersRouter.get('/', async (req: AuthRequest, res: Response) => {
   const where: Record<string, unknown> = {};
 
   if (search) {
-    where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { companyName: { contains: search, mode: 'insensitive' } },
-      { email: { contains: search, mode: 'insensitive' } },
-      { phone: { contains: search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search, ['name', 'companyName', 'email', 'phone']);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   if (isActive !== undefined) {

@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
+import { buildTokenizedSearchWhere } from './fuzzy-search.js';
 
 // ============ Pagination Schemas ============
 
@@ -350,20 +351,14 @@ export function buildDateRangeFilter(
 }
 
 /**
- * Build search filter for multiple fields (case-insensitive contains)
+ * Build search filter for multiple fields using tokenized fuzzy matching.
  */
 export function buildSearchFilter(
   search: string | undefined,
   fields: string[]
 ): Prisma.JsonValue | undefined {
   if (!search || search.trim().length === 0) return undefined;
-
-  const searchTerm = search.trim();
-  const orConditions = fields.map((field) => ({
-    [field]: { contains: searchTerm, mode: 'insensitive' },
-  }));
-
-  return { OR: orConditions } as Prisma.JsonValue;
+  return buildTokenizedSearchWhere(search, fields) as Prisma.JsonValue;
 }
 
 /**

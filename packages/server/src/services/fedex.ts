@@ -5,6 +5,7 @@ import { XMLParser } from 'fast-xml-parser';
 import * as XLSX from 'xlsx';
 import type { FedExShipmentRecord, Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 const FEDEX_LOG_FILE_PREFIX = 'FxLogSr';
 const FEDEX_LOG_FILE_REGEX = /^FxLogSr(\d{8})\.xml$/i;
@@ -1986,13 +1987,16 @@ export async function listFedExShipmentRecords(
   }
 
   if (query.search) {
-    where.OR = [
-      { trackingNumber: { contains: query.search, mode: 'insensitive' } },
-      { recipientCompanyName: { contains: query.search, mode: 'insensitive' } },
-      { recipientContactName: { contains: query.search, mode: 'insensitive' } },
-      { destinationAddressLine1: { contains: query.search, mode: 'insensitive' } },
-      { destinationCity: { contains: query.search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(query.search, [
+      'trackingNumber',
+      'recipientCompanyName',
+      'recipientContactName',
+      'destinationAddressLine1',
+      'destinationCity',
+    ]);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   if (query.fromDate ?? query.toDate) {

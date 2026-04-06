@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Package, Plus, X, Boxes, MapPin, Search, Link as LinkIcon, ClipboardList, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { filterBySearchFields } from '@erp/shared';
 import { api } from '../lib/api';
 
 const INVENTORY_STATUSES = ['AVAILABLE', 'RESERVED', 'IN_USE', 'DEPLETED'] as const;
@@ -134,15 +135,17 @@ export function InventoryPage() {
     .filter((o: { status: string }) => !['COMPLETED', 'SHIPPED', 'CANCELLED'].includes(o.status));
   
   // Filter items by search term
-  const filteredItems = items.filter((item: { itemMaster: { id: string; sku: string; name: string }; location: string | null }) => {
-    if (!searchTerm) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      item.itemMaster.name.toLowerCase().includes(term) ||
-      item.itemMaster.sku.toLowerCase().includes(term) ||
-      (item.location && item.location.toLowerCase().includes(term))
-    );
-  });
+  const filteredItems = searchTerm
+    ? filterBySearchFields(
+        items,
+        searchTerm,
+        (item: { itemMaster: { id: string; sku: string; name: string }; location: string | null }) => [
+          item.itemMaster.name,
+          item.itemMaster.sku,
+          item.location,
+        ],
+      )
+    : items;
 
   return (
     <>

@@ -6,7 +6,7 @@ import { AuthRequest, authenticate } from '../middleware/auth.js';
 import { prisma } from '../db/client.js';
 import { broadcast } from '../ws/server.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
-import { UploadDocumentSchema, UpdateDocumentSchema, DocumentFilterSchema } from '@erp/shared';
+import { UploadDocumentSchema, UpdateDocumentSchema, DocumentFilterSchema, splitSearchTerms } from '@erp/shared';
 import { DocumentCategory } from '@prisma/client';
 
 export const documentsRouter = Router();
@@ -103,12 +103,17 @@ documentsRouter.get('/', async (req: AuthRequest, res: Response) => {
   }
   
   if (filters.search) {
-    where.OR = [
-      { name: { contains: filters.search, mode: 'insensitive' } },
-      { fileName: { contains: filters.search, mode: 'insensitive' } },
-      { description: { contains: filters.search, mode: 'insensitive' } },
-      { tags: { hasSome: [filters.search] } },
-    ];
+    const searchTerms = splitSearchTerms(filters.search);
+    if (searchTerms.length > 0) {
+      where.AND = searchTerms.map((term) => ({
+        OR: [
+          { name: { contains: term, mode: 'insensitive' as const } },
+          { fileName: { contains: term, mode: 'insensitive' as const } },
+          { description: { contains: term, mode: 'insensitive' as const } },
+          { tags: { hasSome: [term] } },
+        ],
+      }));
+    }
   }
 
   const documents = await prisma.document.findMany({

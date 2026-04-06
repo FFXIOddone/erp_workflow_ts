@@ -42,6 +42,7 @@ import {
   inferRoutingFromOrderDetails,
   isDesignOnlyOrder,
   stripOrderCategoryTags,
+  matchesSearchFields,
 } from '@erp/shared';
 import { api } from '../lib/api';
 import { buildDesignFollowOnPayload, fetchOrderRecreationSource, isDesignOnlySource } from '../lib/order-recreation';
@@ -311,12 +312,11 @@ export function OrderEntryStationView() {
   const filteredOrders = useMemo(() => {
     let result = orders;
     if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(o =>
-        o.orderNumber.toLowerCase().includes(q) ||
-        o.customerName.toLowerCase().includes(q) ||
-        (o.description || '').toLowerCase().includes(q) ||
-        (o.notes || '').toLowerCase().includes(q),
+      result = result.filter((order) =>
+        matchesSearchFields(
+          [order.orderNumber, order.customerName, order.description, order.notes],
+          searchQuery,
+        ),
       );
     }
     return [...result].sort((a, b) => {

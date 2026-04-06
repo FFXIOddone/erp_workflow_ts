@@ -17,6 +17,7 @@ import type {
   QBCacheStats,
   QBInvoiceLineItem,
 } from '@erp/shared';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 // ─── Import ────────────────────────────────────────────────────
 
@@ -126,11 +127,10 @@ export async function searchCache(params: {
   if (type) where.type = type;
 
   if (search) {
-    where.OR = [
-      { refNumber: { contains: search, mode: 'insensitive' } },
-      { customerName: { contains: search, mode: 'insensitive' } },
-      { poNumber: { contains: search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search, ['refNumber', 'customerName', 'poNumber']);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   const [orders, total] = await Promise.all([

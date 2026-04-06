@@ -17,6 +17,7 @@ import { AuthRequest, authenticate } from '../middleware/auth.js';
 import { prisma } from '../db/client.js';
 import { BadRequestError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 export const searchRouter = Router();
 
@@ -148,13 +149,8 @@ async function searchWorkOrders(
 
   const orders = await prisma.workOrder.findMany({
     where: {
-      OR: [
-        { orderNumber: { contains: query, mode: 'insensitive' } },
-        { customerName: { contains: query, mode: 'insensitive' } },
-        { description: { contains: query, mode: 'insensitive' } },
-        { notes: { contains: query, mode: 'insensitive' } },
-      ],
       ...(includeInactive ? {} : { status: { notIn: ['CANCELLED'] } }),
+      ...(buildTokenizedSearchWhere(query, ['orderNumber', 'customerName', 'description', 'notes']) || {}),
     },
     take: limit,
     skip: offset,
@@ -210,14 +206,8 @@ async function searchCustomers(
 ): Promise<SearchResult[]> {
   const customers = await prisma.customer.findMany({
     where: {
-      OR: [
-        { name: { contains: query, mode: 'insensitive' } },
-        { companyName: { contains: query, mode: 'insensitive' } },
-        { email: { contains: query, mode: 'insensitive' } },
-        { phone: { contains: query, mode: 'insensitive' } },
-        { city: { contains: query, mode: 'insensitive' } },
-      ],
       ...(includeInactive ? {} : { isActive: true }),
+      ...(buildTokenizedSearchWhere(query, ['name', 'companyName', 'email', 'phone', 'city']) || {}),
     },
     take: limit,
     skip: offset,
@@ -278,13 +268,8 @@ async function searchQuotes(
 ): Promise<SearchResult[]> {
   const quotes = await prisma.quote.findMany({
     where: {
-      OR: [
-        { quoteNumber: { contains: query, mode: 'insensitive' } },
-        { customerName: { contains: query, mode: 'insensitive' } },
-        { description: { contains: query, mode: 'insensitive' } },
-        { notes: { contains: query, mode: 'insensitive' } },
-      ],
       ...(includeInactive ? {} : { status: { notIn: ['EXPIRED', 'REJECTED'] } }),
+      ...(buildTokenizedSearchWhere(query, ['quoteNumber', 'customerName', 'description', 'notes']) || {}),
     },
     take: limit,
     skip: offset,
@@ -342,13 +327,8 @@ async function searchInventory(
 ): Promise<SearchResult[]> {
   const items = await prisma.itemMaster.findMany({
     where: {
-      OR: [
-        { sku: { contains: query, mode: 'insensitive' } },
-        { name: { contains: query, mode: 'insensitive' } },
-        { description: { contains: query, mode: 'insensitive' } },
-        { category: { contains: query, mode: 'insensitive' } },
-      ],
       ...(includeInactive ? {} : { isActive: true }),
+      ...(buildTokenizedSearchWhere(query, ['sku', 'name', 'description', 'category']) || {}),
     },
     take: limit,
     skip: offset,
@@ -409,12 +389,8 @@ async function searchUsers(
 ): Promise<SearchResult[]> {
   const users = await prisma.user.findMany({
     where: {
-      OR: [
-        { username: { contains: query, mode: 'insensitive' } },
-        { displayName: { contains: query, mode: 'insensitive' } },
-        { email: { contains: query, mode: 'insensitive' } },
-      ],
       ...(includeInactive ? {} : { isActive: true }),
+      ...(buildTokenizedSearchWhere(query, ['username', 'displayName', 'email']) || {}),
     },
     take: limit,
     skip: offset,

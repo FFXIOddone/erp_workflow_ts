@@ -22,6 +22,7 @@ import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import { useWebSocket } from '../lib/useWebSocket';
 import toast from 'react-hot-toast';
+import { filterBySearchFields } from '@erp/shared';
 
 const QC_CHECKLIST = [
   { key: 'dimensions', label: 'Dimensions measured & verified' },
@@ -286,11 +287,10 @@ export function ShippingStation() {
     input.click();
   };
 
-  const filtered = orders.filter(
-    (o) =>
-      !searchQuery ||
-      o.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customerName.toLowerCase().includes(searchQuery.toLowerCase()),
+  const filtered = filterBySearchFields(
+    orders,
+    searchQuery,
+    (o) => [o.orderNumber, o.customerName, o.description ?? '', o.status],
   );
 
   if (loading) {

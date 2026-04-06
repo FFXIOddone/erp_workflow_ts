@@ -3,6 +3,7 @@ import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../middleware/error-handler.js';
 import { broadcast } from '../ws/server.js';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import {
   CreateQuoteSchema,
   UpdateQuoteSchema,
@@ -79,11 +80,14 @@ quotesRouter.get('/', async (req: AuthRequest, res: Response) => {
   }
 
   if (search) {
-    where.OR = [
-      { quoteNumber: { contains: search, mode: 'insensitive' } },
-      { customerName: { contains: search, mode: 'insensitive' } },
-      { description: { contains: search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search, [
+      'quoteNumber',
+      'customerName',
+      'description',
+    ]);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   if (fromDate || toDate) {

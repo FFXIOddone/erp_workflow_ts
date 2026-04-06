@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { matchesSearchFields } from '@erp/shared';
 import { api } from '../lib/api';
 import { useWebSocket } from './useWebSocket';
 import {
@@ -284,10 +285,11 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
       
       // Search filter
       if (filters.search) {
-        const searchLower = filters.search.toLowerCase();
-        const matchesTitle = notification.title.toLowerCase().includes(searchLower);
-        const matchesMessage = notification.message.toLowerCase().includes(searchLower);
-        if (!matchesTitle && !matchesMessage) {
+        const matchesSearch = matchesSearchFields(
+          [notification.title, notification.message],
+          filters.search,
+        );
+        if (!matchesSearch) {
           return false;
         }
       }

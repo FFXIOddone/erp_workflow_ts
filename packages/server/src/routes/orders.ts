@@ -41,6 +41,7 @@ import { triggerEmail } from '../services/email-automation.js';
 import { bomAutomationService } from '../services/bom-automation.js';
 import { ensureShipmentRecordForWorkOrder } from '../services/shipment-linking.js';
 import { resolveCustomerId } from '../lib/customer-matching.js';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import { updateStreak, checkAchievements } from '../services/gamification.js';
 import {
   applyRoutingDefaults,
@@ -427,13 +428,16 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
   }
 
   if (search) {
-    where.OR = [
-      { orderNumber: { contains: search, mode: 'insensitive' } },
-      { customerName: { contains: search, mode: 'insensitive' } },
-      { description: { contains: search, mode: 'insensitive' } },
-      { notes: { contains: search, mode: 'insensitive' } },
-      { quickbooksOrderNum: { contains: search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search, [
+      'orderNumber',
+      'customerName',
+      'description',
+      'notes',
+      'quickbooksOrderNum',
+    ]);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   if (station) {

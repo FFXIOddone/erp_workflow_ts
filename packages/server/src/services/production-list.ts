@@ -33,6 +33,7 @@ import {
   isDesignOnlyOrder,
 } from '@erp/shared';
 import { applyRoutingDefaults, buildInitialStationProgress } from '../lib/routing-defaults.js';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import type {
   ProductionListRow,
   ProductionListMapping,
@@ -732,11 +733,14 @@ export async function getERPAsProductionListRows(
   }
 
   if (options.search) {
-    where.OR = [
-      { orderNumber: { contains: options.search, mode: 'insensitive' } },
-      { customerName: { contains: options.search, mode: 'insensitive' } },
-      { description: { contains: options.search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(options.search, [
+      'orderNumber',
+      'customerName',
+      'description',
+    ]);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   const orders = await prisma.workOrder.findMany({

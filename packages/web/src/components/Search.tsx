@@ -29,6 +29,7 @@ import React, {
 } from 'react';
 import { clsx } from 'clsx';
 import { Search, X, Clock, TrendingUp, ArrowRight, Loader2 } from 'lucide-react';
+import { scoreSearchText } from '@erp/shared';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -1186,50 +1187,7 @@ export function SearchSuggestions<T>({
  * Simple fuzzy search scoring
  */
 export function fuzzyScore(query: string, target: string): number {
-  const q = query.toLowerCase();
-  const t = target.toLowerCase();
-
-  // Exact match
-  if (t === q) return 100;
-
-  // Starts with
-  if (t.startsWith(q)) return 90;
-
-  // Contains
-  if (t.includes(q)) return 70;
-
-  // Fuzzy match
-  let score = 0;
-  let queryIndex = 0;
-  let lastMatchIndex = -1;
-
-  for (let i = 0; i < t.length && queryIndex < q.length; i++) {
-    if (t[i] === q[queryIndex]) {
-      score += 10;
-
-      // Bonus for consecutive matches
-      if (lastMatchIndex === i - 1) {
-        score += 5;
-      }
-
-      // Bonus for word boundary matches
-      if (i === 0 || t[i - 1] === ' ' || t[i - 1] === '-' || t[i - 1] === '_') {
-        score += 10;
-      }
-
-      lastMatchIndex = i;
-      queryIndex++;
-    }
-  }
-
-  // All query chars matched
-  if (queryIndex === q.length) {
-    // Penalty for longer strings
-    const lengthPenalty = Math.max(0, (t.length - q.length) * 0.5);
-    return Math.max(0, score - lengthPenalty);
-  }
-
-  return 0;
+  return scoreSearchText(target, query);
 }
 
 /**

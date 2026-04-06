@@ -4,6 +4,7 @@ import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../middleware/error-handler.js';
 import { UserRole } from '@erp/shared';
 import { z } from 'zod';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 export const companiesRouter = Router();
 
@@ -74,13 +75,16 @@ companiesRouter.get('/', async (req: AuthRequest, res: Response) => {
   const where: Record<string, unknown> = {};
 
   if (search) {
-    where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { legalName: { contains: search, mode: 'insensitive' } },
-      { email: { contains: search, mode: 'insensitive' } },
-      { phone: { contains: search, mode: 'insensitive' } },
-      { city: { contains: search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search, [
+      'name',
+      'legalName',
+      'email',
+      'phone',
+      'city',
+    ]);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   if (isActive !== undefined) {

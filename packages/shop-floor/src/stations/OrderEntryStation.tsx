@@ -20,6 +20,7 @@ import {
 import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import toast from 'react-hot-toast';
+import { filterBySearchFields } from '@erp/shared';
 
 interface OrderLineItem {
   id: string;
@@ -392,11 +393,10 @@ export function OrderEntryStation() {
     };
   }, []);
 
-  const filteredOrders = orders.filter(
-    (o) =>
-      !searchQuery ||
-      o.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customerName.toLowerCase().includes(searchQuery.toLowerCase()),
+  const filteredOrders = filterBySearchFields(
+    orders,
+    searchQuery,
+    (o) => [o.orderNumber, o.customerName, o.description ?? '', o.notes ?? '', o.poNumber ?? ''],
   );
 
   const addLineItem = () => {

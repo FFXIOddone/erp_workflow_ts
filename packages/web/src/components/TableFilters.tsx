@@ -35,6 +35,8 @@ import {
 } from 'lucide-react';
 import { format, isValid, parseISO, startOfDay, endOfDay, subDays, subMonths } from 'date-fns';
 import { clsx } from 'clsx';
+import type { SearchValue } from '@erp/shared';
+import { matchesSearchFields } from '@erp/shared';
 import type { ColumnDef } from './AdvancedTable';
 
 // ============================================================================
@@ -124,6 +126,24 @@ function useFilterContext<TData>() {
   return context;
 }
 
+function toSearchValue(value: unknown): SearchValue {
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null ||
+    value === undefined
+  ) {
+    return value;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  return String(value);
+}
+
 // ============================================================================
 // Filter Functions
 // ============================================================================
@@ -140,18 +160,21 @@ export function applyFilters<TData>(
   
   // Apply global search
   if (state.globalSearch.trim()) {
-    const searchLower = state.globalSearch.toLowerCase();
     const searchableColumns = columns.filter((c) => c.filterable !== false);
-    
+
     filtered = filtered.filter((row) =>
-      searchableColumns.some((col) => {
-        const value = typeof col.accessor === 'function'
-          ? col.accessor(row)
-          : row[col.accessor as keyof TData];
-        
-        if (value == null) return false;
-        return String(value).toLowerCase().includes(searchLower);
-      })
+      searchableColumns.some((col) =>
+        matchesSearchFields(
+          [
+            toSearchValue(
+              typeof col.accessor === 'function'
+                ? col.accessor(row)
+                : row[col.accessor as keyof TData],
+            ),
+          ],
+          state.globalSearch,
+        ),
+      ),
     );
   }
   

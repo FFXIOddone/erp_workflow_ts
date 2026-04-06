@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { formatDistanceToNow, isToday, isYesterday, isThisWeek, format } from 'date-fns';
+import { matchesSearchFields } from '@erp/shared';
 import { useNotifications, useUnreadCount } from '../hooks/useNotifications';
 import { InAppNotification, NotificationCategory, NotificationType } from '../stores/notifications';
 
@@ -353,10 +354,11 @@ export function NotificationCenter({ className }: NotificationCenterProps) {
       
       // Search filter
       if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const matchesTitle = notification.title.toLowerCase().includes(query);
-        const matchesMessage = notification.message.toLowerCase().includes(query);
-        if (!matchesTitle && !matchesMessage) {
+        const matchesSearch = matchesSearchFields(
+          [notification.title, notification.message],
+          searchQuery,
+        );
+        if (!matchesSearch) {
           return false;
         }
       }

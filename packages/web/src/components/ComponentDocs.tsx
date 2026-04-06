@@ -11,6 +11,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { clsx } from 'clsx';
+import { matchesSearchFields } from '@erp/shared';
 import { 
   ChevronRight, 
   ChevronDown, 
@@ -64,10 +65,11 @@ export function ComponentDocPage({ docs, className }: ComponentDocPageProps) {
   }, [docs]);
   
   const filteredDocs = useMemo(() => {
-    return docs.filter(doc => {
-      const matchesSearch = !search || 
-        doc.name.toLowerCase().includes(search.toLowerCase()) ||
-        doc.description.toLowerCase().includes(search.toLowerCase());
+    return docs.filter((doc) => {
+      const matchesSearch = !search || matchesSearchFields(
+        [doc.name, doc.description, doc.category],
+        search,
+      );
       const matchesCategory = !selectedCategory || doc.category === selectedCategory;
       return matchesSearch && matchesCategory;
     });

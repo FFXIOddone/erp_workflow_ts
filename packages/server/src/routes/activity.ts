@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db/client.js';
 import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { UserRole, PaginationSchema } from '@erp/shared';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 export const activityRouter = Router();
 
@@ -60,10 +61,10 @@ activityRouter.get(
       }
 
       if (search) {
-        where.OR = [
-          { description: { contains: search, mode: 'insensitive' } },
-          { entityName: { contains: search, mode: 'insensitive' } },
-        ];
+        const searchWhere = buildTokenizedSearchWhere(search, ['description', 'entityName']);
+        if (searchWhere) {
+          Object.assign(where, searchWhere);
+        }
       }
 
       const [activities, total] = await Promise.all([

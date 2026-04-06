@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Printer, Clock, CheckCircle, AlertCircle, Layers, ChevronDown, ChevronUp, X, Link, Unlink, Search, Loader2 } from 'lucide-react';
+import { filterBySearchFields } from '@erp/shared';
 import { api } from '../lib/api';
 import { formatDateTime } from '../lib/date';
 
@@ -522,19 +523,19 @@ export function PrinterInfoCard({ orderNumber }: PrinterInfoCardProps) {
     const availablePrintJobs: PrintJob[] = unlinkedData?.printJobs || [];
     const availableFieryJobs: FieryJobData[] = unlinkedData?.fieryJobs || [];
     
-    const sq = searchQuery.toLowerCase();
-    const filteredPrint = sq
-      ? availablePrintJobs.filter(j =>
-          j.jobName.toLowerCase().includes(sq) ||
-          j.fileName?.toLowerCase().includes(sq) ||
-          j.printer?.toLowerCase().includes(sq)
+    const filteredPrint = searchQuery
+      ? filterBySearchFields(
+          availablePrintJobs,
+          searchQuery,
+          (job) => [job.jobName, job.fileName, job.printer],
         )
       : availablePrintJobs;
     
-    const filteredFiery = sq
-      ? availableFieryJobs.filter(j =>
-          j.jobName.toLowerCase().includes(sq) ||
-          j.fileName?.toLowerCase().includes(sq)
+    const filteredFiery = searchQuery
+      ? filterBySearchFields(
+          availableFieryJobs,
+          searchQuery,
+          (job) => [job.jobName, job.fileName],
         )
       : availableFieryJobs;
     

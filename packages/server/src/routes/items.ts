@@ -8,6 +8,7 @@ import {
 import { prisma } from '../db/client.js';
 import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError } from '../middleware/error-handler.js';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 // Items are a catalog lookup — allow larger page sizes than the default PaginationSchema (500)
 const ItemPaginationSchema = z.object({
@@ -32,11 +33,10 @@ itemsRouter.get('/', async (req: AuthRequest, res: Response) => {
   if (activeOnly) where.isActive = true;
   if (category) where.category = category;
   if (search) {
-    where.OR = [
-      { sku: { contains: search, mode: 'insensitive' } },
-      { name: { contains: search, mode: 'insensitive' } },
-      { description: { contains: search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search, ['sku', 'name', 'description']);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   // Restrict to items that have been used on orders belonging to this company

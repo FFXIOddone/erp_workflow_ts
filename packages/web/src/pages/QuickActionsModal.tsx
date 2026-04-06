@@ -20,6 +20,7 @@ import {
   ArrowLeftRight,
   Command
 } from 'lucide-react';
+import { filterBySearchFields } from '@erp/shared';
 import { api } from '../lib/api';
 import { useDebounce } from '../hooks/useDebounce';
 
@@ -110,16 +111,16 @@ export function QuickActionsModal({ isOpen, onClose }: QuickActionsModalProps) {
   // Filter actions based on query
   const filteredActions = useMemo(() => {
     if (!query) return QUICK_ACTIONS;
-    
-    const lowerQuery = query.toLowerCase();
-    return QUICK_ACTIONS.filter(action => {
-      const searchText = [
+
+    return filterBySearchFields(
+      QUICK_ACTIONS,
+      query,
+      (action) => [
         action.label,
         action.description,
         ...(action.keywords || []),
-      ].join(' ').toLowerCase();
-      return searchText.includes(lowerQuery);
-    });
+      ],
+    );
   }, [query]);
   
   // Combined results (actions + search results)

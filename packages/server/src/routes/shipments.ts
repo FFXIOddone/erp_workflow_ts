@@ -6,6 +6,7 @@ import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.
 import { reconcileShippedOrdersWithShipments } from '../services/shipment-linking.js';
 import { applyShipmentTrackingNumber } from '../services/shipment-tracking.js';
 import { broadcast } from '../ws/server.js';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import {
   CreateShipmentSchema,
   UpdateShipmentSchema,
@@ -85,13 +86,16 @@ router.get('/', async (req: AuthRequest, res) => {
   }
 
   if (search) {
-    where.OR = [
-      { trackingNumber: { contains: search, mode: 'insensitive' } },
-      { workOrder: { orderNumber: { contains: search, mode: 'insensitive' } } },
-      { workOrder: { customerName: { contains: search, mode: 'insensitive' } } },
-      { workOrder: { customer: { name: { contains: search, mode: 'insensitive' } } } },
-      { workOrder: { customer: { companyName: { contains: search, mode: 'insensitive' } } } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search, [
+      'trackingNumber',
+      'workOrder.orderNumber',
+      'workOrder.customerName',
+      'workOrder.customer.name',
+      'workOrder.customer.companyName',
+    ]);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   if (fromDate || toDate) {

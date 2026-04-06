@@ -21,6 +21,7 @@ import { prisma } from '../db/client.js';
 import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { UserRole } from '@erp/shared';
 import { AuditEntityType, AuditAction, ChangeSource, Prisma } from '@prisma/client';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 export const auditLogRouter = Router();
 
@@ -269,11 +270,10 @@ auditLogRouter.get('/', requireManagerOrAdmin, asyncHandler(async (req: AuthRequ
 
   // Search across entity name and reason
   if (search) {
-    where.OR = [
-      { entityName: { contains: search, mode: 'insensitive' } },
-      { reason: { contains: search, mode: 'insensitive' } },
-      { entityId: { contains: search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search, ['entityName', 'reason', 'entityId']);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   // Execute query with pagination

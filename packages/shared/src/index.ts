@@ -12,3 +12,6 @@ export * from './constants.js';
 
 // Routing inference
 export * from './routing-inference.js';
+
+// Search helpers
+export * from './search.js';

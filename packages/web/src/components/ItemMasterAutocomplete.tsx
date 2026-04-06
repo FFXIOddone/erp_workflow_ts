@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Search, Package, X } from 'lucide-react';
+import { filterBySearchFields } from '@erp/shared';
 import { api } from '../lib/api';
 
 export interface ItemMasterOption {
@@ -69,18 +70,12 @@ export function ItemMasterAutocomplete({
 
   // Filter items based on search — each word must match somewhere (partial, multi-word)
   const filteredItems = search.trim()
-    ? (() => {
-        const words = search.toLowerCase().split(/\s+/).filter(Boolean);
-        return allItems.filter((item) => {
-          const haystack = [
-            item.sku,
-            item.name,
-            item.description || '',
-            item.category || '',
-          ].join(' ').toLowerCase();
-          return words.every((w) => haystack.includes(w));
-        }).slice(0, 50);
-      })()
+    ? filterBySearchFields(
+        allItems,
+        search,
+        (item) => [item.sku, item.name, item.description, item.category],
+        { limit: 50 },
+      )
     : allItems.slice(0, 50); // Show first 50 when no search
 
   // Resolve selected item for display

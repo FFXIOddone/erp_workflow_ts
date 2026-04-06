@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { filterBySearchFields } from '@erp/shared';
 import {
   X,
   HardDrive,
@@ -355,11 +356,11 @@ export function WinServicesModal({ isOpen, onClose, equipmentId, equipmentName, 
 
   // Apply local search filter
   const filtered = search
-    ? services.filter(s =>
-        s.displayName.toLowerCase().includes(search.toLowerCase()) ||
-        s.name.toLowerCase().includes(search.toLowerCase()) ||
-        (s.description || '').toLowerCase().includes(search.toLowerCase())
-      )
+    ? filterBySearchFields(services, search, (service) => [
+        service.displayName,
+        service.name,
+        service.description,
+      ])
     : services;
 
   // Group by category

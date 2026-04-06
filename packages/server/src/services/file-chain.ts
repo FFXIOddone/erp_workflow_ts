@@ -31,6 +31,7 @@ import { FIERY_CONFIG, getAllFieryJobs } from './fiery.js';
 import { scanZundQueueFiles } from './zund-live.js';
 import { deriveFileChainLinkState, summarizeFileChainLinks } from './file-chain-state.js';
 import type { Prisma, PrintCutLink } from '@prisma/client';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 // ─── Constants ─────────────────────────────────────────
 
@@ -238,12 +239,15 @@ export async function queryPrintCutLinks(filters: {
     if (filters.toDate) where.createdAt.lte = new Date(filters.toDate);
   }
   if (filters.search) {
-    where.OR = [
-      { printFileName: { contains: filters.search, mode: 'insensitive' } },
-      { cutFileName: { contains: filters.search, mode: 'insensitive' } },
-      { workOrder: { orderNumber: { contains: filters.search, mode: 'insensitive' } } },
-      { workOrder: { customerName: { contains: filters.search, mode: 'insensitive' } } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(filters.search, [
+      'printFileName',
+      'cutFileName',
+      'workOrder.orderNumber',
+      'workOrder.customerName',
+    ]);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   const page = filters.page || 1;

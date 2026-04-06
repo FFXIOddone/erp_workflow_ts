@@ -50,6 +50,7 @@ import {
   submitVutekJob,
   VUTEK_JOB_DIR,
 } from '../services/fiery-jmf.js';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 export const ripQueueRouter = Router();
 
@@ -308,13 +309,16 @@ ripQueueRouter.get('/jobs', async (req: AuthRequest, res: Response) => {
   }
 
   if (search) {
-    where.OR = [
-      { sourceFileName: { contains: search as string, mode: 'insensitive' } },
-      { hotfolderName: { contains: search as string, mode: 'insensitive' } },
-      { notes: { contains: search as string, mode: 'insensitive' } },
-      { workOrder: { orderNumber: { contains: search as string, mode: 'insensitive' } } },
-      { workOrder: { customerName: { contains: search as string, mode: 'insensitive' } } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search as string, [
+      'sourceFileName',
+      'hotfolderName',
+      'notes',
+      'workOrder.orderNumber',
+      'workOrder.customerName',
+    ]);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   const [jobs, total] = await Promise.all([

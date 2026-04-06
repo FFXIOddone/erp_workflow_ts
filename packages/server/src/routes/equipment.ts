@@ -55,6 +55,7 @@ import {
   DowntimeEventFilterSchema,
   EquipmentStatus,
 } from '@erp/shared';
+import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 const router = Router();
 const REMOTE_SHARE_REACHABILITY_TIMEOUT_MS = 3000;
@@ -99,12 +100,15 @@ router.get('/', async (req: AuthRequest, res) => {
   const where: any = {};
 
   if (search) {
-    where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { manufacturer: { contains: search, mode: 'insensitive' } },
-      { model: { contains: search, mode: 'insensitive' } },
-      { serialNumber: { contains: search, mode: 'insensitive' } },
-    ];
+    const searchWhere = buildTokenizedSearchWhere(search, [
+      'name',
+      'manufacturer',
+      'model',
+      'serialNumber',
+    ]);
+    if (searchWhere) {
+      Object.assign(where, searchWhere);
+    }
   }
 
   if (type) {

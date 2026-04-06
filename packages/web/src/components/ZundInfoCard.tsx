@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Scissors, Maximize2, Box, ChevronDown, ChevronUp, CheckCircle, Clock, X, Link2, FileText, Loader2, HardDrive, Link, Unlink, Search } from 'lucide-react';
+import { filterBySearchFields } from '@erp/shared';
 import { api } from '../lib/api';
 import { formatDateTime } from '../lib/date';
 
@@ -751,10 +752,10 @@ export function ZundInfoCard({ orderNumber }: ZundInfoCardProps) {
       ...queueFilesAvailable.map((j: any) => ({ type: 'ZUND_QUEUE' as const, identifier: j.fileName, name: j.jobName, detail: j.material || '', source: 'Zund Queue' })),
     ];
     const filtered = searchQuery
-      ? allAvailable.filter(j =>
-          j.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          j.identifier.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          j.detail.toLowerCase().includes(searchQuery.toLowerCase())
+      ? filterBySearchFields(
+          allAvailable,
+          searchQuery,
+          (item) => [item.name, item.identifier, item.detail, item.source],
         )
       : allAvailable;
 

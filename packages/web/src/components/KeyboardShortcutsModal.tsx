@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { X, Command, Search } from 'lucide-react';
+import { filterBySearchFields } from '@erp/shared';
 
 // ============================================================================
 // Types & Interfaces
@@ -161,12 +162,10 @@ export function KeyboardShortcutsModal({
   // Filter shortcuts
   const filteredShortcuts = useMemo(() => {
     if (!searchQuery.trim()) return shortcuts;
-    const query = searchQuery.toLowerCase();
-    return shortcuts.filter(
-      (s) =>
-        s.description.toLowerCase().includes(query) ||
-        s.keys.toLowerCase().includes(query) ||
-        s.category.toLowerCase().includes(query),
+    return filterBySearchFields(
+      shortcuts,
+      searchQuery,
+      (shortcut) => [shortcut.description, shortcut.keys, shortcut.category],
     );
   }, [shortcuts, searchQuery]);
 

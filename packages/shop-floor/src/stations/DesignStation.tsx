@@ -18,7 +18,7 @@ import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import { useWebSocket } from '../lib/useWebSocket';
 import toast from 'react-hot-toast';
-import { inferRoutingFromOrderDetails, isDesignOnlyOrder, stripOrderCategoryTags } from '@erp/shared';
+import { filterBySearchFields, inferRoutingFromOrderDetails, isDesignOnlyOrder, stripOrderCategoryTags } from '@erp/shared';
 
 interface ProofInfo {
   id: string;
@@ -331,12 +331,10 @@ export function DesignStation() {
     return latest;
   };
 
-  const filtered = orders.filter(
-    (o) =>
-      !searchQuery ||
-      o.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (o.description || '').toLowerCase().includes(searchQuery.toLowerCase()),
+  const filtered = filterBySearchFields(
+    orders,
+    searchQuery,
+    (o) => [o.orderNumber, o.customerName, o.description ?? '', o.notes ?? ''],
   );
 
   if (loading) {
