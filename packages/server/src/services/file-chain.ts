@@ -29,6 +29,7 @@ import {
 } from './zund-match.js';
 import { FIERY_CONFIG, getAllFieryJobs } from './fiery.js';
 import { scanZundQueueFiles } from './zund-live.js';
+import { deriveFileChainLinkState, summarizeFileChainLinks } from './file-chain-state.js';
 import type { Prisma, PrintCutLink } from '@prisma/client';
 
 // ─── Constants ─────────────────────────────────────────
@@ -145,7 +146,17 @@ export async function getOrderFileChain(workOrderId: string) {
     where: { workOrderId },
     include: {
       workOrder: { select: { id: true, orderNumber: true, customerName: true } },
-      ripJob: { select: { id: true, status: true, hotfolderName: true, ripJobGuid: true } },
+      ripJob: {
+        select: {
+          id: true,
+          status: true,
+          hotfolderName: true,
+          ripJobGuid: true,
+          rippedAt: true,
+          printStartedAt: true,
+          printCompletedAt: true,
+        },
+      },
       linkedBy: { select: { id: true, username: true, displayName: true } },
       confirmedBy: { select: { id: true, username: true, displayName: true } },
     },
@@ -156,6 +167,7 @@ export async function getOrderFileChain(workOrderId: string) {
     links.map(async (link) => ({
       ...link,
       cutFilePath: await resolveCutFilePath(link),
+      ...deriveFileChainLinkState(link),
     })),
   );
 }
@@ -176,26 +188,7 @@ export async function getOrderFileChainSummary(workOrderId: string) {
   const printCutFiles = links.filter(l => PRINT_CUT_PATTERNS.some(p => p.test(l.printFileName))).length;
   const linked = links.filter(l => l.cutFileName !== null).length;
   const unlinked = links.filter(l => l.cutFileName === null).length;
-  const printComplete = links.filter(l => 
-    ['PRINTED', 'CUT_PENDING', 'CUTTING', 'CUT_COMPLETE', 'FINISHED'].includes(l.status)
-  ).length;
-  const cutComplete = links.filter(l => 
-    ['CUT_COMPLETE', 'FINISHED'].includes(l.status)
-  ).length;
-
-  // Overall status = worst status
-  const statusPriority: Record<string, number> = {
-    FAILED: 0, DESIGN: 1, SENT_TO_RIP: 2, RIPPING: 3,
-    READY_TO_PRINT: 4, PRINTING: 5, PRINTED: 6,
-    CUT_PENDING: 7, CUTTING: 8, CUT_COMPLETE: 9, FINISHED: 10,
-  };
-  const chainStatus = links.length > 0
-    ? links.reduce((worst, l) => {
-        const p = statusPriority[l.status] ?? 99;
-        const wp = statusPriority[worst] ?? 99;
-        return p < wp ? l.status : worst;
-      }, links[0].status)
-    : 'DESIGN';
+  const { printComplete, cutComplete, chainStatus } = summarizeFileChainLinks(links);
 
   return {
     workOrderId: order.id,
@@ -1506,16 +1499,18 @@ export async function traceFile(fileName: string) {
     take: 10,
   });
 
+  const states = asprint.map((link) => deriveFileChainLinkState(link));
+
   return {
     fileName,
     normalized,
     printCutLinks: asprint,
     ripJobs,
-    hasPrinted: asprint.some(l => ['PRINTED', 'CUT_PENDING', 'CUTTING', 'CUT_COMPLETE', 'FINISHED'].includes(l.status)),
-    hasCut: asprint.some(l => ['CUT_COMPLETE', 'FINISHED'].includes(l.status)),
-    status: asprint.length > 0
-      ? asprint.some(l => l.status === 'CUT_COMPLETE' || l.status === 'FINISHED') ? 'PRINTED_AND_CUT'
-        : asprint.some(l => ['PRINTED', 'CUT_PENDING', 'CUTTING'].includes(l.status)) ? 'PRINTED_NOT_CUT'
+    hasPrinted: states.some((state) => ['READY_TO_PRINT', 'PRINTING', 'PRINTED', 'CUT_PENDING', 'CUTTING', 'CUT_COMPLETE', 'FINISHED'].includes(state.effectiveStatus)),
+    hasCut: states.some((state) => ['CUT_COMPLETE', 'FINISHED'].includes(state.effectiveStatus)),
+    status: states.length > 0
+      ? states.some((state) => state.effectiveStatus === 'CUT_COMPLETE' || state.effectiveStatus === 'FINISHED') ? 'PRINTED_AND_CUT'
+        : states.some((state) => ['READY_TO_PRINT', 'PRINTING', 'PRINTED', 'CUT_PENDING', 'CUTTING'].includes(state.effectiveStatus)) ? 'PRINTED_NOT_CUT'
         : 'NOT_PRINTED'
       : 'NOT_FOUND',
   };

@@ -18,9 +18,12 @@ interface FileChainLink {
   printStatus?: string;
   cutStatus?: string;
   status?: string;
+  effectiveStatus?: string;
+  printStartedAt?: string;
   printedAt?: string;
   printCompletedAt?: string;
   rippedAt?: string;
+  cutStartedAt?: string;
   cutAt?: string;
   cutCompletedAt?: string;
   printerName?: string;
@@ -144,7 +147,7 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
               <div className="flex min-w-max items-center gap-2">
                 <StepBadge
                   label="Design"
-                  status={link.printFilePath ? 'COMPLETED' : 'PENDING'}
+                  status={link.printFilePath || link.printFileName ? 'COMPLETED' : 'PENDING'}
                   icon={FileCheck}
                 />
                 <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" />
@@ -159,16 +162,16 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
 
                 <StepBadge
                   label="Print"
-                  status={link.printStatus || (link.printedAt ? 'COMPLETED' : 'PENDING')}
-                  time={link.printedAt}
+                  status={link.printStatus || (link.printCompletedAt ? 'COMPLETED' : link.printStartedAt ? 'IN_PROGRESS' : 'PENDING')}
+                  time={link.printCompletedAt || link.printedAt || link.printStartedAt}
                   icon={Printer}
                 />
                 <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" />
 
                 <StepBadge
                   label="Cut"
-                  status={link.cutStatus || (link.cutCompletedAt || link.cutAt ? 'COMPLETED' : link.cutFilePath ? 'IN_PROGRESS' : 'PENDING')}
-                  time={link.cutCompletedAt || link.cutAt}
+                  status={link.cutStatus || (link.cutCompletedAt ? 'COMPLETED' : (link.cutStartedAt || link.cutFilePath || link.cutFileName) ? 'IN_PROGRESS' : 'PENDING')}
+                  time={link.cutCompletedAt || link.cutAt || link.cutStartedAt}
                   icon={Scissors}
                 />
               </div>

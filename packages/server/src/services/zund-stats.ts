@@ -206,8 +206,8 @@ async function refreshLocalCopy(zundId: string): Promise<string> {
 async function openDb(zundId: string): Promise<BetterSqliteDatabase> {
   const Database = await requireBetterSqlite3('Zund');
   const localPath = await refreshLocalCopy(zundId);
-  // Ensure material name map is loaded (no-op after first load, refreshes every 24h)
-  loadMaterialMap().catch(err => console.warn('[Zund] Material map load error:', err.message));
+  // Ensure material name map is loaded in the background on the weekly refresh cadence.
+  void loadMaterialMap().catch(err => console.warn('[Zund] Material map load error:', err.message));
   return new Database(localPath, { readonly: true });
 }
 
@@ -222,7 +222,7 @@ const ZUND_MATERIAL_PATHS: Record<string, string> = {
 // Merged GUID→Name map from all Zund Material.db3 files (loaded on first use, refreshed every 24h)
 let materialNameMap: Record<string, string> = {};
 let materialMapLoadedAt = 0;
-const MATERIAL_MAP_TTL_MS = 86_400_000; // 24h
+const MATERIAL_MAP_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 let materialMapLoadPromise: Promise<void> | null = null;
 const materialAccessCache: Record<string, { result: boolean; expiresAt: number }> = {};
 const materialAccessInFlight: Record<string, Promise<boolean> | undefined> = {};
@@ -331,43 +331,49 @@ export async function loadMaterialMap(): Promise<void> {
   if (materialMapLoadPromise) return materialMapLoadPromise;
 
   materialMapLoadPromise = (async () => {
-  const now = Date.now();
-  if (now - materialMapLoadedAt < MATERIAL_MAP_TTL_MS && Object.keys(materialNameMap).length > 0) return;
+    const now = Date.now();
+    if (now - materialMapLoadedAt < MATERIAL_MAP_TTL_MS && Object.keys(materialNameMap).length > 0) return;
 
-  const Database = await loadBetterSqlite3('Zund');
-  if (!Database) return;
+    const Database = await loadBetterSqlite3('Zund');
+    if (!Database) return;
 
-  const newMap: Record<string, string> = {};
-  ensureCacheDir();
+    const newMap: Record<string, string> = {};
+    ensureCacheDir();
 
-  const localMaterialCopies = await Promise.all(
-    Object.entries(ZUND_MATERIAL_PATHS).map(async ([zundId, remotePath]) => ({
-      zundId,
-      localPath: await ensureLocalMaterialCopy(zundId, remotePath),
-    })),
-  );
+    const localMaterialCopies = await Promise.all(
+      Object.entries(ZUND_MATERIAL_PATHS).map(async ([zundId, remotePath]) => ({
+        zundId,
+        localPath: await ensureLocalMaterialCopy(zundId, remotePath),
+      })),
+    );
 
-  for (const materialSource of localMaterialCopies) {
-    if (!materialSource.localPath) continue;
+    for (const materialSource of localMaterialCopies) {
+      if (!materialSource.localPath) continue;
 
-    try {
-      const db = new Database(materialSource.localPath, { readonly: true });
-      const rows = db.prepare('SELECT GUID, Name FROM Material WHERE Hidden = 0').all() as { GUID: string; Name: string }[];
-      for (const row of rows) {
-        // Normalize GUID to lowercase for case-insensitive lookup
-        newMap[row.GUID.toLowerCase()] = row.Name;
+      let db: InstanceType<typeof Database> | null = null;
+      try {
+        db = new Database(materialSource.localPath, { readonly: true });
+        const rows = db.prepare('SELECT GUID, Name FROM Material WHERE Hidden = 0').all() as { GUID: string; Name: string }[];
+        for (const row of rows) {
+          // Normalize GUID to lowercase for case-insensitive lookup
+          newMap[row.GUID.toLowerCase()] = row.Name;
+        }
+      } catch (err: any) {
+        console.warn(`[Zund] Failed to read Material.db3 for ${materialSource.zundId}: ${err.message}`);
+      } finally {
+        try {
+          db?.close();
+        } catch {
+          // Ignore close errors; the next weekly refresh can recover.
+        }
       }
-      db.close();
-    } catch (err: any) {
-      console.warn(`[Zund] Failed to read Material.db3 for ${materialSource.zundId}: ${err.message}`);
     }
-  }
 
-  if (Object.keys(newMap).length > 0) {
-    materialNameMap = newMap;
-    materialMapLoadedAt = now;
-    console.log(`[Zund] Loaded ${Object.keys(newMap).length} material names from Material.db3`);
-  }
+    if (Object.keys(newMap).length > 0) {
+      materialNameMap = newMap;
+      materialMapLoadedAt = now;
+      console.log(`[Zund] Loaded ${Object.keys(newMap).length} material names from Material.db3`);
+    }
   })();
 
   try {

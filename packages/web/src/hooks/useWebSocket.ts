@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import type { WsMessage, WsMessageType } from '@erp/shared';
+import { WsMessageType, type WsMessage } from '@erp/shared';
 import { getWebSocketUrl } from '../lib/runtime-url';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
@@ -9,6 +9,8 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 interface OrderPayload {
   orderNumber?: string;
   station?: string;
+  workOrderId?: string;
+  orderId?: string;
 }
 
 // Singleton WebSocket manager to prevent duplicate connections
@@ -265,6 +267,15 @@ export function useWebSocket() {
         case 'ORDER_DELETED' as WsMessageType:
           invalidateOrder(message.payload?.orderNumber);
           break;
+        case WsMessageType.FILE_CHAIN_UPDATED: {
+          const fileChainPayload = message.payload as { workOrderId?: string; orderId?: string } | undefined;
+          const orderId = fileChainPayload?.workOrderId ?? fileChainPayload?.orderId;
+          if (orderId) {
+            queryClient.invalidateQueries({ queryKey: ['file-chain', orderId] });
+            queryClient.invalidateQueries({ queryKey: ['orders', orderId] });
+          }
+          break;
+        }
         case 'STATION_UPDATED' as WsMessageType:
           invalidateOrder(message.payload?.orderNumber);
           if (message.payload?.orderNumber && message.payload?.station) {

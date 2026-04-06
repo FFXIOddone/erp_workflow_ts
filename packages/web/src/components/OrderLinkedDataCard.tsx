@@ -71,9 +71,12 @@ function getChainBadgeVariant(
       return 'success';
     case 'FAILED':
       return 'danger';
+    case 'RIPPING':
     case 'CUTTING':
     case 'PRINTING':
       return 'warning';
+    case 'SENT_TO_RIP':
+    case 'READY_TO_PRINT':
     case 'PRINTED':
     case 'CUT_PENDING':
       return 'info';
