@@ -1525,6 +1525,7 @@ import {
   syncManualJobLinksToPrintCutLinks,
 } from '../services/file-chain.js';
 import { deriveFileChainLinkState } from '../services/file-chain-state.js';
+import { buildWorkOrderThriveMatchContext } from '../services/workorder-equipment-matching.js';
 
 // GET /equipment/thrive/config - Get Thrive equipment configuration
 router.get('/thrive/config', async (_req, res) => {
@@ -1754,30 +1755,17 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
     const dismissedSet = new Set(dismissedLinks.map((d) => `${d.jobType}:${d.jobIdentifier}`));
 
     // Filter by work order number — use parseJobInfo (same as file chain system)
-    const bareNumber = orderNumber.replace(/^WO/i, '');
-    const matchingPrintJobs = printJobs.filter((job) => {
-      if (job.workOrderNumber === bareNumber) return true;
-      const fromFile = parseJobInfo(job.fileName);
-      const fromName = parseJobInfo(job.jobName);
-      return fromFile.workOrderNumber === bareNumber || fromName.workOrderNumber === bareNumber;
-    });
+    const {
+      bareNumber,
+      matchingPrintJobs,
+      matchingCutJobs,
+      normalizedPrintNames,
+      printCutIdMap,
+    } = buildWorkOrderThriveMatchContext(orderNumber, printJobs, cutJobs);
 
     // Collect GUIDs from matching print jobs for cut file cross-reference
-    const printJobGuids = new Set<string>();
-    for (const pj of matchingPrintJobs) {
-      if (pj.jobGuid) printJobGuids.add(pj.jobGuid.toLowerCase());
-    }
 
     // Pending cuts in Thrive queue — match by WO number OR by GUID link to print jobs
-    const matchingCutJobs = cutJobs.filter((job) => {
-      // Direct WO match via parseJobInfo
-      if (job.workOrderNumber === bareNumber) return true;
-      const cutInfo = parseJobInfo(job.jobName);
-      if (cutInfo.workOrderNumber === bareNumber) return true;
-      // GUID match: cut file GUID matches a print job for this WO
-      if (job.guid && printJobGuids.has(job.guid.toLowerCase())) return true;
-      return false;
-    });
 
     // Track which GUIDs we've matched as cut files
     const matchedCutGuids = new Set<string>();
@@ -1786,24 +1774,10 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
     }
 
     // ─── Parallel I/O: Zund queue, Zund completed, and Fiery are independent ───
-    // Pre-compute shared data needed by all three branches
-    const normalizedPrintNames = new Set<string>();
-    for (const pj of matchingPrintJobs) {
-      const norm = normalizeJobName(pj.jobName);
-      if (norm.length >= 5) normalizedPrintNames.add(norm);
-      const fnorm = normalizeJobName(pj.fileName);
-      if (fnorm.length >= 5) normalizedPrintNames.add(fnorm);
-    }
     const printJobNames = matchingPrintJobs.map((pj) => ({
       original: pj.jobName,
       normalized: zundMatchService.normalizeJobName(pj.jobName),
     }));
-    // Build CutID index from this order's print jobs for cross-referencing with Zund cuts
-    const printCutIdMap = new Map<string, string>();
-    for (const pj of matchingPrintJobs) {
-      const cutId = extractCutId(pj.jobName) || extractCutId(pj.fileName);
-      if (cutId) printCutIdMap.set(cutId.toLowerCase(), pj.jobName);
-    }
 
     const [zundQueueResult, zundCompletedResult, fieryResult] = await Promise.all([
       // ─── Zund Queue Files ───
@@ -2783,7 +2757,7 @@ router.get('/thrive/unlinked-jobs', async (req: AuthRequest, res) => {
 // GET /equipment/workorder/:orderNumber/activity - Get equipment activity timeline for an order
 router.get('/workorder/:orderNumber/activity', async (req, res) => {
   const { orderNumber } = req.params;
-  const bareNumber = orderNumber.replace(/^WO/i, '');
+  const queryBareNumber = orderNumber.replace(/^WO/i, '');
 
   try {
     const [thriveResult, order] = await Promise.all([
@@ -2792,8 +2766,8 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
         where: {
           OR: [
             { orderNumber },
-            { orderNumber: bareNumber },
-            { orderNumber: `WO${bareNumber}` },
+            { orderNumber: queryBareNumber },
+            { orderNumber: `WO${queryBareNumber}` },
           ],
         },
         select: { id: true, customerName: true, status: true },
@@ -2801,17 +2775,15 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
     ]);
     const { printJobs, cutJobs } = thriveResult;
 
-    // Filter jobs for this work order
-    const matchingPrintJobs = printJobs.filter(
-      (job) =>
-        job.workOrderNumber === orderNumber ||
-        job.fileName.includes(orderNumber) ||
-        job.jobName.includes(orderNumber)
-    );
-
-    const matchingCutJobs = cutJobs.filter(
-      (job) => job.workOrderNumber === orderNumber || job.jobName.includes(orderNumber)
-    );
+    // Reuse the same Thrive/Zund matching rules as the print/cut cards so
+    // the timeline shows the same records when the station data is still in
+    // progress.
+    const {
+      bareNumber,
+      matchingPrintJobs,
+      matchingCutJobs,
+      printCutIdMap,
+    } = buildWorkOrderThriveMatchContext(orderNumber, printJobs, cutJobs);
 
     // Create activity timeline entries
     type ActivityType =
