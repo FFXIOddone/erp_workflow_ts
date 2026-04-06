@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, History, Printer, Scissors, Truck, ZoomIn, ZoomOut, RotateCcw, Maximize2 } from 'lucide-react';
 import { api } from '../lib/api';
@@ -23,6 +23,12 @@ interface TimelineEvent {
 interface TimelineEventWithPresentation extends TimelineEvent {
   position: number;
   presentation: ActivityTimelinePresentation;
+}
+
+interface TimelineEventGroup {
+  id: string;
+  position: number;
+  events: TimelineEventWithPresentation[];
 }
 
 interface EquipmentActivityItem {
@@ -57,7 +63,9 @@ export function HorizontalActivityTimeline({
   showFullscreenButton = true,
 }: HorizontalActivityTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [hoveredEvent, setHoveredEvent] = useState<TimelineEventWithPresentation | null>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [trackWidth, setTrackWidth] = useState(0);
+  const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [isDragging, setIsDragging] = useState(false);
@@ -142,6 +150,68 @@ export function HorizontalActivityTimeline({
     });
   }, [timelineEvents, startTime, totalMinutes]);
 
+  useLayoutEffect(() => {
+    const element = trackRef.current;
+    if (!element) return undefined;
+
+    const updateTrackWidth = () => {
+      setTrackWidth(element.getBoundingClientRect().width);
+    };
+
+    updateTrackWidth();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateTrackWidth);
+      return () => window.removeEventListener('resize', updateTrackWidth);
+    }
+
+    const observer = new ResizeObserver(updateTrackWidth);
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, [zoom, timelineEvents.length]);
+
+  const groupedEvents = useMemo<TimelineEventGroup[]>(() => {
+    if (eventsWithPositions.length === 0) {
+      return [];
+    }
+
+    const groupingThreshold = trackWidth > 0 ? (18 / trackWidth) * 100 : 1.5;
+    const sortedEvents = [...eventsWithPositions].sort((a, b) => {
+      if (a.position !== b.position) {
+        return a.position - b.position;
+      }
+
+      return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+    });
+
+    const groups: TimelineEventGroup[] = [];
+
+    for (const event of sortedEvents) {
+      const lastGroup = groups[groups.length - 1];
+      if (!lastGroup || Math.abs(event.position - lastGroup.position) > groupingThreshold) {
+        groups.push({
+          id: event.id,
+          position: event.position,
+          events: [event],
+        });
+        continue;
+      }
+
+      lastGroup.events.push(event);
+      lastGroup.position =
+        lastGroup.events.reduce((sum, item) => sum + item.position, 0) / lastGroup.events.length;
+      lastGroup.id = lastGroup.events.map((item) => item.id).join('__');
+    }
+
+    return groups;
+  }, [eventsWithPositions, trackWidth]);
+
+  const hoveredGroup = useMemo(
+    () => groupedEvents.find((group) => group.id === hoveredGroupId) ?? null,
+    [groupedEvents, hoveredGroupId],
+  );
+
   // Generate day markers for multi-day timelines
   const dayMarkers = useMemo(() => {
     const markers: { date: Date; position: number; label: string }[] = [];
@@ -169,14 +239,14 @@ export function HorizontalActivityTimeline({
     return markers;
   }, [startTime, endTime, totalMinutes]);
 
-  // Handle mouse events for tooltip
-  const handleMouseEnter = (event: TimelineEventWithPresentation, e: React.MouseEvent) => {
-    const rect = (e.target as HTMLElement).getBoundingClientRect();
+  // Handle mouse events for grouped tooltip
+  const handleGroupEnter = (group: TimelineEventGroup, e: React.SyntheticEvent<HTMLButtonElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
     setTooltipPosition({
       x: rect.left + rect.width / 2,
       y: rect.top - 10,
     });
-    setHoveredEvent(event);
+    setHoveredGroupId(group.id);
   };
 
   // Handle drag to scroll
@@ -321,11 +391,12 @@ export function HorizontalActivityTimeline({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={() => {
-          setHoveredEvent(null);
+          setHoveredGroupId(null);
           handleMouseUp();
         }}
       >
         <div 
+          ref={trackRef}
           className="relative px-5 py-6 sm:px-8"
           style={{ width: `${Math.max(100, zoom * 100)}%`, minWidth: '600px' }}
         >
@@ -343,7 +414,7 @@ export function HorizontalActivityTimeline({
           ))}
 
           {/* Timeline track */}
-          <div className="relative h-16 flex items-center">
+          <div className="relative h-28 flex items-center">
             {/* Main line */}
             <div className="absolute left-0 right-0 h-1 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 rounded-full" />
             
@@ -356,36 +427,51 @@ export function HorizontalActivityTimeline({
             </div>
 
             {/* Event dots */}
-            {eventsWithPositions.map((event, idx) => {
-              const isHovered = hoveredEvent?.id === event.id;
-              
+            {groupedEvents.map((group, idx) => {
+              const isHovered = hoveredGroup?.id === group.id;
+
               return (
-                <div
-                  key={event.id}
-                  className="absolute transform -translate-x-1/2 group"
-                  style={{ 
-                    left: `${event.position}%`,
-                    zIndex: isHovered ? 50 : idx,
+                <button
+                  key={group.id}
+                  type="button"
+                  className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 focus:outline-none"
+                  style={{
+                    left: `${group.position}%`,
+                    zIndex: isHovered ? 50 : idx + 1,
                   }}
-                  onMouseEnter={(e) => handleMouseEnter(event, e)}
-                  onMouseLeave={() => setHoveredEvent(null)}
-                  >
-                    {/* Dot */}
-                    <div
-                      className={`
-                      w-4 h-4 rounded-full cursor-pointer
-                      transition-all duration-200 ease-out
-                      ring-2 ring-white shadow-sm
-                      ${event.presentation.dot}
-                      ${isHovered ? 'scale-150 ring-4 ring-opacity-50' : 'hover:scale-125'}
-                    `}
-                  />
-                  
-                  {/* Connecting line to tooltip area */}
-                  {isHovered && (
+                  onMouseEnter={(e) => handleGroupEnter(group, e)}
+                  onMouseLeave={() => setHoveredGroupId(null)}
+                  onFocus={(e) => handleGroupEnter(group, e)}
+                  onBlur={() => setHoveredGroupId(null)}
+                  aria-label={`${group.events.length} activity ${
+                    group.events.length === 1 ? 'entry' : 'entries'
+                  } at ${format(new Date(group.events[0].timestamp), 'MMM d, h:mm a')}`}
+                >
+                  <div className="flex flex-col items-center gap-1">
+                    {group.events.map((event, eventIdx) => {
+                      const isSingle = group.events.length === 1;
+                      const isPrimary = eventIdx === 0;
+
+                      return (
+                        <span
+                          key={event.id}
+                          className={`
+                            rounded-full cursor-pointer
+                            transition-all duration-200 ease-out
+                            ring-2 ring-white shadow-sm
+                            ${isSingle || isPrimary ? 'w-4 h-4' : 'w-3.5 h-3.5'}
+                            ${event.presentation.dot}
+                            ${isHovered ? 'scale-125 ring-4 ring-opacity-50' : 'hover:scale-125'}
+                          `}
+                        />
+                      );
+                    })}
+                  </div>
+
+                  {isHovered && group.events.length > 1 && (
                     <div className="absolute left-1/2 -translate-x-1/2 -top-2 w-0.5 h-2 bg-gray-300" />
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
@@ -393,7 +479,7 @@ export function HorizontalActivityTimeline({
       </div>
 
       {/* Tooltip (portal-style, fixed position) */}
-      {hoveredEvent && (
+      {hoveredGroup && (
         <div
           className="fixed z-[100] pointer-events-none"
           style={{
@@ -403,43 +489,99 @@ export function HorizontalActivityTimeline({
           }}
         >
           <div className={`
-            bg-white rounded-lg shadow-lg border px-3 py-2 min-w-[200px] max-w-[300px]
-            ${hoveredEvent.presentation.border}
+            bg-white rounded-lg shadow-lg border px-3 py-2 min-w-[220px] max-w-[360px]
+            ${hoveredGroup.events[0].presentation.border}
           `}>
-            {/* Action type badge */}
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className={`
-                w-2.5 h-2.5 rounded-full
-                ${hoveredEvent.presentation.dot}
-              `} />
-              <span className="text-xs font-semibold text-gray-700">
-                {hoveredEvent.presentation.label}
-              </span>
-              {hoveredEvent.source !== 'erp' && (
-                <span className={`
-                  ml-auto px-1.5 py-0.5 text-[10px] font-medium rounded
-                  ${hoveredEvent.source === 'thrive' ? 'bg-sky-100 text-sky-700' : 'bg-orange-100 text-orange-700'}
-                `}>
-                  {hoveredEvent.source === 'thrive' ? 'PRINT' : 'CUT'}
-                </span>
-              )}
-            </div>
-            
-            {/* Description */}
-            <p className="text-sm text-gray-900 mb-1.5">
-              {hoveredEvent.description}
-            </p>
-            
-            {/* Timestamp and user */}
-            <div className="flex items-center gap-2 text-[11px] text-gray-500">
-              <span>{format(new Date(hoveredEvent.timestamp), 'MMM d, h:mm:ss a')}</span>
-              {hoveredEvent.user && (
-                <>
-                  <span className="text-gray-300">•</span>
-                  <span className="font-medium">{hoveredEvent.user}</span>
-                </>
-              )}
-            </div>
+            {hoveredGroup.events.length === 1 ? (
+              <>
+                {/* Action type badge */}
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className={`
+                    w-2.5 h-2.5 rounded-full
+                    ${hoveredGroup.events[0].presentation.dot}
+                  `} />
+                  <span className="text-xs font-semibold text-gray-700">
+                    {hoveredGroup.events[0].presentation.label}
+                  </span>
+                  {hoveredGroup.events[0].source !== 'erp' && (
+                    <span className={`
+                      ml-auto px-1.5 py-0.5 text-[10px] font-medium rounded
+                      ${hoveredGroup.events[0].source === 'thrive' ? 'bg-sky-100 text-sky-700' : 'bg-orange-100 text-orange-700'}
+                    `}>
+                      {hoveredGroup.events[0].source === 'thrive' ? 'PRINT' : 'CUT'}
+                    </span>
+                  )}
+                </div>
+
+                {/* Description */}
+                <p className="text-sm text-gray-900 mb-1.5">
+                  {hoveredGroup.events[0].description}
+                </p>
+
+                {/* Timestamp and user */}
+                <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                  <span>{format(new Date(hoveredGroup.events[0].timestamp), 'MMM d, h:mm:ss a')}</span>
+                  {hoveredGroup.events[0].user && (
+                    <>
+                      <span className="text-gray-300">•</span>
+                      <span className="font-medium">{hoveredGroup.events[0].user}</span>
+                    </>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`
+                    w-2.5 h-2.5 rounded-full
+                    ${hoveredGroup.events[0].presentation.dot}
+                  `} />
+                  <span className="text-xs font-semibold text-gray-700">
+                    {hoveredGroup.events.length} overlapping entries
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {hoveredGroup.events.map((event) => (
+                    <div
+                      key={event.id}
+                      className={`
+                        rounded-md border px-2 py-1.5
+                        ${event.presentation.border}
+                        ${event.presentation.bg}
+                      `}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`w-2.5 h-2.5 rounded-full ${event.presentation.dot}`} />
+                        <span className="text-xs font-semibold text-gray-700">
+                          {event.presentation.label}
+                        </span>
+                        {event.source !== 'erp' && (
+                          <span className={`
+                            ml-auto px-1.5 py-0.5 text-[10px] font-medium rounded
+                            ${event.source === 'thrive' ? 'bg-sky-100 text-sky-700' : 'bg-orange-100 text-orange-700'}
+                          `}>
+                            {event.source === 'thrive' ? 'PRINT' : 'CUT'}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-900 mb-1">
+                        {event.description}
+                      </p>
+                      <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                        <span>{format(new Date(event.timestamp), 'MMM d, h:mm:ss a')}</span>
+                        {event.user && (
+                          <>
+                            <span className="text-gray-300">•</span>
+                            <span className="font-medium">{event.user}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
             
             {/* Arrow pointing down */}
             <div className="absolute left-1/2 -translate-x-1/2 -bottom-1.5 w-3 h-3 bg-white border-r border-b border-gray-200 rotate-45" />
