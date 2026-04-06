@@ -107,6 +107,8 @@ export function applyRoutingDefaults(
 
   if (includeOrderEntry) {
     routingSet.add(PrintingMethod.ORDER_ENTRY);
+  } else {
+    routingSet.delete(PrintingMethod.ORDER_ENTRY);
   }
 
   if (hasProductionWork && !hasExplicitDesign) {
@@ -164,6 +166,10 @@ export function applyRoutingDefaults(
 
   if (descUpper.includes('(OUTSOURCED)')) {
     routingSet.add(PrintingMethod.ORDER_ENTRY);
+  }
+
+  if (!includeOrderEntry && routingSet.size === 0) {
+    routingSet.add(PrintingMethod.DESIGN_ONLY);
   }
 
   return STATION_ORDER.filter((station) => routingSet.has(station));

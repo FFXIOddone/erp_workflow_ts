@@ -47,6 +47,20 @@ describe('routing defaults', () => {
     ]);
   });
 
+  it('strips order entry from woocommerce fallbacks and keeps a safe design-only lane', () => {
+    expect(applyRoutingDefaults([], { source: 'woocommerce' })).toEqual([
+      PrintingMethod.DESIGN_ONLY,
+    ]);
+
+    expect(
+      applyRoutingDefaults([PrintingMethod.ORDER_ENTRY], {
+        source: 'woocommerce',
+      }),
+    ).toEqual([
+      PrintingMethod.DESIGN_ONLY,
+    ]);
+  });
+
   it('infers likely print stations from description text', () => {
     expect(inferRoutingFromDescription('Window perf banner (RR)')).toEqual([
       PrintingMethod.ROLL_TO_ROLL,

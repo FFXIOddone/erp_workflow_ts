@@ -252,6 +252,10 @@ function applyRouteDefaults(
   return applyRoutingDefaults([...baseRoute], { description, source });
 }
 
+function resolveRoutingSource(context: RoutingOptimizationContext): RoutingSource {
+  return context.source ?? inferRoutingSource(context.workOrder.orderNumber, context.workOrder.description);
+}
+
 function ensureRoute(
   route: readonly PrintingMethod[] | undefined | null,
   description: string,
@@ -460,7 +464,7 @@ function resolveManualOverrideRoute(
   const merged = [...preservedStations.filter((station) => !route.includes(station)), ...route];
   const description = context.workOrder.description ?? '';
   const resolved = merged.length > 0 ? merged : normalizeRoute(baseRoute ?? []);
-  return applyRouteDefaults(resolved, description);
+  return applyRouteDefaults(resolved, description, resolveRoutingSource(context));
 }
 
 function buildRoutingPredictionData(
@@ -781,7 +785,8 @@ function scoreRouteCandidate(
 ): ScoredRoute {
   const stationMap = getStationIntelligenceMap(context.stationIntelligence);
   const now = context.now ?? new Date();
-  const normalizedRoute = applyRouteDefaults(route, context.workOrder.description ?? '', context.source);
+  const routingSource = resolveRoutingSource(context);
+  const normalizedRoute = applyRouteDefaults(route, context.workOrder.description ?? '', routingSource);
   const explanationFactors: RoutingExplanationFactor[] = [];
   const warnings = new Set<string>();
   const appliedRuleCodes: string[] = [];
@@ -791,6 +796,30 @@ function scoreRouteCandidate(
   const requiredStations = [...new Set(context.mustIncludeStations ?? [])];
   const excludedStations = [...new Set(context.excludedStations ?? [])];
   const preferredStations = [...new Set(context.preferredStations ?? [])];
+
+  const sourceAlignment = routingSource === 'woocommerce'
+    ? !normalizedRoute.includes(PrintingMethod.ORDER_ENTRY)
+    : normalizedRoute.includes(PrintingMethod.ORDER_ENTRY);
+  const sourceImpact = sourceAlignment ? 8 : -16;
+  score += sourceImpact;
+  explanationFactors.push({
+    key: `source:${routingSource}`,
+    label: 'Source alignment',
+    direction: sourceImpact >= 0 ? 'positive' : 'negative',
+    scoreImpact: sourceImpact,
+    value: routingSource,
+    description:
+      routingSource === 'woocommerce'
+        ? 'WooCommerce orders bypass Order Entry and start in the production flow'
+        : 'Imported and manual orders keep Order Entry as the front door to the workflow',
+  });
+  if (!sourceAlignment) {
+    warnings.add(
+      routingSource === 'woocommerce'
+        ? 'WooCommerce orders should not include Order Entry'
+        : 'Route is missing Order Entry for a non-WooCommerce order'
+    );
+  }
 
   if (requiredStations.length > 0) {
     const missing = requiredStations.filter((station) => !normalizedRoute.includes(station));
@@ -1068,9 +1097,10 @@ function deriveCandidateRoutes(context: RoutingOptimizationContext): PrintingMet
   const candidates = new Map<string, PrintingMethod[]>();
   const description = context.workOrder.description ?? '';
   const baseRoute = normalizeRoute(context.currentRoute?.length ? context.currentRoute : context.workOrder.routing);
+  const routingSource = resolveRoutingSource(context);
 
   const add = (route: readonly PrintingMethod[] | undefined | null): void => {
-    const normalized = ensureRoute(route, description, context.source);
+    const normalized = ensureRoute(route, description, routingSource);
     if (normalized.length === 0) {
       return;
     }

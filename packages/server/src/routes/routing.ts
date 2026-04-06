@@ -16,6 +16,7 @@ import { prisma } from '../db/client.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
+import { inferRoutingSource } from '../lib/routing-defaults.js';
 import {
   optimizeRoutingRecommendation,
   persistRoutingRecommendation,
@@ -363,6 +364,7 @@ async function loadRoutingOptimizationContext(
     preferredStations: normalizePrintingMethodsOptional(input.preferStations, 'preferStations'),
     excludedStations: normalizePrintingMethodsOptional(input.excludeStations, 'excludeStations'),
     mustIncludeStations: normalizePrintingMethodsOptional(input.mustIncludeStations, 'mustIncludeStations'),
+    source: inferRoutingSource(workOrder.orderNumber, workOrder.description),
     now: new Date(),
   };
 }
@@ -465,7 +467,10 @@ routingRouter.post('/preview', async (req: AuthRequest, res: Response) => {
 
   res.json({
     success: true,
-    data: recommendation,
+    data: {
+      source: context.source ?? inferRoutingSource(context.workOrder.orderNumber, context.workOrder.description),
+      ...recommendation,
+    },
   });
 });
 

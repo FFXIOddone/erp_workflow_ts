@@ -15,6 +15,7 @@ interface RankedRoute {
 }
 
 interface RoutingPreviewResponse {
+  source: string;
   suggestion: RoutingSuggestion;
   rankedRoutes: RankedRoute[];
 }
@@ -55,6 +56,23 @@ function formatDuration(minutes: number): string {
 
 function confidenceLabel(confidence: number): string {
   return `${Math.round(confidence * 100)}% confidence`;
+}
+
+function formatRoutingSource(source: string): string {
+  switch (source) {
+    case 'woocommerce':
+      return 'WooCommerce';
+    case 'production-list':
+      return 'Production list';
+    case 'spreadsheet':
+      return 'Spreadsheet';
+    case 'qb':
+      return 'QuickBooks';
+    case 'recurring':
+      return 'Recurring';
+    default:
+      return 'Manual';
+  }
 }
 
 export function RoutingRecommendationCard({
@@ -164,6 +182,11 @@ export function RoutingRecommendationCard({
                       {STATION_DISPLAY_NAMES[station as PrintingMethod] ?? station}
                     </Badge>
                   ))}
+                </div>
+                <div className="mt-2">
+                  <Badge variant="neutral" size="sm">
+                    Source: {formatRoutingSource(data.source)}
+                  </Badge>
                 </div>
               </div>
 

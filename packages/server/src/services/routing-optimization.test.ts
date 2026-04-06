@@ -268,6 +268,29 @@ describe('optimizeRoutingRecommendation', () => {
     expect(first.suggestion.confidence).toBeLessThanOrEqual(1);
   });
 
+  it('infers WooCommerce source automatically and removes Order Entry from the recommendation', () => {
+    const woocommerceContext = createContext({
+      workOrder: {
+        id: 'wo-2b',
+        orderNumber: 'WOO-99123',
+        description: 'Online order from shop.wilde-signs.com - Window perf banner',
+        notes: null,
+        priority: 2,
+        dueDate: new Date('2026-04-04T12:00:00.000Z'),
+        routing: [PrintingMethod.ORDER_ENTRY, PrintingMethod.ROLL_TO_ROLL],
+      },
+      currentRoute: [PrintingMethod.ORDER_ENTRY, PrintingMethod.ROLL_TO_ROLL],
+      candidateRoutes: [],
+      optimizationRules: [],
+    });
+
+    const result = optimizeRoutingRecommendation(woocommerceContext);
+
+    expect(result.suggestion.suggestedRoute).toContain(PrintingMethod.ROLL_TO_ROLL);
+    expect(result.suggestion.suggestedRoute).not.toContain(PrintingMethod.ORDER_ENTRY);
+    expect(result.suggestion.explanationFactors.some((factor) => factor.key === 'source:woocommerce')).toBe(true);
+  });
+
   it('persists predictions and records manual overrides with preserved stations', async () => {
     const context = createContext({
       workOrder: {
@@ -321,7 +344,8 @@ describe('optimizeRoutingRecommendation', () => {
     expect(manualDecision.decisionType).toBe(RoutingDecisionType.MANUAL_OVERRIDE);
     expect(manualDecision.decisionMaker).toBe(DecisionMaker.USER);
     expect(manualDecision.trigger).toBe(RoutingTrigger.USER_REQUEST);
-    expect(manualDecision.newRoute[0]).toBe(PrintingMethod.DESIGN);
+    expect(manualDecision.newRoute[0]).toBe(PrintingMethod.ORDER_ENTRY);
+    expect(manualDecision.newRoute).toContain(PrintingMethod.DESIGN);
     expect(manualDecision.predictionId).toBe('prediction-1');
     expect(manualDecision.outcomeStatus).toBe(DecisionOutcome.PARTIAL);
   });
