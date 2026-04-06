@@ -43,6 +43,13 @@ interface CalendarEntry {
   workOrder: CalendarWorkOrderSummary;
 }
 
+interface CalendarEntryGroup {
+  key: string;
+  customerName: string;
+  representative: CalendarEntry;
+  entries: CalendarEntry[];
+}
+
 interface CalendarView {
   stations: Array<{ key: CalendarLane; label: string }>;
   slots: CalendarEntry[];
@@ -207,6 +214,60 @@ function sortEntries(entries: CalendarEntry[]): CalendarEntry[] {
   });
 }
 
+function groupEntriesByCustomer(entries: CalendarEntry[]): CalendarEntryGroup[] {
+  const groups = new Map<string, CalendarEntry[]>();
+  const statusRank: Record<CalendarStatus, number> = {
+    OVERDUE: 0,
+    IN_PROGRESS: 1,
+    SCHEDULED: 2,
+    WAITING: 3,
+    COMPLETED: 4,
+  };
+
+  for (const entry of sortEntries(entries)) {
+    const key = entry.workOrder.customerName.trim() || 'Unknown customer';
+    const current = groups.get(key) ?? [];
+    current.push(entry);
+    groups.set(key, current);
+  }
+
+  return [...groups.entries()]
+    .map(([customerName, groupedEntries]) => ({
+      key: customerName,
+      customerName,
+      representative: groupedEntries[0]!,
+      entries: groupedEntries,
+    }))
+    .sort((left, right) => {
+      const statusCmp = statusRank[left.representative.status] - statusRank[right.representative.status];
+      if (statusCmp !== 0) {
+        return statusCmp;
+      }
+
+      if (left.representative.priority !== right.representative.priority) {
+        return right.representative.priority - left.representative.priority;
+      }
+
+      return left.customerName.localeCompare(right.customerName);
+    });
+}
+
+function formatEntryTooltip(entry: CalendarEntry): string {
+  const parts = [
+    entry.workOrder.orderNumber,
+    entry.workOrder.customerName,
+    entry.workOrder.description ?? 'No description',
+    `${entry.stationLabel} • ${entry.status} • ${entry.progressPercent}%`,
+    `${entry.estimatedHours}h planned`,
+  ];
+
+  if (entry.blockedBy && entry.status === 'WAITING') {
+    parts.push(`Waiting on ${entry.blockedBy}`);
+  }
+
+  return parts.join(' | ');
+}
+
 export function ProductionCalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>('week');
@@ -311,42 +372,103 @@ export function ProductionCalendarPage() {
       <Link
         key={entry.id}
         to={`/orders/${entry.workOrderId}`}
-        className={`block rounded-lg border p-3 shadow-sm transition-colors hover:shadow-md ${LANE_META[entry.station].card}`}
+        title={formatEntryTooltip(entry)}
+        className={`block rounded-md border px-2 py-1.5 transition-colors hover:shadow-sm ${LANE_META[entry.station].card}`}
       >
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-gray-900">{entry.workOrder.orderNumber}</div>
-            <div className="truncate text-[11px] text-gray-600">{entry.workOrder.customerName}</div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <div className="truncate text-xs font-semibold text-gray-900">{entry.workOrder.orderNumber}</div>
+              <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-medium ${statusMeta.className}`}>
+                <StatusIcon className="h-2.5 w-2.5" />
+                {statusMeta.label}
+              </span>
+            </div>
+            <div className="truncate text-[10px] text-gray-600">{entry.workOrder.customerName}</div>
+            {entry.workOrder.description && (
+              <div className="truncate text-[10px] text-gray-500">{entry.workOrder.description}</div>
+            )}
           </div>
-          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusMeta.className}`}>
-            <StatusIcon className="h-3 w-3" />
-            {statusMeta.label}
-          </span>
-        </div>
-
-        {entry.workOrder.description && (
-          <div className="mt-2 line-clamp-2 text-[11px] leading-snug text-gray-600">
-            {entry.workOrder.description}
+          <div className="shrink-0 text-right text-[10px] text-gray-500">
+            <div className="inline-flex items-center gap-1">
+              <Clock className="h-2.5 w-2.5" />
+              {formatTimeLabel(entry.scheduledDate)}
+            </div>
+            <div>{entry.progressPercent}%</div>
+            <div>{entry.estimatedHours}h</div>
           </div>
-        )}
-
-        <div className="mt-3 flex items-center justify-between gap-2 text-[10px] text-gray-500">
-          <span className="inline-flex items-center gap-1">
-            <Clock className="h-3 w-3" />
-            {formatTimeLabel(entry.scheduledDate)}
-          </span>
-          <span>{entry.progressPercent}% complete</span>
-        </div>
-
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-gray-500">
-          <span>{entry.estimatedHours}h planned</span>
-          {entry.blockedBy && entry.status === 'WAITING' && (
-            <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] text-gray-600">
-              Waiting on {LANE_META[entry.blockedBy].label}
-            </span>
-          )}
         </div>
       </Link>
+    );
+  };
+
+  const renderGroupedCell = (entries: CalendarEntry[]) => {
+    const groups = groupEntriesByCustomer(entries);
+
+    return (
+      <div className="space-y-1.5">
+        {groups.map((group) => {
+          const entryCount = group.entries.length;
+          if (entryCount === 1) {
+            return renderEntryCard(group.representative);
+          }
+
+          const representative = group.representative;
+          const statusMeta = STATUS_META[representative.status];
+          const StatusIcon = statusMeta.icon;
+          const orderNumbers = group.entries.slice(0, 3).map((entry) => entry.workOrder.orderNumber);
+          const moreCount = Math.max(0, entryCount - orderNumbers.length);
+
+          return (
+            <Link
+              key={group.key}
+              to={`/orders/${representative.workOrderId}`}
+              title={group.entries.map(formatEntryTooltip).join('\n')}
+              className={`block rounded-md border px-2 py-1.5 transition-colors hover:shadow-sm ${LANE_META[representative.station].card}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="truncate text-xs font-semibold text-gray-900">{group.customerName}</div>
+                    <span className="inline-flex items-center gap-1 rounded-full border bg-white/80 px-1.5 py-0.5 text-[9px] font-medium text-gray-600">
+                      {entryCount} orders
+                    </span>
+                    <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-medium ${statusMeta.className}`}>
+                      <StatusIcon className="h-2.5 w-2.5" />
+                      {statusMeta.label}
+                    </span>
+                  </div>
+
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {orderNumbers.map((orderNumber) => (
+                      <span
+                        key={orderNumber}
+                        className="inline-flex max-w-full items-center rounded-full bg-white px-1.5 py-0.5 text-[9px] text-gray-600 shadow-sm"
+                      >
+                        {orderNumber}
+                      </span>
+                    ))}
+                    {moreCount > 0 && (
+                      <span className="inline-flex items-center rounded-full bg-white px-1.5 py-0.5 text-[9px] text-gray-500 shadow-sm">
+                        +{moreCount}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="shrink-0 text-right text-[10px] text-gray-500">
+                  <div className="inline-flex items-center gap-1">
+                    <Clock className="h-2.5 w-2.5" />
+                    {formatTimeLabel(representative.scheduledDate)}
+                  </div>
+                  <div>{Math.max(...group.entries.map((entry) => entry.progressPercent))}%</div>
+                  <div>{group.entries.reduce((sum, entry) => sum + entry.estimatedHours, 0)}h</div>
+                </div>
+              </div>
+            </Link>
+          );
+        })}
+      </div>
     );
   };
 
@@ -363,22 +485,22 @@ export function ProductionCalendarPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+        <div className="flex flex-wrap gap-2">
+          <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5">
             <div className="text-[11px] uppercase tracking-wide text-gray-500">Active Orders</div>
-            <div className="mt-1 text-xl font-semibold text-gray-900">{calendar.summary.activeOrders}</div>
+            <div className="text-sm font-semibold text-gray-900">{calendar.summary.activeOrders}</div>
           </div>
-          <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+          <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5">
             <div className="text-[11px] uppercase tracking-wide text-gray-500">Scheduled Entries</div>
-            <div className="mt-1 text-xl font-semibold text-gray-900">{calendar.summary.totalEntries}</div>
+            <div className="text-sm font-semibold text-gray-900">{calendar.summary.totalEntries}</div>
           </div>
-          <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+          <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5">
             <div className="text-[11px] uppercase tracking-wide text-gray-500">Overdue</div>
-            <div className="mt-1 text-xl font-semibold text-rose-700">{calendar.summary.overdueEntries}</div>
+            <div className="text-sm font-semibold text-rose-700">{calendar.summary.overdueEntries}</div>
           </div>
-          <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+          <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5">
             <div className="text-[11px] uppercase tracking-wide text-gray-500">Range</div>
-            <div className="mt-1 text-sm font-semibold text-gray-900">{formatRangeLabel(dateRange.start, dateRange.end)}</div>
+            <div className="text-sm font-semibold text-gray-900">{formatRangeLabel(dateRange.start, dateRange.end)}</div>
           </div>
         </div>
       </div>
@@ -438,13 +560,13 @@ export function ProductionCalendarPage() {
             <table className="min-w-full border-separate border-spacing-0">
               <thead>
                 <tr>
-                  <th className="sticky left-0 z-10 w-64 border-b border-gray-200 bg-gray-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  <th className="sticky left-0 z-10 w-52 border-b border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                     Station
                   </th>
                   {days.map((day) => (
                     <th
                       key={day.toISOString()}
-                      className={`min-w-[220px] border-b border-gray-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide ${
+                      className={`min-w-[190px] border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide ${
                         isToday(day) ? 'bg-sky-50 text-sky-700' : 'bg-gray-50 text-gray-500'
                       }`}
                     >
@@ -461,16 +583,16 @@ export function ProductionCalendarPage() {
 
                   return (
                     <tr key={lane} className="align-top">
-                      <td className="sticky left-0 z-10 border-b border-gray-100 bg-white px-4 py-4">
-                        <div className={`rounded-xl border p-4 ${meta.card}`}>
+                      <td className="sticky left-0 z-10 border-b border-gray-100 bg-white px-3 py-3">
+                        <div className={`rounded-lg border p-3 ${meta.card}`}>
                           <div className="flex items-center gap-3">
-                            <span className={`h-3 w-3 rounded-full ${meta.dot}`} />
-                            <div>
+                            <span className={`h-2.5 w-2.5 rounded-full ${meta.dot}`} />
+                            <div className="min-w-0">
                               <div className={`text-sm font-semibold ${meta.accent}`}>{meta.label}</div>
-                              <div className="text-xs text-gray-500">{meta.description}</div>
+                              <div className="text-[10px] text-gray-500">{meta.description}</div>
                             </div>
                           </div>
-                          <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-600">
+                          <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-gray-600">
                             <span className="rounded-full bg-white px-2 py-0.5 shadow-sm">{laneCount} entries</span>
                             <span className="rounded-full bg-white px-2 py-0.5 shadow-sm">{overdueLaneCount} overdue</span>
                           </div>
@@ -484,14 +606,14 @@ export function ProductionCalendarPage() {
                         return (
                           <td
                             key={dateKey}
-                            className={`border-b border-gray-100 px-3 py-3 align-top ${isToday(day) ? 'bg-sky-50/30' : isPast(day) ? 'bg-gray-50/40' : 'bg-white'}`}
+                            className={`border-b border-gray-100 px-2 py-2 align-top ${isToday(day) ? 'bg-sky-50/30' : isPast(day) ? 'bg-gray-50/40' : 'bg-white'}`}
                           >
                             {entries.length === 0 ? (
-                              <div className="flex min-h-36 items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white/70 px-3 py-6 text-center text-xs text-gray-400">
+                              <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed border-gray-200 bg-white/70 px-2 py-4 text-center text-xs text-gray-400">
                                 No scheduled orders
                               </div>
                             ) : (
-                              <div className="space-y-3">{entries.map(renderEntryCard)}</div>
+                              renderGroupedCell(entries)
                             )}
                           </td>
                         );
@@ -503,47 +625,6 @@ export function ProductionCalendarPage() {
             </table>
           </div>
         )}
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-        {LANE_ORDER.map((lane) => {
-          const meta = LANE_META[lane];
-          const laneEntries = calendar.slots.filter((entry) => entry.station === lane);
-          const completedCount = laneEntries.filter((entry) => entry.status === 'COMPLETED').length;
-          const overdueCount = laneEntries.filter((entry) => entry.status === 'OVERDUE').length;
-
-          return (
-            <div key={lane} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className={`text-sm font-semibold ${meta.accent}`}>{meta.label}</div>
-                  <div className="text-xs text-gray-500">Derived from order ship dates and station progress</div>
-                </div>
-                <span className={`h-3 w-3 rounded-full ${meta.dot}`} />
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <div className="rounded-xl bg-gray-50 p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Total</div>
-                  <div className="mt-1 text-lg font-semibold text-gray-900">{laneEntries.length}</div>
-                </div>
-                <div className="rounded-xl bg-gray-50 p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Done</div>
-                  <div className="mt-1 text-lg font-semibold text-emerald-700">{completedCount}</div>
-                </div>
-                <div className="rounded-xl bg-gray-50 p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Overdue</div>
-                  <div className="mt-1 text-lg font-semibold text-rose-700">{overdueCount}</div>
-                </div>
-                <div className="rounded-xl bg-gray-50 p-3">
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Next</div>
-                  <div className="mt-1 text-sm font-semibold text-gray-900">
-                    {laneEntries[0] ? formatTimeLabel(laneEntries[0].scheduledDate) : 'None'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
       </div>
     </div>
   );
