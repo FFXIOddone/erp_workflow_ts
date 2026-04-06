@@ -12,6 +12,7 @@ import rateLimit from 'express-rate-limit';
 import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../db/client.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { normalizeUsername } from '../lib/username.js';
 
 // ============ Configuration ============
 const LOGIN_RATE_LIMIT = {
@@ -164,7 +165,8 @@ export async function preLoginCheck(
 
   // Check username lockout
   if (username) {
-    const userAttempts = userFailedAttempts.get(username.toLowerCase());
+    const userKey = normalizeUsername(username);
+    const userAttempts = userFailedAttempts.get(userKey);
     if (userAttempts?.lockoutUntil && userAttempts.lockoutUntil > now) {
       const remainingMs = userAttempts.lockoutUntil - now;
       const remainingMinutes = Math.ceil(remainingMs / 60000);
@@ -221,7 +223,7 @@ export async function recordFailedLogin(
   ipFailedAttempts.set(ip, ipAttempts);
 
   // Update username failed attempts
-  const userKey = username.toLowerCase();
+  const userKey = normalizeUsername(username);
   const userAttempts = userFailedAttempts.get(userKey) ?? { count: 0, lastAttempt: 0 };
   userAttempts.count++;
   userAttempts.lastAttempt = now;
@@ -258,7 +260,7 @@ export async function recordSuccessfulLogin(
 
   // Reset username failed attempts
   if (ACCOUNT_LOCKOUT.RESET_AFTER_SUCCESS) {
-    userFailedAttempts.delete(username.toLowerCase());
+    userFailedAttempts.delete(normalizeUsername(username));
   }
 
   // Don't fully reset IP - just reduce the count to prevent abuse
@@ -294,8 +296,13 @@ async function logSecurityEvent(
 ): Promise<void> {
   try {
     // Find user if exists (for activity logging)
-    const user = await prisma.user.findUnique({
-      where: { username },
+    const user = await prisma.user.findFirst({
+      where: {
+        username: {
+          equals: normalizeUsername(username),
+          mode: 'insensitive',
+        },
+      },
       select: { id: true },
     });
 
@@ -353,7 +360,7 @@ function formatSecurityEventDescription(
  * Manually unlock a user account (for admin use)
  */
 export function unlockAccount(username: string): boolean {
-  const userKey = username.toLowerCase();
+  const userKey = normalizeUsername(username);
   if (userFailedAttempts.has(userKey)) {
     userFailedAttempts.delete(userKey);
     return true;

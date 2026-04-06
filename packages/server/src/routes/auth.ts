@@ -5,6 +5,7 @@ import { prisma } from '../db/client.js';
 import { generateToken, authenticate, type AuthRequest } from '../middleware/auth.js';
 import { UnauthorizedError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { normalizeUsername } from '../lib/username.js';
 import {
   loginRateLimiter,
   preLoginCheck,
@@ -19,10 +20,16 @@ export const authRouter = Router();
 
 // POST /auth/login - Protected by rate limiting and lockout checks
 authRouter.post('/login', loginRateLimiter, preLoginCheck, async (req: AuthRequest, res: Response) => {
-  const { username, password } = LoginSchema.parse(req.body);
+  const { username: rawUsername, password } = LoginSchema.parse(req.body);
+  const username = normalizeUsername(rawUsername);
 
-  const user = await prisma.user.findUnique({
-    where: { username },
+  const user = await prisma.user.findFirst({
+    where: {
+      username: {
+        equals: username,
+        mode: 'insensitive',
+      },
+    },
   });
 
   if (!user || !user.isActive) {

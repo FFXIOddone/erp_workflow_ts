@@ -9,7 +9,8 @@ import {
 } from '@erp/shared';
 import { prisma } from '../db/client.js';
 import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
-import { NotFoundError, BadRequestError, ForbiddenError } from '../middleware/error-handler.js';
+import { NotFoundError, BadRequestError, ForbiddenError, ConflictError } from '../middleware/error-handler.js';
+import { normalizeUsername } from '../lib/username.js';
 
 export const usersRouter = Router();
 
@@ -81,12 +82,31 @@ usersRouter.get('/:id', async (req: AuthRequest, res: Response) => {
 // POST /users - Create user (admin only)
 usersRouter.post('/', requireRole(UserRole.ADMIN), async (req: AuthRequest, res: Response) => {
   const data = CreateUserSchema.parse(req.body);
+  const username = normalizeUsername(data.username);
+
+  if (username.length < 3) {
+    throw BadRequestError('Username must be at least 3 characters');
+  }
+
+  const existingUser = await prisma.user.findFirst({
+    where: {
+      username: {
+        equals: username,
+        mode: 'insensitive',
+      },
+    },
+    select: { id: true },
+  });
+
+  if (existingUser) {
+    throw ConflictError('Username already exists');
+  }
 
   const passwordHash = await bcrypt.hash(data.password, 12);
 
   const user = await prisma.user.create({
     data: {
-      username: data.username,
+      username,
       passwordHash,
       displayName: data.displayName,
       email: data.email,
