@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import clsx from 'clsx';
 import { Search, X, ChevronDown, Check, Loader2 } from 'lucide-react';
+import { matchesSearchFields } from '@erp/shared';
 
 // ============================================================================
 // Types & Interfaces
@@ -149,8 +150,7 @@ export function SearchCombobox<T = string>({
   // Default filter function
   const defaultFilter = useCallback(
     (option: ComboboxOption<T>, q: string) =>
-      option.label.toLowerCase().includes(q.toLowerCase()) ||
-      (option.description?.toLowerCase().includes(q.toLowerCase()) ?? false),
+      matchesSearchFields([option.label, option.description, option.group], q),
     [],
   );
 

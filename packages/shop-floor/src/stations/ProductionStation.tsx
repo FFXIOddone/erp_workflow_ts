@@ -21,6 +21,7 @@ import {
   Undo2,
   Printer,
 } from 'lucide-react';
+import { scoreSearchText } from '@erp/shared';
 import {
   openZundCutQueue,
   openExternalPath,
@@ -302,48 +303,6 @@ function getLiveCutMatches(cutData: ProductionCutData | null | undefined): LiveC
   }));
 
   return [...queueMatches, ...cutJobMatches, ...completedMatches].slice(0, 4);
-}
-
-function normalizeSearchText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function scoreSearchMatch(haystack: string, query: string): number {
-  const normalizedHaystack = normalizeSearchText(haystack);
-  const normalizedQuery = normalizeSearchText(query);
-
-  if (!normalizedQuery) {
-    return 1;
-  }
-
-  if (!normalizedHaystack) {
-    return 0;
-  }
-
-  if (normalizedHaystack === normalizedQuery) {
-    return 1000;
-  }
-
-  if (normalizedHaystack.includes(normalizedQuery)) {
-    return 800 + normalizedQuery.length;
-  }
-
-  const tokens = normalizedQuery.split(' ').filter(Boolean);
-  let score = 0;
-
-  for (const token of tokens) {
-    const index = normalizedHaystack.indexOf(token);
-    if (index === -1) {
-      return 0;
-    }
-    score += 100 - Math.min(50, index);
-  }
-
-  return score;
 }
 
 function buildCutCandidates(unlinkedData: UnlinkedCutData | null): ProductionCutCandidate[] {
@@ -955,7 +914,7 @@ export function ProductionStation() {
 
         return {
           order,
-          score: normalizedQuery ? scoreSearchMatch(searchParts.join(' '), normalizedQuery) : 1,
+          score: scoreSearchText(searchParts.join(' '), searchQuery),
         };
       });
 
@@ -976,15 +935,16 @@ export function ProductionStation() {
 
   const cutCandidates = buildCutCandidates(unlinkedCutData).filter((candidate) => {
     if (!cutLinkSearch.trim()) return true;
-
-    const normalizedSearch = cutLinkSearch.toLowerCase();
-    return (
-      candidate.name.toLowerCase().includes(normalizedSearch) ||
-      candidate.identifier.toLowerCase().includes(normalizedSearch) ||
-      candidate.detail.toLowerCase().includes(normalizedSearch) ||
-      candidate.source.toLowerCase().includes(normalizedSearch) ||
-      candidate.cutId?.toLowerCase().includes(normalizedSearch) === true
-    );
+    return scoreSearchText(
+      [
+        candidate.name,
+        candidate.identifier,
+        candidate.detail,
+        candidate.source,
+        candidate.cutId ?? '',
+      ].join(' '),
+      cutLinkSearch,
+    ) > 0;
   });
 
   if (loading) {

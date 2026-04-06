@@ -29,6 +29,7 @@ import React, {
   type DragEvent,
 } from 'react';
 import { clsx } from 'clsx';
+import { matchesSearchFields } from '@erp/shared';
 import {
   X,
   Plus,
@@ -280,9 +281,7 @@ export function TagInput({
         if (loadSuggestions) {
           results = await loadSuggestions(query);
         } else {
-          results = suggestions.filter((s) =>
-            s.label.toLowerCase().includes(query)
-          );
+          results = suggestions.filter((suggestion) => matchesSearchFields([suggestion.label], query));
         }
 
         // Filter out already selected tags

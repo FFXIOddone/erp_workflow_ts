@@ -32,6 +32,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { scoreSearchText } from '@erp/shared';
 
 // ============================================================================
 // Types
@@ -336,9 +337,6 @@ function QuickNavDialog() {
   const filteredPages = useMemo(() => {
     if (!query) return [];
 
-    const lowerQuery = query.toLowerCase();
-    const queryTerms = lowerQuery.split(/\s+/).filter(Boolean);
-
     return pages
       .map((page) => {
         const searchText = [
@@ -346,22 +344,10 @@ function QuickNavDialog() {
           page.description,
           page.category,
           ...(page.keywords || []),
-        ]
+          ]
           .filter(Boolean)
           .join(' ')
-          .toLowerCase();
-
-        // Score based on how many terms match and where
-        let score = 0;
-        for (const term of queryTerms) {
-          if (page.label.toLowerCase().includes(term)) score += 10;
-          if (page.label.toLowerCase().startsWith(term)) score += 5;
-          if (page.description?.toLowerCase().includes(term)) score += 3;
-          if (page.keywords?.some((k) => k.toLowerCase().includes(term))) score += 2;
-          if (searchText.includes(term)) score += 1;
-        }
-
-        return { page, score };
+        return { page, score: scoreSearchText(searchText, query) };
       })
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score)

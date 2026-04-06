@@ -21,6 +21,7 @@ import {
   FolderOpen,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
+import { matchesSearchFields } from '@erp/shared';
 import { api } from '../lib/api';
 
 // ─── Types ─────────────────────────────────────────────
@@ -168,14 +169,11 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
 
     // Search
     if (search.trim()) {
-      const q = search.toLowerCase();
-      jobs = jobs.filter(j =>
-        j.jobName?.toLowerCase().includes(q) ||
-        j.workOrderNumber?.toLowerCase().includes(q) ||
-        j.customerName?.toLowerCase().includes(q) ||
-        j.material?.toLowerCase().includes(q) ||
-        j.device?.toLowerCase().includes(q) ||
-        j.fileName?.toLowerCase().includes(q)
+      jobs = jobs.filter((job) =>
+        matchesSearchFields(
+          [job.jobName, job.workOrderNumber, job.customerName, job.material, job.device, job.fileName],
+          search,
+        ),
       );
     }
 

@@ -28,6 +28,7 @@ import React, {
   type ChangeEvent,
 } from 'react';
 import { clsx } from 'clsx';
+import { matchesSearchFields } from '@erp/shared';
 import {
   AtSign,
   User,
@@ -282,12 +283,9 @@ export function MentionInput({
     }
 
     // Filter static data
-    const lowerQuery = query.toLowerCase();
     return trigger.data.filter((entity) => {
       if (entity.disabled) return false;
-      if (entity.name.toLowerCase().includes(lowerQuery)) return true;
-      if (entity.keywords?.some((k) => k.toLowerCase().includes(lowerQuery))) return true;
-      return false;
+      return matchesSearchFields([entity.name, ...(entity.keywords ?? [])], query);
     });
   }, []);
 

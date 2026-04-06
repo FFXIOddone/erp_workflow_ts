@@ -212,8 +212,9 @@ export function OrderEntryStationView() {
 
   const filterDescriptions = useCallback((query: string) => {
     if (query.length < 2) { setDescSuggestions([]); return; }
-    const q = query.toLowerCase();
-    setDescSuggestions(recentDescriptions.filter(d => d.toLowerCase().includes(q)).slice(0, 6));
+    setDescSuggestions(
+      recentDescriptions.filter((description) => matchesSearchFields([description], query)).slice(0, 6),
+    );
   }, [recentDescriptions]);
 
   // ─── Routing Auto-guess from Description ────────────

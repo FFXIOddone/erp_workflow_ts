@@ -18,6 +18,7 @@ import {
   FolderOpen,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { matchesSearchFields } from '@erp/shared';
 import { api } from '../lib/api';
 
 // ─── Types ─────────────────────────────────────────────
@@ -140,13 +141,11 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
     let jobs = [...data.printJobs];
 
     if (search) {
-      const q = search.toLowerCase();
-      jobs = jobs.filter(j =>
-        j.jobName?.toLowerCase().includes(q) ||
-        j.workOrderNumber?.toLowerCase().includes(q) ||
-        j.customerName?.toLowerCase().includes(q) ||
-        j.printer?.toLowerCase().includes(q) ||
-        j.fileName?.toLowerCase().includes(q)
+      jobs = jobs.filter((job) =>
+        matchesSearchFields(
+          [job.jobName, job.workOrderNumber, job.customerName, job.printer, job.fileName],
+          search,
+        ),
       );
     }
     if (statusFilter !== 'all') {

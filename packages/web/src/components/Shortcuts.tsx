@@ -27,6 +27,7 @@ import React, {
 } from 'react';
 import { clsx } from 'clsx';
 import { Command, Search, ArrowUp, ArrowDown, CornerDownLeft } from 'lucide-react';
+import { scoreSearchText } from '@erp/shared';
 
 // ============================================================================
 // TYPES & INTERFACES
@@ -544,12 +545,12 @@ export function CommandPalette({
       return customFilter(all, query);
     }
 
-    const q = query.toLowerCase();
     return all.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        s.description?.toLowerCase().includes(q) ||
-        s.category?.toLowerCase().includes(q)
+      (shortcut) =>
+        scoreSearchText(
+          `${shortcut.name} ${shortcut.description ?? ''} ${shortcut.category ?? ''}`,
+          query,
+        ) > 0,
     );
   }, [getShortcuts, query, customFilter]);
 

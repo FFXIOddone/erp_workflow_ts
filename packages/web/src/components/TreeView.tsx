@@ -27,6 +27,7 @@ import React, {
   type DragEvent,
 } from 'react';
 import { clsx } from 'clsx';
+import { scoreSearchText } from '@erp/shared';
 import {
   ChevronRight,
   ChevronDown,
@@ -275,7 +276,7 @@ function filterNodes<T>(
   if (!query.trim()) return nodes;
 
   const matchesQuery = filterFn ?? ((node: TreeNode<T>, q: string) =>
-    node.label.toLowerCase().includes(q.toLowerCase())
+    scoreSearchText(node.label, q) > 0
   );
 
   const filterRecursive = (node: TreeNode<T>): TreeNode<T> | null => {

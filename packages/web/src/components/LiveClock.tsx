@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { Clock, Globe, ChevronDown } from 'lucide-react';
+import { matchesSearchFields } from '@erp/shared';
 
 // ============================================================================
 // Types & Interfaces
@@ -338,13 +339,7 @@ export function TimezoneSelector({
 
   const filteredTimezones = useMemo(() => {
     if (!search.trim()) return commonTimezones;
-    const query = search.toLowerCase();
-    return commonTimezones.filter(
-      (tz) =>
-        tz.label.toLowerCase().includes(query) ||
-        tz.zone.toLowerCase().includes(query) ||
-        tz.abbr.toLowerCase().includes(query),
-    );
+    return commonTimezones.filter((tz) => matchesSearchFields([tz.label, tz.zone, tz.abbr], search));
   }, [search]);
 
   const selectedTz = commonTimezones.find((tz) => tz.zone === value);

@@ -206,7 +206,7 @@ async function refreshLocalCopy(zundId: string): Promise<string> {
 async function openDb(zundId: string): Promise<BetterSqliteDatabase> {
   const Database = await requireBetterSqlite3('Zund');
   const localPath = await refreshLocalCopy(zundId);
-  // Ensure material name map is loaded in the background on the weekly refresh cadence.
+  // Ensure material name map is loaded in the background on the monthly refresh cadence.
   void loadMaterialMap().catch(err => console.warn('[Zund] Material map load error:', err.message));
   return new Database(localPath, { readonly: true });
 }
@@ -219,10 +219,10 @@ const ZUND_MATERIAL_PATHS: Record<string, string> = {
   'zund2': '\\\\192.168.254.28\\Zund Cut Center\\Material.db3',
 };
 
-// Merged GUID→Name map from all Zund Material.db3 files (loaded on first use, refreshed every 24h)
+// Merged GUID→Name map from all Zund Material.db3 files (loaded on first use, refreshed monthly)
 let materialNameMap: Record<string, string> = {};
 let materialMapLoadedAt = 0;
-const MATERIAL_MAP_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const MATERIAL_MAP_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 let materialMapLoadPromise: Promise<void> | null = null;
 const materialAccessCache: Record<string, { result: boolean; expiresAt: number }> = {};
 const materialAccessInFlight: Record<string, Promise<boolean> | undefined> = {};
