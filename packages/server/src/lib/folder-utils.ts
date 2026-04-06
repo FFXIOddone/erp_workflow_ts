@@ -45,6 +45,226 @@ interface FolderSearchResult {
   searchedLocations: string[];
 }
 
+function isSearchableDirectory(name: string): boolean {
+  return !name.startsWith('.') && !name.startsWith('$');
+}
+
+function searchWoFolderTree(startPath: string, woPattern: RegExp, maxDepth = 4): string | null {
+  const normalizedStart = path.resolve(startPath);
+  const startName = path.basename(normalizedStart);
+  if (woPattern.test(startName)) {
+    return normalizedStart;
+  }
+
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: normalizedStart, depth: 0 }];
+  const visited = new Set<string>();
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current.dir)) {
+      continue;
+    }
+    visited.add(current.dir);
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !isSearchableDirectory(entry.name)) {
+        continue;
+      }
+
+      const childPath = path.join(current.dir, entry.name);
+      if (woPattern.test(entry.name)) {
+        return childPath;
+      }
+
+      if (current.depth + 1 <= maxDepth) {
+        queue.push({ dir: childPath, depth: current.depth + 1 });
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildSearchTerms(value: string): string[] {
+  const terms = normalizeSearchText(value)
+    .split(' ')
+    .filter((term) => term.length >= 4);
+  return Array.from(new Set(terms));
+}
+
+function matchesTerms(haystack: string, terms: string[]): boolean {
+  if (terms.length === 0) {
+    return false;
+  }
+
+  const normalizedHaystack = normalizeSearchText(haystack);
+  const matchCount = terms.reduce((count, term) => (
+    normalizedHaystack.includes(term) ? count + 1 : count
+  ), 0);
+  const requiredMatches = terms.length <= 2 ? terms.length : 2;
+
+  return matchCount >= requiredMatches;
+}
+
+function searchTreeForMatch(
+  startPath: string,
+  matcher: (entryName: string, fullPath: string) => boolean,
+  maxDepth = 4,
+): string | null {
+  const normalizedStart = path.resolve(startPath);
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: normalizedStart, depth: 0 }];
+  const visited = new Set<string>();
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current.dir)) {
+      continue;
+    }
+    visited.add(current.dir);
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!isSearchableDirectory(entry.name)) {
+        continue;
+      }
+
+      const childPath = path.join(current.dir, entry.name);
+      if (matcher(entry.name, childPath)) {
+        return childPath;
+      }
+
+      if (entry.isDirectory() && current.depth + 1 <= maxDepth) {
+        queue.push({ dir: childPath, depth: current.depth + 1 });
+      }
+    }
+  }
+
+  return null;
+}
+
+export interface ShipmentEvidenceResult {
+  found: boolean;
+  evidencePath: string | null;
+  evidenceRoot: string | null;
+  matchedBy: 'wo' | 'customer' | 'description' | null;
+  searchedLocations: string[];
+}
+
+const SHIPMENT_ROUTE_CANDIDATES = [
+  { label: 'SHIPPING/2024', relativePaths: [path.join('SHIPPING', '2024')] },
+  { label: 'SHIPPING', relativePaths: ['SHIPPING'] },
+  { label: 'FEDEX/FREIGHT', relativePaths: [path.join('FEDEX', 'FREIGHT'), 'FEDEX FREIGHT'] },
+  { label: 'FEDEX/FedEx Invoices', relativePaths: [path.join('FEDEX', 'FedEx Invoices')] },
+  { label: 'FEDEX', relativePaths: ['FEDEX'] },
+  { label: 'PAMELA SHIPPING', relativePaths: ['PAMELA SHIPPING'] },
+] as const;
+
+function resolveShipmentRoots(basePath: string): Array<{ label: string; path: string }> {
+  const resolvedBase = path.resolve(basePath);
+  const roots: Array<{ label: string; path: string }> = [];
+  const seen = new Set<string>();
+
+  for (const candidate of SHIPMENT_ROUTE_CANDIDATES) {
+    for (const relativePath of candidate.relativePaths) {
+      const rootPath = path.resolve(path.join(resolvedBase, relativePath));
+      if (seen.has(rootPath)) {
+        continue;
+      }
+      if (!fs.existsSync(rootPath)) {
+        continue;
+      }
+      try {
+        if (!fs.statSync(rootPath).isDirectory()) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+
+      seen.add(rootPath);
+      roots.push({ label: candidate.label, path: rootPath });
+    }
+  }
+
+  return roots;
+}
+
+export function findShipmentEvidence(
+  basePath: string,
+  woNumber: string,
+  customerName: string,
+  description?: string | null,
+): ShipmentEvidenceResult {
+  const searchedLocations: string[] = [];
+  const roots = resolveShipmentRoots(basePath);
+  const woPattern = new RegExp(`WO[#\\s\\-]*${escapeRegExp(woNumber)}(?:\\D|$)`, 'i');
+  const customerTerms = buildSearchTerms(customerName);
+  const descriptionTerms = buildSearchTerms(description ?? '');
+  const searchStrategies = [
+    { matchedBy: 'wo' as const, matcher: (entryName: string, fullPath: string) => woPattern.test(entryName) || woPattern.test(fullPath) },
+    {
+      matchedBy: 'customer' as const,
+      matcher: (entryName: string, fullPath: string) => matchesTerms(entryName, customerTerms) || matchesTerms(fullPath, customerTerms),
+    },
+    {
+      matchedBy: 'description' as const,
+      matcher: (entryName: string, fullPath: string) => matchesTerms(entryName, descriptionTerms) || matchesTerms(fullPath, descriptionTerms),
+    },
+  ];
+
+  for (const strategy of searchStrategies) {
+    if (strategy.matchedBy === 'customer' && customerTerms.length === 0) {
+      continue;
+    }
+    if (strategy.matchedBy === 'description' && descriptionTerms.length === 0) {
+      continue;
+    }
+
+    for (const root of roots) {
+      searchedLocations.push(`${root.label}: ${root.path}`);
+      const match = searchTreeForMatch(root.path, strategy.matcher, 5);
+      if (match) {
+        return {
+          found: true,
+          evidencePath: match,
+          evidenceRoot: root.label,
+          matchedBy: strategy.matchedBy,
+          searchedLocations,
+        };
+      }
+    }
+  }
+
+  return {
+    found: false,
+    evidencePath: null,
+    evidenceRoot: null,
+    matchedBy: null,
+    searchedLocations,
+  };
+}
+
 /**
  * Find the WO folder within customer folders on the network drive
  */
@@ -63,14 +283,12 @@ export function findWoFolder(
     searchedLocations.push(`Override: ${overridePath}`);
     try {
       if (fs.existsSync(overridePath)) {
-        const woFolders = fs.readdirSync(overridePath, { withFileTypes: true })
-          .filter(e => e.isDirectory() && woPattern.test(e.name))
-          .map(e => e.name);
-        if (woFolders.length > 0) {
+        const foundPath = searchWoFolderTree(overridePath, woPattern, 4);
+        if (foundPath) {
           return {
             found: true,
-            folderPath: path.join(overridePath, woFolders[0]),
-            folderName: woFolders[0],
+            folderPath: foundPath,
+            folderName: path.basename(foundPath),
             customerFolder: customerFolderOverride,
             searchedLocations,
           };
@@ -78,6 +296,21 @@ export function findWoFolder(
       }
     } catch {}
   }
+
+  // Strategy 1: Direct WO folder at the base path root
+  searchedLocations.push(`Root scan: ${basePath}`);
+  try {
+    const rootMatch = searchWoFolderTree(basePath, woPattern, 1);
+    if (rootMatch) {
+      return {
+        found: true,
+        folderPath: rootMatch,
+        folderName: path.basename(rootMatch),
+        customerFolder: null,
+        searchedLocations,
+      };
+    }
+  } catch {}
 
   const normalizedCustomerName = customerName.toLowerCase();
   let customerFolders: string[] = [];
@@ -94,14 +327,12 @@ export function findWoFolder(
   if (exactMatch) {
     searchedLocations.push(`Exact: ${path.join(basePath, exactMatch)}`);
     try {
-      const woFolders = fs.readdirSync(path.join(basePath, exactMatch), { withFileTypes: true })
-        .filter(e => e.isDirectory() && woPattern.test(e.name))
-        .map(e => e.name);
-      if (woFolders.length > 0) {
+      const foundPath = searchWoFolderTree(path.join(basePath, exactMatch), woPattern, 4);
+      if (foundPath) {
         return {
           found: true,
-          folderPath: path.join(basePath, exactMatch, woFolders[0]),
-          folderName: woFolders[0],
+          folderPath: foundPath,
+          folderName: path.basename(foundPath),
           customerFolder: exactMatch,
           searchedLocations,
         };
@@ -117,14 +348,12 @@ export function findWoFolder(
   for (const folder of containsMatches) {
     searchedLocations.push(`Contains: ${path.join(basePath, folder)}`);
     try {
-      const woFolders = fs.readdirSync(path.join(basePath, folder), { withFileTypes: true })
-        .filter(e => e.isDirectory() && woPattern.test(e.name))
-        .map(e => e.name);
-      if (woFolders.length > 0) {
+      const foundPath = searchWoFolderTree(path.join(basePath, folder), woPattern, 4);
+      if (foundPath) {
         return {
           found: true,
-          folderPath: path.join(basePath, folder, woFolders[0]),
-          folderName: woFolders[0],
+          folderPath: foundPath,
+          folderName: path.basename(foundPath),
           customerFolder: folder,
           searchedLocations,
         };
@@ -136,14 +365,12 @@ export function findWoFolder(
   for (const folder of customerFolders) {
     if (containsMatches.includes(folder) || folder === exactMatch) continue;
     try {
-      const woFolders = fs.readdirSync(path.join(basePath, folder), { withFileTypes: true })
-        .filter(e => e.isDirectory() && woPattern.test(e.name))
-        .map(e => e.name);
-      if (woFolders.length > 0) {
+      const foundPath = searchWoFolderTree(path.join(basePath, folder), woPattern, 4);
+      if (foundPath) {
         return {
           found: true,
-          folderPath: path.join(basePath, folder, woFolders[0]),
-          folderName: woFolders[0],
+          folderPath: foundPath,
+          folderName: path.basename(foundPath),
           customerFolder: folder,
           searchedLocations,
         };
