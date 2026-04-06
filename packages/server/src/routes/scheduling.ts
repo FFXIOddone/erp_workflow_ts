@@ -4,6 +4,7 @@ import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { broadcast } from '../ws/server.js';
 import { NotFoundError, BadRequestError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildProductionCalendarView, type ProductionCalendarStation, type WorkOrderCalendarRow } from '../services/production-calendar.js';
 import {
   CreateProductionSlotSchema,
   UpdateProductionSlotSchema,
@@ -93,54 +94,65 @@ router.get('/calendar', async (req: AuthRequest, res) => {
     throw BadRequestError('startDate and endDate are required');
   }
 
-  const where: any = {
-    scheduledDate: {
-      gte: new Date(startDate as string),
-      lte: new Date(endDate as string),
-    },
-  };
-
-  if (station) {
-    where.station = station as PrintingMethod;
-  }
-
-  const slots = await prisma.productionSlot.findMany({
-    where,
-    include: {
-      workOrder: {
-        select: {
-          id: true,
-          orderNumber: true,
-          customerName: true,
-          description: true,
-          status: true,
-          dueDate: true,
-        },
+  const orders = await prisma.workOrder.findMany({
+    where: {
+      status: {
+        notIn: ['COMPLETED', 'SHIPPED', 'CANCELLED'],
       },
-      assignedTo: {
+    },
+    select: {
+      id: true,
+      orderNumber: true,
+      customerName: true,
+      description: true,
+      status: true,
+      priority: true,
+      dueDate: true,
+      createdAt: true,
+      notes: true,
+      routing: true,
+      stationProgress: {
         select: {
-          id: true,
-          displayName: true,
+          station: true,
+          status: true,
+          startedAt: true,
+          completedAt: true,
         },
+        orderBy: [
+          { station: 'asc' },
+          { completedAt: 'asc' },
+        ],
+      },
+      shipments: {
+        select: {
+          shipDate: true,
+          actualDelivery: true,
+          status: true,
+        },
+        orderBy: [
+          { shipDate: 'desc' },
+          { createdAt: 'desc' },
+        ],
+        take: 3,
       },
     },
     orderBy: [
-      { scheduledDate: 'asc' },
-      { scheduledStart: 'asc' },
+      { dueDate: 'asc' },
+      { priority: 'desc' },
+      { createdAt: 'asc' },
     ],
   });
 
-  // Group by date for calendar view
-  const groupedByDate: Record<string, typeof slots> = {};
-  slots.forEach((slot) => {
-    const dateKey = slot.scheduledDate.toISOString().split('T')[0];
-    if (!groupedByDate[dateKey]) {
-      groupedByDate[dateKey] = [];
-    }
-    groupedByDate[dateKey].push(slot);
-  });
+  const data = await buildProductionCalendarView(
+    orders as unknown as WorkOrderCalendarRow[],
+    {
+      startDate: new Date(startDate as string),
+      endDate: new Date(endDate as string),
+    },
+    station ? (station as ProductionCalendarStation) : undefined,
+  );
 
-  res.json({ success: true, data: { slots, groupedByDate } });
+  res.json({ success: true, data });
 });
 
 // ============ GET /scheduling/capacity - Capacity overview by station/date ============

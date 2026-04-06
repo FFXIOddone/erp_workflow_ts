@@ -1,90 +1,226 @@
-import { useState, useMemo, useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { 
-  ChevronLeft, ChevronRight, Calendar, Clock, Users, 
-  AlertTriangle, CheckCircle, Plus, GripVertical, X,
-  Play, Square, RotateCcw, Filter, Package
+import {
+  AlertTriangle,
+  Calendar,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
 } from 'lucide-react';
 import { api } from '../lib/api';
-import { 
-  STATUS_COLORS, STATION_DISPLAY_NAMES, PrintingMethod, SlotStatus
-} from '@erp/shared';
-import toast from 'react-hot-toast';
 
-interface ProductionSlot {
-  id: string;
-  station: PrintingMethod;
-  scheduledDate: string;
-  scheduledStart: string | null;
-  scheduledEnd: string | null;
-  estimatedHours: number;
-  actualHours: number | null;
-  status: SlotStatus;
-  priority: number;
-  notes: string | null;
-  workOrder: {
-    id: string;
-    orderNumber: string;
-    customerName: string;
-    description: string | null;
-    status: string;
-    dueDate: string | null;
-  };
-  assignedTo: {
-    id: string;
-    name: string;
-  } | null;
-}
+type CalendarLane = 'DESIGN' | 'PRINTING' | 'PRODUCTION' | 'SHIPPING';
+type CalendarStatus = 'WAITING' | 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'OVERDUE';
 
-interface UnscheduledOrder {
+interface CalendarWorkOrderSummary {
   id: string;
   orderNumber: string;
   customerName: string;
   description: string | null;
   status: string;
   dueDate: string | null;
-  routing: PrintingMethod[];
+  createdAt: string;
+  priority: number;
+}
+
+interface CalendarEntry {
+  id: string;
+  workOrderId: string;
+  station: CalendarLane;
+  stationLabel: string;
+  scheduledDate: string;
+  scheduledStartDate: string | null;
+  estimatedHours: number;
+  status: CalendarStatus;
+  priority: number;
+  notes: string | null;
+  blockedBy: CalendarLane | null;
+  progressPercent: number;
+  completedCount: number;
+  totalCount: number;
+  workOrder: CalendarWorkOrderSummary;
+}
+
+interface CalendarView {
+  stations: Array<{ key: CalendarLane; label: string }>;
+  slots: CalendarEntry[];
+  groupedByDate: Record<string, CalendarEntry[]>;
+  summary: {
+    activeOrders: number;
+    totalEntries: number;
+    overdueEntries: number;
+    stationCounts: Record<CalendarLane, number>;
+  };
 }
 
 type ViewMode = 'week' | 'day';
 
-const SLOT_STATUS_COLORS: Record<SlotStatus, string> = {
-  [SlotStatus.SCHEDULED]: 'bg-blue-100 border-blue-300 text-blue-800',
-  [SlotStatus.IN_PROGRESS]: 'bg-yellow-100 border-yellow-300 text-yellow-800',
-  [SlotStatus.COMPLETED]: 'bg-green-100 border-green-300 text-green-800',
-  [SlotStatus.RESCHEDULED]: 'bg-purple-100 border-purple-300 text-purple-800',
-  [SlotStatus.CANCELLED]: 'bg-gray-100 border-gray-300 text-gray-500 line-through',
+const LANE_ORDER: CalendarLane[] = ['DESIGN', 'PRINTING', 'PRODUCTION', 'SHIPPING'];
+
+const LANE_META: Record<
+  CalendarLane,
+  {
+    label: string;
+    description: string;
+    accent: string;
+    dot: string;
+    card: string;
+  }
+> = {
+  DESIGN: {
+    label: 'Design',
+    description: 'Two-business-day planning window from the order ship date.',
+    accent: 'text-sky-700',
+    dot: 'bg-sky-500',
+    card: 'border-sky-200 bg-sky-50/40',
+  },
+  PRINTING: {
+    label: 'Printing',
+    description: 'Starts after design is complete and print-ready.',
+    accent: 'text-orange-700',
+    dot: 'bg-orange-500',
+    card: 'border-orange-200 bg-orange-50/40',
+  },
+  PRODUCTION: {
+    label: 'Production',
+    description: 'Runs after printing and precedes shipping.',
+    accent: 'text-violet-700',
+    dot: 'bg-violet-500',
+    card: 'border-violet-200 bg-violet-50/40',
+  },
+  SHIPPING: {
+    label: 'Shipping',
+    description: 'Final lane. Orders drop off once shipped or complete.',
+    accent: 'text-emerald-700',
+    dot: 'bg-emerald-500',
+    card: 'border-emerald-200 bg-emerald-50/40',
+  },
 };
 
-const SLOT_STATUS_LABELS: Record<SlotStatus, string> = {
-  [SlotStatus.SCHEDULED]: 'Scheduled',
-  [SlotStatus.IN_PROGRESS]: 'In Progress',
-  [SlotStatus.COMPLETED]: 'Completed',
-  [SlotStatus.RESCHEDULED]: 'Rescheduled',
-  [SlotStatus.CANCELLED]: 'Cancelled',
+const STATUS_META: Record<
+  CalendarStatus,
+  {
+    label: string;
+    className: string;
+    icon: typeof CheckCircle2 | typeof AlertTriangle | typeof Clock;
+  }
+> = {
+  WAITING: {
+    label: 'Waiting',
+    className: 'bg-slate-100 text-slate-700 border-slate-200',
+    icon: Clock,
+  },
+  SCHEDULED: {
+    label: 'Scheduled',
+    className: 'bg-sky-100 text-sky-700 border-sky-200',
+    icon: Calendar,
+  },
+  IN_PROGRESS: {
+    label: 'In Progress',
+    className: 'bg-amber-100 text-amber-700 border-amber-200',
+    icon: Clock,
+  },
+  COMPLETED: {
+    label: 'Completed',
+    className: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    icon: CheckCircle2,
+  },
+  OVERDUE: {
+    label: 'Overdue',
+    className: 'bg-rose-100 text-rose-700 border-rose-200',
+    icon: AlertTriangle,
+  },
 };
+
+const EMPTY_VIEW: CalendarView = {
+  stations: LANE_ORDER.map((key) => ({ key, label: LANE_META[key].label })),
+  slots: [],
+  groupedByDate: {},
+  summary: {
+    activeOrders: 0,
+    totalEntries: 0,
+    overdueEntries: 0,
+    stationCounts: {
+      DESIGN: 0,
+      PRINTING: 0,
+      PRODUCTION: 0,
+      SHIPPING: 0,
+    },
+  },
+};
+
+function formatDateKey(date: Date): string {
+  return date.toISOString().split('T')[0] ?? '';
+}
+
+function formatHeaderDate(date: Date): string {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function formatTimeLabel(value: string): string {
+  return new Date(value).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function formatRangeLabel(start: Date, end: Date): string {
+  if (start.toDateString() === end.toDateString()) {
+    return start.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }
+
+  return `${start.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  })} - ${end.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })}`;
+}
+
+function sortEntries(entries: CalendarEntry[]): CalendarEntry[] {
+  const statusRank: Record<CalendarStatus, number> = {
+    OVERDUE: 0,
+    IN_PROGRESS: 1,
+    SCHEDULED: 2,
+    WAITING: 3,
+    COMPLETED: 4,
+  };
+
+  return [...entries].sort((left, right) => {
+    const statusCmp = statusRank[left.status] - statusRank[right.status];
+    if (statusCmp !== 0) return statusCmp;
+    if (left.priority !== right.priority) return right.priority - left.priority;
+    return left.workOrder.orderNumber.localeCompare(right.workOrder.orderNumber);
+  });
+}
 
 export function ProductionCalendarPage() {
-  const queryClient = useQueryClient();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>('week');
-  const [stationFilter, setStationFilter] = useState<PrintingMethod | ''>('');
-  const [showModal, setShowModal] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState<UnscheduledOrder | null>(null);
-  const [draggedSlot, setDraggedSlot] = useState<ProductionSlot | null>(null);
 
-  // Get date range for current view
   const dateRange = useMemo(() => {
     const start = new Date(currentDate);
     const end = new Date(currentDate);
-    
+
     if (viewMode === 'week') {
       const day = start.getDay();
       const diff = start.getDate() - day + (day === 0 ? -6 : 1);
       start.setDate(diff);
       start.setHours(0, 0, 0, 0);
-      
+
       end.setTime(start.getTime());
       end.setDate(end.getDate() + 6);
       end.setHours(23, 59, 59, 999);
@@ -92,185 +228,70 @@ export function ProductionCalendarPage() {
       start.setHours(0, 0, 0, 0);
       end.setHours(23, 59, 59, 999);
     }
-    
+
     return { start, end };
   }, [currentDate, viewMode]);
 
-  // Fetch production slots
-  const { data: slotsData, isLoading: slotsLoading } = useQuery({
-    queryKey: ['scheduling', 'calendar', dateRange.start.toISOString(), dateRange.end.toISOString(), stationFilter],
+  const calendarQuery = useQuery({
+    queryKey: ['scheduling', 'calendar', dateRange.start.toISOString(), dateRange.end.toISOString()],
     queryFn: async () => {
-      const params: Record<string, string> = {
-        startDate: dateRange.start.toISOString(),
-        endDate: dateRange.end.toISOString(),
-      };
-      if (stationFilter) params.station = stationFilter;
-      
-      const response = await api.get('/scheduling/calendar', { params });
-      const payload = response.data?.data;
-      return {
-        slots: Array.isArray(payload?.slots) ? payload.slots : [],
-        groupedByDate:
-          payload?.groupedByDate && typeof payload.groupedByDate === 'object'
-            ? payload.groupedByDate
-            : {},
-      } as { slots: ProductionSlot[]; groupedByDate: Record<string, ProductionSlot[]> };
-    },
-  });
-
-  // Fetch unscheduled orders
-  const { data: unscheduledOrders = [] } = useQuery({
-    queryKey: ['scheduling', 'unscheduled'],
-    queryFn: async () => {
-      const response = await api.get('/scheduling/unscheduled');
-      const payload = response.data?.data;
-      const orders = Array.isArray(payload) ? payload : [];
-      return orders.map((order) => ({
-        ...order,
-        routing: Array.isArray(order?.routing) ? order.routing : [],
-      })) as UnscheduledOrder[];
-    },
-  });
-
-  // Fetch capacity data
-  const { data: capacityData = [] } = useQuery({
-    queryKey: ['scheduling', 'capacity', dateRange.start.toISOString(), dateRange.end.toISOString()],
-    queryFn: async () => {
-      const response = await api.get('/scheduling/capacity', {
+      const response = await api.get('/scheduling/calendar', {
         params: {
           startDate: dateRange.start.toISOString(),
           endDate: dateRange.end.toISOString(),
         },
       });
-      const payload = response.data?.data;
-      return (Array.isArray(payload) ? payload : []) as Array<{
-        station: PrintingMethod;
-        date: string;
-        scheduledHours: number;
-        availableHours: number;
-        utilizationPercent: number;
-      }>;
+
+      const payload = response.data?.data as CalendarView | undefined;
+      return payload ?? EMPTY_VIEW;
     },
   });
 
-  // Create slot mutation
-  const createSlotMutation = useMutation({
-    mutationFn: async (data: {
-      workOrderId: string;
-      station: PrintingMethod;
-      scheduledDate: Date;
-      estimatedHours: number;
-      priority?: number;
-    }) => {
-      const response = await api.post('/scheduling', data);
-      return response.data.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['scheduling'] });
-      toast.success('Production slot created');
-      setShowModal(false);
-      setSelectedOrder(null);
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Failed to create slot');
-    },
-  });
+  const calendar = calendarQuery.data ?? EMPTY_VIEW;
 
-  // Reschedule mutation
-  const rescheduleMutation = useMutation({
-    mutationFn: async ({ slotId, newDate, reason }: { slotId: string; newDate: string; reason?: string }) => {
-      const response = await api.post(`/scheduling/${slotId}/reschedule`, {
-        newDate,
-        reason,
-      });
-      return response.data.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['scheduling'] });
-      toast.success('Slot rescheduled');
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Failed to reschedule');
-    },
-  });
-
-  // Start slot mutation
-  const startSlotMutation = useMutation({
-    mutationFn: async (slotId: string) => {
-      const response = await api.post(`/scheduling/${slotId}/start`);
-      return response.data.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['scheduling'] });
-      toast.success('Production started');
-    },
-  });
-
-  // Complete slot mutation
-  const completeSlotMutation = useMutation({
-    mutationFn: async ({ slotId, actualHours }: { slotId: string; actualHours?: number }) => {
-      const response = await api.post(`/scheduling/${slotId}/complete`, { actualHours });
-      return response.data.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['scheduling'] });
-      toast.success('Production completed');
-    },
-  });
-
-  // Cancel slot mutation
-  const cancelSlotMutation = useMutation({
-    mutationFn: async (slotId: string) => {
-      const response = await api.delete(`/scheduling/${slotId}`);
-      return response.data.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['scheduling'] });
-      toast.success('Slot cancelled');
-    },
-  });
-
-  const slots = slotsData?.slots ?? [];
-  const groupedByDate = slotsData?.groupedByDate ?? {};
-
-  // Generate days for the view
   const days = useMemo(() => {
     const result: Date[] = [];
     const current = new Date(dateRange.start);
-    
+
     while (current <= dateRange.end) {
       result.push(new Date(current));
       current.setDate(current.getDate() + 1);
     }
-    
+
     return result;
   }, [dateRange]);
 
-  // Get stations to show
-  const stations = useMemo(() => {
-    if (stationFilter) return [stationFilter];
-    return Object.values(PrintingMethod).filter(s => s !== 'ORDER_ENTRY');
-  }, [stationFilter]);
+  const entriesByLaneAndDate = useMemo(() => {
+    const grouped = Object.fromEntries(
+      LANE_ORDER.map((lane) => [lane, {} as Record<string, CalendarEntry[]>]),
+    ) as Record<CalendarLane, Record<string, CalendarEntry[]>>;
 
-  // Navigation
-  const navigatePrev = () => {
-    const newDate = new Date(currentDate);
-    if (viewMode === 'week') {
-      newDate.setDate(newDate.getDate() - 7);
-    } else {
-      newDate.setDate(newDate.getDate() - 1);
+    for (const entry of calendar.slots) {
+      if (!grouped[entry.station]) continue;
+      const dateKey = entry.scheduledDate.slice(0, 10);
+      grouped[entry.station][dateKey] ??= [];
+      grouped[entry.station][dateKey].push(entry);
     }
-    setCurrentDate(newDate);
+
+    for (const lane of LANE_ORDER) {
+      for (const dateKey of Object.keys(grouped[lane])) {
+        grouped[lane][dateKey] = sortEntries(grouped[lane][dateKey] ?? []);
+      }
+    }
+
+    return grouped;
+  }, [calendar.slots]);
+
+  const navigatePrev = () => {
+    const next = new Date(currentDate);
+    next.setDate(next.getDate() - (viewMode === 'week' ? 7 : 1));
+    setCurrentDate(next);
   };
 
   const navigateNext = () => {
-    const newDate = new Date(currentDate);
-    if (viewMode === 'week') {
-      newDate.setDate(newDate.getDate() + 7);
-    } else {
-      newDate.setDate(newDate.getDate() + 1);
-    }
-    setCurrentDate(newDate);
+    const next = new Date(currentDate);
+    next.setDate(next.getDate() + (viewMode === 'week' ? 7 : 1));
+    setCurrentDate(next);
   };
 
   const goToToday = () => setCurrentDate(new Date());
@@ -282,488 +303,248 @@ export function ProductionCalendarPage() {
     return date < today;
   };
 
-  const getHeaderText = () => {
-    if (viewMode === 'week' && days.length > 0) {
-      const weekStart = days[0]!;
-      const weekEnd = days[days.length - 1]!;
-      return `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-    }
-    return currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  };
+  const renderEntryCard = (entry: CalendarEntry) => {
+    const statusMeta = STATUS_META[entry.status];
+    const StatusIcon = statusMeta.icon;
 
-  // Get slots for a specific station and date
-  const getSlotsForCell = useCallback((station: PrintingMethod, date: Date) => {
-    const dateKey = date.toISOString().split('T')[0];
-    return slots.filter(
-      s => s.station === station && s.scheduledDate.split('T')[0] === dateKey
+    return (
+      <Link
+        key={entry.id}
+        to={`/orders/${entry.workOrderId}`}
+        className={`block rounded-lg border p-3 shadow-sm transition-colors hover:shadow-md ${LANE_META[entry.station].card}`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-gray-900">{entry.workOrder.orderNumber}</div>
+            <div className="truncate text-[11px] text-gray-600">{entry.workOrder.customerName}</div>
+          </div>
+          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusMeta.className}`}>
+            <StatusIcon className="h-3 w-3" />
+            {statusMeta.label}
+          </span>
+        </div>
+
+        {entry.workOrder.description && (
+          <div className="mt-2 line-clamp-2 text-[11px] leading-snug text-gray-600">
+            {entry.workOrder.description}
+          </div>
+        )}
+
+        <div className="mt-3 flex items-center justify-between gap-2 text-[10px] text-gray-500">
+          <span className="inline-flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            {formatTimeLabel(entry.scheduledDate)}
+          </span>
+          <span>{entry.progressPercent}% complete</span>
+        </div>
+
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-gray-500">
+          <span>{entry.estimatedHours}h planned</span>
+          {entry.blockedBy && entry.status === 'WAITING' && (
+            <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] text-gray-600">
+              Waiting on {LANE_META[entry.blockedBy].label}
+            </span>
+          )}
+        </div>
+      </Link>
     );
-  }, [slots]);
-
-  // Get capacity for station on date
-  const getCapacity = useCallback((station: PrintingMethod, date: Date) => {
-    const dateKey = date.toISOString().split('T')[0];
-    return capacityData.find(
-      c => c.station === station && c.date.split('T')[0] === dateKey
-    );
-  }, [capacityData]);
-
-  // Drag and drop handlers
-  const handleDragStart = (e: React.DragEvent, slot: ProductionSlot) => {
-    setDraggedSlot(slot);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleDrop = (e: React.DragEvent, station: PrintingMethod, date: Date) => {
-    e.preventDefault();
-    if (draggedSlot && draggedSlot.station === station) {
-      const newDateStr = date.toISOString().split('T')[0];
-      const currentDateStr = draggedSlot.scheduledDate.split('T')[0];
-      
-      if (newDateStr !== currentDateStr) {
-        rescheduleMutation.mutate({
-          slotId: draggedSlot.id,
-          newDate: date.toISOString(),
-          reason: 'Drag-drop reschedule',
-        });
-      }
-    }
-    setDraggedSlot(null);
-  };
-
-  // Schedule modal form state
-  const [scheduleForm, setScheduleForm] = useState({
-    station: '' as PrintingMethod | '',
-    scheduledDate: '',
-    estimatedHours: 2,
-    priority: 1,
-  });
-
-  const handleScheduleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedOrder || !scheduleForm.station || !scheduleForm.scheduledDate) return;
-
-    createSlotMutation.mutate({
-      workOrderId: selectedOrder.id,
-      station: scheduleForm.station,
-      scheduledDate: new Date(scheduleForm.scheduledDate),
-      estimatedHours: scheduleForm.estimatedHours,
-      priority: scheduleForm.priority,
-    });
   };
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-2xl lg:text-3xl font-bold text-gray-900">Production Calendar</h1>
-          <p className="text-gray-500 mt-1">
-            {slots.length} slots scheduled • {unscheduledOrders.length} awaiting scheduling
+          <div className="flex items-center gap-2">
+            <Calendar className="h-6 w-6 text-primary-600" />
+            <h1 className="text-2xl font-bold text-gray-900 lg:text-3xl">Production Calendar</h1>
+          </div>
+          <p className="mt-1 max-w-3xl text-sm text-gray-500">
+            Auto-planned from order ship dates, station progress, and completed prerequisites. Completed or shipped orders are removed from the calendar automatically.
           </p>
         </div>
-        
-        <div className="flex items-center gap-2">
-          <div className="bg-gray-100 rounded-lg p-1 flex">
-            <button
-              onClick={() => setViewMode('day')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'day' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Day
-            </button>
-            <button
-              onClick={() => setViewMode('week')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'week' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Week
-            </button>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-gray-500">Active Orders</div>
+            <div className="mt-1 text-xl font-semibold text-gray-900">{calendar.summary.activeOrders}</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-gray-500">Scheduled Entries</div>
+            <div className="mt-1 text-xl font-semibold text-gray-900">{calendar.summary.totalEntries}</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-gray-500">Overdue</div>
+            <div className="mt-1 text-xl font-semibold text-rose-700">{calendar.summary.overdueEntries}</div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-gray-500">Range</div>
+            <div className="mt-1 text-sm font-semibold text-gray-900">{formatRangeLabel(dateRange.start, dateRange.end)}</div>
           </div>
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-2">
-          <button onClick={navigatePrev} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50">
+          <button onClick={navigatePrev} className="rounded-lg border border-gray-200 p-2 transition-colors hover:bg-gray-50" type="button">
             <ChevronLeft className="h-5 w-5" />
           </button>
-          <button onClick={goToToday} className="px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 font-medium text-sm">
+          <button onClick={goToToday} className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium transition-colors hover:bg-gray-50" type="button">
             Today
           </button>
-          <button onClick={navigateNext} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50">
+          <button onClick={navigateNext} className="rounded-lg border border-gray-200 p-2 transition-colors hover:bg-gray-50" type="button">
             <ChevronRight className="h-5 w-5" />
           </button>
-          <span className="text-lg font-semibold text-gray-900 ml-2">{getHeaderText()}</span>
+          <span className="ml-2 text-lg font-semibold text-gray-900">{formatRangeLabel(dateRange.start, dateRange.end)}</span>
         </div>
 
-        <div className="flex items-center gap-3">
-          <select
-            value={stationFilter}
-            onChange={(e) => setStationFilter(e.target.value as PrintingMethod | '')}
-            className="input-field text-sm py-1.5 pr-8"
+        <div className="inline-flex rounded-lg bg-gray-100 p-1">
+          <button
+            type="button"
+            onClick={() => setViewMode('day')}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              viewMode === 'day' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+            }`}
           >
-            <option value="">All Stations</option>
-            {Object.entries(STATION_DISPLAY_NAMES)
-              .filter(([key]) => key !== 'ORDER_ENTRY')
-              .map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))
-            }
-          </select>
+            Day
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('week')}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              viewMode === 'week' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Week
+          </button>
         </div>
       </div>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-        {/* Calendar Grid - Takes up 3 columns */}
-        <div className="xl:col-span-3">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            {slotsLoading ? (
-              <div className="p-8 animate-pulse">
-                <div className="space-y-4">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="h-24 bg-gray-100 rounded-lg" />
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+        {calendarQuery.isLoading ? (
+          <div className="space-y-4 p-6">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="animate-pulse rounded-xl border border-gray-100 bg-gray-50 p-4">
+                <div className="h-5 w-32 rounded bg-gray-200" />
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+                  {Array.from({ length: Math.min(days.length || 4, 4) }).map((__, cellIndex) => (
+                    <div key={cellIndex} className="h-28 rounded-lg bg-white" />
                   ))}
                 </div>
               </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-100">
-                      <th className="text-left p-3 font-semibold text-gray-700 bg-gray-50 w-40">
-                        Station
-                      </th>
-                      {days.map((day) => (
-                        <th
-                          key={day.toISOString()}
-                          className={`text-center p-3 font-medium min-w-[140px] ${
-                            isToday(day) ? 'bg-primary-50' : 'bg-gray-50'
-                          }`}
-                        >
-                          <div className="text-xs text-gray-500 uppercase">
-                            {day.toLocaleDateString('en-US', { weekday: 'short' })}
-                          </div>
-                          <div className={`text-lg ${isToday(day) ? 'text-primary-600 font-bold' : ''}`}>
-                            {day.getDate()}
-                          </div>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stations.map((station) => (
-                      <tr key={station} className="border-b border-gray-50">
-                        <td className="p-3 font-medium text-gray-900 bg-gray-50/50">
-                          {STATION_DISPLAY_NAMES[station] || station}
-                        </td>
-                        {days.map((day) => {
-                          const cellSlots = getSlotsForCell(station, day);
-                          const capacity = getCapacity(station, day);
-                          const isPastDay = isPast(day);
-
-                          return (
-                            <td
-                              key={day.toISOString()}
-                              className={`p-2 align-top min-h-[100px] ${
-                                isToday(day) ? 'bg-primary-50/30' : isPastDay ? 'bg-gray-50/50' : ''
-                              }`}
-                              onDragOver={handleDragOver}
-                              onDrop={(e) => handleDrop(e, station, day)}
-                            >
-                              {/* Capacity indicator */}
-                              {capacity && (
-                                <div className={`text-xs mb-1 px-1 py-0.5 rounded ${
-                                  capacity.utilizationPercent >= 100 ? 'bg-red-100 text-red-700' :
-                                  capacity.utilizationPercent >= 75 ? 'bg-amber-100 text-amber-700' :
-                                  'bg-green-100 text-green-700'
-                                }`}>
-                                  {capacity.scheduledHours}h / 8h
-                                </div>
-                              )}
-
-                              {/* Slots */}
-                              <div className="space-y-1">
-                                {cellSlots.map((slot) => (
-                                  <div
-                                    key={slot.id}
-                                    draggable={slot.status !== 'COMPLETED' && slot.status !== 'CANCELLED'}
-                                    onDragStart={(e) => handleDragStart(e, slot)}
-                                    className={`p-2 rounded border text-xs cursor-move group ${
-                                      SLOT_STATUS_COLORS[slot.status as SlotStatus]
-                                    }`}
-                                  >
-                                    <div className="flex items-center justify-between">
-                                      <Link
-                                        to={`/orders/${slot.workOrder.id}`}
-                                        className="font-semibold hover:underline"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        {slot.workOrder.orderNumber}
-                                      </Link>
-                                      <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                                        {slot.status === 'SCHEDULED' && (
-                                          <button
-                                            onClick={() => startSlotMutation.mutate(slot.id)}
-                                            className="p-0.5 hover:bg-white/50 rounded"
-                                            title="Start"
-                                          >
-                                            <Play className="h-3 w-3" />
-                                          </button>
-                                        )}
-                                        {slot.status === 'IN_PROGRESS' && (
-                                          <button
-                                            onClick={() => completeSlotMutation.mutate({ slotId: slot.id })}
-                                            className="p-0.5 hover:bg-white/50 rounded"
-                                            title="Complete"
-                                          >
-                                            <CheckCircle className="h-3 w-3" />
-                                          </button>
-                                        )}
-                                        {slot.status !== 'COMPLETED' && slot.status !== 'CANCELLED' && (
-                                          <button
-                                            onClick={() => cancelSlotMutation.mutate(slot.id)}
-                                            className="p-0.5 hover:bg-white/50 rounded"
-                                            title="Cancel"
-                                          >
-                                            <X className="h-3 w-3" />
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <div className="text-[10px] text-gray-600 truncate mt-0.5">
-                                      {slot.workOrder.customerName}
-                                    </div>
-                                    <div className="flex items-center gap-1 mt-1 text-[10px]">
-                                      <Clock className="h-2.5 w-2.5" />
-                                      {slot.estimatedHours}h
-                                      {slot.assignedTo && (
-                                        <>
-                                          <span className="mx-1">•</span>
-                                          <Users className="h-2.5 w-2.5" />
-                                          {slot.assignedTo.name.split(' ')[0]}
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            ))}
           </div>
-        </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-0">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 z-10 w-64 border-b border-gray-200 bg-gray-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    Station
+                  </th>
+                  {days.map((day) => (
+                    <th
+                      key={day.toISOString()}
+                      className={`min-w-[220px] border-b border-gray-200 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide ${
+                        isToday(day) ? 'bg-sky-50 text-sky-700' : 'bg-gray-50 text-gray-500'
+                      }`}
+                    >
+                      {formatHeaderDate(day)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {LANE_ORDER.map((lane) => {
+                  const meta = LANE_META[lane];
+                  const laneCount = calendar.summary.stationCounts[lane] ?? 0;
+                  const overdueLaneCount = calendar.slots.filter((entry) => entry.station === lane && entry.status === 'OVERDUE').length;
 
-        {/* Sidebar - Unscheduled Orders */}
-        <div className="xl:col-span-1">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Package className="h-5 w-5 text-gray-500" />
-              Awaiting Scheduling
-            </h3>
-            
-            {unscheduledOrders.length === 0 ? (
-              <p className="text-sm text-gray-500 text-center py-4">
-                All orders are scheduled!
-              </p>
-            ) : (
-              <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                {unscheduledOrders.map((order) => (
-                  <div
-                    key={order.id}
-                    className="p-3 rounded-lg border border-gray-200 hover:border-primary-300 hover:bg-primary-50/30 transition-colors cursor-pointer"
-                    onClick={() => {
-                      setSelectedOrder(order);
-                      setScheduleForm({
-                        station: order.routing[0] || '',
-                        scheduledDate: new Date().toISOString().split('T')[0],
-                        estimatedHours: 2,
-                        priority: 1,
-                      });
-                      setShowModal(true);
-                    }}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="font-medium text-sm">{order.orderNumber}</div>
-                        <div className="text-xs text-gray-500 truncate">{order.customerName}</div>
-                      </div>
-                      <button className="p-1 hover:bg-gray-100 rounded">
-                        <Plus className="h-4 w-4 text-gray-400" />
-                      </button>
-                    </div>
-                    {order.dueDate && (
-                      <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        Due: {new Date(order.dueDate).toLocaleDateString()}
-                      </div>
-                    )}
-                    {order.routing.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {order.routing.slice(0, 3).map((station) => (
-                          <span
-                            key={station}
-                            className="text-[10px] px-1.5 py-0.5 bg-gray-100 rounded"
+                  return (
+                    <tr key={lane} className="align-top">
+                      <td className="sticky left-0 z-10 border-b border-gray-100 bg-white px-4 py-4">
+                        <div className={`rounded-xl border p-4 ${meta.card}`}>
+                          <div className="flex items-center gap-3">
+                            <span className={`h-3 w-3 rounded-full ${meta.dot}`} />
+                            <div>
+                              <div className={`text-sm font-semibold ${meta.accent}`}>{meta.label}</div>
+                              <div className="text-xs text-gray-500">{meta.description}</div>
+                            </div>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-600">
+                            <span className="rounded-full bg-white px-2 py-0.5 shadow-sm">{laneCount} entries</span>
+                            <span className="rounded-full bg-white px-2 py-0.5 shadow-sm">{overdueLaneCount} overdue</span>
+                          </div>
+                        </div>
+                      </td>
+
+                      {days.map((day) => {
+                        const dateKey = formatDateKey(day);
+                        const entries = entriesByLaneAndDate[lane][dateKey] ?? [];
+
+                        return (
+                          <td
+                            key={dateKey}
+                            className={`border-b border-gray-100 px-3 py-3 align-top ${isToday(day) ? 'bg-sky-50/30' : isPast(day) ? 'bg-gray-50/40' : 'bg-white'}`}
                           >
-                            {STATION_DISPLAY_NAMES[station as PrintingMethod]?.split(' ')[0] || station}
-                          </span>
-                        ))}
-                        {order.routing.length > 3 && (
-                          <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 rounded">
-                            +{order.routing.length - 3}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+                            {entries.length === 0 ? (
+                              <div className="flex min-h-36 items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white/70 px-3 py-6 text-center text-xs text-gray-400">
+                                No scheduled orders
+                              </div>
+                            ) : (
+                              <div className="space-y-3">{entries.map(renderEntryCard)}</div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-
-          {/* Legend */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mt-4">
-            <h3 className="font-semibold text-gray-900 mb-3">Status Legend</h3>
-            <div className="space-y-2">
-              {Object.entries(SLOT_STATUS_LABELS).map(([status, label]) => (
-                <div key={status} className="flex items-center gap-2">
-                  <div className={`w-4 h-4 rounded border ${SLOT_STATUS_COLORS[status as SlotStatus]}`} />
-                  <span className="text-sm text-gray-600">{label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Schedule Modal */}
-      {showModal && selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Schedule Production</h3>
-              <button onClick={() => setShowModal(false)} className="p-1 hover:bg-gray-100 rounded">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        {LANE_ORDER.map((lane) => {
+          const meta = LANE_META[lane];
+          const laneEntries = calendar.slots.filter((entry) => entry.station === lane);
+          const completedCount = laneEntries.filter((entry) => entry.status === 'COMPLETED').length;
+          const overdueCount = laneEntries.filter((entry) => entry.status === 'OVERDUE').length;
 
-            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-              <div className="font-medium">{selectedOrder.orderNumber}</div>
-              <div className="text-sm text-gray-500">{selectedOrder.customerName}</div>
-              {selectedOrder.description && (
-                <div className="text-sm text-gray-500">{selectedOrder.description}</div>
-              )}
-            </div>
-
-            <form onSubmit={handleScheduleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Station
-                </label>
-                <select
-                  value={scheduleForm.station}
-                  onChange={(e) => setScheduleForm({ ...scheduleForm, station: e.target.value as PrintingMethod })}
-                  className="input-field"
-                  required
-                >
-                  <option value="">Select station...</option>
-                  {selectedOrder.routing.map((station) => (
-                    <option key={station} value={station}>
-                      {STATION_DISPLAY_NAMES[station as PrintingMethod] || station}
-                    </option>
-                  ))}
-                  <option disabled>──────────</option>
-                  {Object.entries(STATION_DISPLAY_NAMES)
-                    .filter(([key]) => key !== 'ORDER_ENTRY' && !selectedOrder.routing.includes(key as PrintingMethod))
-                    .map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))
-                  }
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Scheduled Date
-                </label>
-                <input
-                  type="date"
-                  value={scheduleForm.scheduledDate}
-                  onChange={(e) => setScheduleForm({ ...scheduleForm, scheduledDate: e.target.value })}
-                  className="input-field"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
+          return (
+            <div key={lane} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-2">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Estimated Hours
-                  </label>
-                  <input
-                    type="number"
-                    value={scheduleForm.estimatedHours}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, estimatedHours: Number(e.target.value) })}
-                    className="input-field"
-                    min="0.5"
-                    max="24"
-                    step="0.5"
-                    required
-                  />
+                  <div className={`text-sm font-semibold ${meta.accent}`}>{meta.label}</div>
+                  <div className="text-xs text-gray-500">Derived from order ship dates and station progress</div>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Priority
-                  </label>
-                  <select
-                    value={scheduleForm.priority}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, priority: Number(e.target.value) })}
-                    className="input-field"
-                  >
-                    <option value={1}>1 - Low</option>
-                    <option value={2}>2 - Normal</option>
-                    <option value={3}>3 - Medium</option>
-                    <option value={4}>4 - High</option>
-                    <option value={5}>5 - Urgent</option>
-                  </select>
+                <span className={`h-3 w-3 rounded-full ${meta.dot}`} />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-xl bg-gray-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Total</div>
+                  <div className="mt-1 text-lg font-semibold text-gray-900">{laneEntries.length}</div>
+                </div>
+                <div className="rounded-xl bg-gray-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Done</div>
+                  <div className="mt-1 text-lg font-semibold text-emerald-700">{completedCount}</div>
+                </div>
+                <div className="rounded-xl bg-gray-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Overdue</div>
+                  <div className="mt-1 text-lg font-semibold text-rose-700">{overdueCount}</div>
+                </div>
+                <div className="rounded-xl bg-gray-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Next</div>
+                  <div className="mt-1 text-sm font-semibold text-gray-900">
+                    {laneEntries[0] ? formatTimeLabel(laneEntries[0].scheduledDate) : 'None'}
+                  </div>
                 </div>
               </div>
-
-              <div className="flex gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="btn btn-secondary flex-1"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary flex-1"
-                  disabled={createSlotMutation.isPending}
-                >
-                  {createSlotMutation.isPending ? 'Scheduling...' : 'Schedule'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
