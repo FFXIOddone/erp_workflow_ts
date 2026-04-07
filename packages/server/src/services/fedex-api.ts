@@ -1,5 +1,6 @@
 import { Carrier, ShipmentStatus, TrackingEventType, type Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
+import { resolveShipmentTrackingNumber, type ShipmentTrackingCandidate } from './shipment-tracking.js';
 
 const DEFAULT_FEDEX_API_BASE_URL = 'https://apis-sandbox.fedex.com';
 const TRACKING_SNAPSHOT_TTL_MS = 2 * 60 * 1000;
@@ -58,6 +59,17 @@ type FedExTrackingSnapshot = {
   rawResponse: Record<string, unknown>;
 };
 
+type FedExShipmentSyncContext = ShipmentTrackingCandidate & {
+  id: string;
+  carrier: Carrier;
+  status: ShipmentStatus;
+  actualDelivery: Date | null;
+  workOrderId: string | null;
+  trackingEvents: Array<{
+    createdAt: Date;
+  }>;
+};
+
 export type FedExShipmentStatusSyncResult = {
   shipmentId: string;
   trackingNumber: string | null;
@@ -114,6 +126,67 @@ function parseDate(value: unknown): Date | null {
 
   const parsed = new Date(String(value));
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function loadFedExShipmentSyncContext(shipmentId: string): Promise<FedExShipmentSyncContext | null> {
+  return prisma.shipment.findUnique({
+    where: { id: shipmentId },
+    select: {
+      id: true,
+      carrier: true,
+      status: true,
+      trackingNumber: true,
+      actualDelivery: true,
+      workOrderId: true,
+      labelScans: {
+        select: {
+          trackingNumber: true,
+          scannedAt: true,
+        },
+        orderBy: {
+          scannedAt: 'desc',
+        },
+        take: 1,
+      },
+      workOrder: {
+        select: {
+          shippingScans: {
+            select: {
+              trackingNumber: true,
+              scannedAt: true,
+            },
+            orderBy: {
+              scannedAt: 'desc',
+            },
+            take: 1,
+          },
+          fedExShipmentRecords: {
+            select: {
+              trackingNumber: true,
+              importedAt: true,
+              eventTimestamp: true,
+            },
+            orderBy: {
+              importedAt: 'desc',
+            },
+            take: 1,
+          },
+        },
+      },
+      trackingEvents: {
+        where: {
+          sourceSystem: 'fedex_api',
+        },
+        select: {
+          createdAt: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        take: 1,
+      },
+    },
+  }) as Promise<FedExShipmentSyncContext | null>;
 }
 
 function resolveFedExApiConfig(): FedExApiConfig | null {
@@ -429,36 +502,13 @@ export async function syncFedExTrackingForShipment(
       };
     }
 
-    const shipment = await prisma.shipment.findUnique({
-      where: { id: shipmentId },
-      select: {
-        id: true,
-        carrier: true,
-        status: true,
-        trackingNumber: true,
-        actualDelivery: true,
-        workOrderId: true,
-        trackingEvents: {
-          where: {
-            sourceSystem: 'fedex_api',
-          },
-          select: {
-            id: true,
-            createdAt: true,
-          },
-          orderBy: {
-            createdAt: 'desc',
-          },
-          take: 1,
-        },
-      },
-    });
+    const shipment = await loadFedExShipmentSyncContext(shipmentId);
 
     if (!shipment) {
       throw new Error(`Shipment ${shipmentId} not found`);
     }
 
-    const normalizedTrackingNumber = normalizeTrackingNumber(shipment.trackingNumber);
+    const normalizedTrackingNumber = resolveShipmentTrackingNumber(shipment);
     if (!normalizedTrackingNumber) {
       return {
         shipmentId,
@@ -510,6 +560,7 @@ export async function syncFedExTrackingForShipment(
         where: { id: shipmentId },
         data: {
           carrier: shipment.carrier === Carrier.OTHER ? Carrier.FEDEX : shipment.carrier,
+          trackingNumber: normalizedTrackingNumber,
           status: nextShipmentStatus,
           actualDelivery: nextDeliveryDate,
         },
@@ -618,31 +669,13 @@ export async function scheduleFedExTrackingRefreshIfStale(
     return;
   }
 
-  const shipment = await prisma.shipment.findUnique({
-    where: { id: shipmentId },
-    select: {
-      carrier: true,
-      trackingNumber: true,
-      trackingEvents: {
-        where: {
-          sourceSystem: 'fedex_api',
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-        take: 1,
-        select: {
-          createdAt: true,
-        },
-      },
-    },
-  });
+  const shipment = await loadFedExShipmentSyncContext(shipmentId);
 
   if (!shipment) {
     return;
   }
 
-  const trackingNumber = normalizeTrackingNumber(shipment.trackingNumber);
+  const trackingNumber = resolveShipmentTrackingNumber(shipment);
   if (!trackingNumber) {
     return;
   }
@@ -685,4 +718,3 @@ export async function fetchFedExStatusPreview(
     sourceBaseUrl: snapshot.sourceBaseUrl,
   };
 }
-

@@ -12,6 +12,9 @@ import {
   isFedExApiConfigured,
   syncFedExTrackingForShipment,
 } from '../services/fedex-api.js';
+import {
+  runFedExTrackingRefreshCycle,
+} from '../services/fedex-tracking-refresh.js';
 
 export const fedexRouter = Router();
 
@@ -210,6 +213,16 @@ fedexRouter.post('/shipments/:shipmentId/refresh', wrapAsync(async (req: AuthReq
   const body = (req.body ?? {}) as FedExShipmentRefreshBody;
   const force = body.force === true;
   const result = await syncFedExTrackingForShipment(shipmentId, { force });
+
+  res.json({
+    success: true,
+    data: result,
+  });
+}));
+
+// POST /fedex/tracking/refresh-all - Refresh every shipped, trackable shipment via FedEx API
+fedexRouter.post('/tracking/refresh-all', wrapAsync(async (_req: AuthRequest, res: Response) => {
+  const result = await runFedExTrackingRefreshCycle();
 
   res.json({
     success: true,

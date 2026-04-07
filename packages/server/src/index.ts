@@ -80,6 +80,7 @@ import {
   syncFedExShipmentRecords,
   syncFedExShipmentReports,
 } from './services/fedex.js';
+import { startFedExHourlyTrackingRefresh } from './services/fedex-tracking-refresh.js';
 import { initEmailService } from './services/email.js';
 import { processEmailQueue } from './services/email-automation.js';
 import { setupWebSocket } from './ws/server.js';
@@ -502,6 +503,9 @@ async function start(): Promise<void> {
         void runFedExSync();
       }, FEDEX_SYNC_INTERVAL_MS);
       console.log(`📦 FedEx sync started (interval: ${FEDEX_SYNC_INTERVAL_MS / 1000}s)`);
+
+      startFedExHourlyTrackingRefresh();
+      console.log('📦 FedEx hourly tracking refresh started (on the hour)');
 
       const startZundBackgroundServices = async () => {
         const { startZundLiveCacheWarmer } = await import('./services/zund-live.js');
