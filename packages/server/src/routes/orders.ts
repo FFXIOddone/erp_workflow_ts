@@ -42,6 +42,7 @@ import { bomAutomationService } from '../services/bom-automation.js';
 import { ensureShipmentRecordForWorkOrder } from '../services/shipment-linking.js';
 import { resolveCustomerId } from '../lib/customer-matching.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
+import { resolveEffectivePriority } from '../lib/customer-priority.js';
 import { updateStreak, checkAchievements } from '../services/gamification.js';
 import {
   applyRoutingDefaults,
@@ -66,6 +67,32 @@ function isDesignCompletionStation(station: string): boolean {
 function getStationFilterTargets(station: string): string[] {
   const targets = [station, ...(PARENT_SUB_STATIONS[station] || [])];
   return [...new Set(targets)];
+}
+
+type OrderWithCustomerPreference = {
+  priority: number;
+  customer?: {
+    preference?: {
+      defaultPriority?: number | null;
+    } | null;
+  } | null;
+};
+
+function withEffectivePriority<T extends OrderWithCustomerPreference>(order: T) {
+  const customerPreferenceDefaultPriority =
+    order.customer?.preference?.defaultPriority ?? null;
+  const priorityMeta = resolveEffectivePriority({
+    orderPriority: order.priority,
+    customerDefaultPriority: customerPreferenceDefaultPriority,
+  });
+  const { customer: _customer, ...rest } = order as T & { customer?: unknown };
+
+  return {
+    ...rest,
+    effectivePriority: priorityMeta.effectivePriority,
+    prioritySource: priorityMeta.prioritySource,
+    customerPreferenceDefaultPriority: priorityMeta.customerPreferenceDefaultPriority,
+  };
 }
 
 // All routes require authentication
@@ -460,11 +487,29 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
     ? {
         stationProgress: { select: { id: true, station: true, status: true } },
         assignedTo: { select: { id: true, displayName: true } },
+        customer: {
+          select: {
+            preference: {
+              select: {
+                defaultPriority: true,
+              },
+            },
+          },
+        },
       }
     : {
         stationProgress: true,
         createdBy: { select: { id: true, displayName: true } },
         assignedTo: { select: { id: true, displayName: true } },
+        customer: {
+          select: {
+            preference: {
+              select: {
+                defaultPriority: true,
+              },
+            },
+          },
+        },
       };
 
   if (!lightweight || includeLineItems) {
@@ -515,13 +560,14 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
 
     const hasMore = orders.length > limit;
     const items = hasMore ? orders.slice(0, -1) : orders;
+    const enrichedItems = items.map((order) => withEffectivePriority(order as OrderWithCustomerPreference));
     const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
     const prevCursor = cursor ? items[0]?.id ?? null : null;
 
     return res.json({
       success: true,
       data: {
-        items,
+        items: enrichedItems,
         nextCursor,
         prevCursor,
         hasMore,
@@ -539,11 +585,12 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
     }),
     prisma.workOrder.count({ where }),
   ]);
+  const enrichedOrders = orders.map((order) => withEffectivePriority(order as OrderWithCustomerPreference));
 
   res.json({
     success: true,
     data: {
-      items: orders,
+      items: enrichedOrders,
       total,
       page,
       pageSize,
@@ -1128,6 +1175,15 @@ ordersRouter.get('/:id([0-9a-fA-F-]{36})', async (req: AuthRequest, res: Respons
       attachments: { orderBy: { uploadedAt: 'desc' }, include: { uploadedBy: { select: { displayName: true } } } },
       createdBy: { select: { id: true, displayName: true } },
       assignedTo: { select: { id: true, displayName: true } },
+      customer: {
+        select: {
+          preference: {
+            select: {
+              defaultPriority: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -1135,7 +1191,10 @@ ordersRouter.get('/:id([0-9a-fA-F-]{36})', async (req: AuthRequest, res: Respons
     throw NotFoundError('Order not found');
   }
 
-  res.json({ success: true, data: order });
+  res.json({
+    success: true,
+    data: withEffectivePriority(order as OrderWithCustomerPreference),
+  });
 });
 
 // GET /orders/:id/linked-data - Get linked ERP data for the order detail page

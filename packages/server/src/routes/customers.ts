@@ -8,6 +8,7 @@ import {
   UpdateCustomerSchema,
   CustomerFilterSchema,
   CreateCustomerContactSchema,
+  UpdateCustomerPreferenceSchema,
   UserRole,
 } from '@erp/shared';
 
@@ -39,6 +40,12 @@ customersRouter.get('/', async (req: AuthRequest, res: Response) => {
       where,
       include: {
         contacts: true,
+        preference: {
+          select: {
+            defaultPriority: true,
+            updatedAt: true,
+          },
+        },
         _count: {
           select: { quotes: true, workOrders: true },
         },
@@ -69,6 +76,7 @@ customersRouter.get('/:id', async (req: AuthRequest, res: Response) => {
     where: { id },
     include: {
       contacts: true,
+      preference: true,
       quotes: {
         orderBy: { createdAt: 'desc' },
         take: 10,
@@ -99,6 +107,71 @@ customersRouter.get('/:id', async (req: AuthRequest, res: Response) => {
 
   res.json({ success: true, data: customer });
 });
+
+// GET /customers/:id/preference - Get customer priority/preference defaults
+customersRouter.get('/:id/preference', async (req: AuthRequest, res: Response) => {
+  const customerId = req.params.id as string;
+
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: { id: true, name: true },
+  });
+
+  if (!customer) {
+    throw NotFoundError('Customer not found');
+  }
+
+  const preference = await prisma.customerPreference.findUnique({
+    where: { customerId },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      customerId,
+      customerName: customer.name,
+      defaultPriority: preference?.defaultPriority ?? null,
+      preference,
+    },
+  });
+});
+
+// PATCH /customers/:id/preference - Upsert customer defaults (including priority)
+customersRouter.patch(
+  '/:id/preference',
+  requireRole(UserRole.ADMIN, UserRole.MANAGER),
+  async (req: AuthRequest, res: Response) => {
+    const customerId = req.params.id as string;
+    const data = UpdateCustomerPreferenceSchema.parse(req.body);
+
+    const customer = await prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { id: true },
+    });
+
+    if (!customer) {
+      throw NotFoundError('Customer not found');
+    }
+
+    const preference = await prisma.customerPreference.upsert({
+      where: { customerId },
+      create: {
+        customerId,
+        ...data,
+      },
+      update: data,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        customerId,
+        defaultPriority: preference.defaultPriority ?? null,
+        preference,
+      },
+    });
+  }
+);
 
 // POST /customers - Create new customer
 customersRouter.post('/', async (req: AuthRequest, res: Response) => {
