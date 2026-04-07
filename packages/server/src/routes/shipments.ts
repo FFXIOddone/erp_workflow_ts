@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { Carrier, ShipmentStatus } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
@@ -12,9 +13,44 @@ import {
   UpdateShipmentSchema,
   ShipmentFilterSchema,
   MarkDeliveredSchema,
+  SHIPMENT_STATUS_DISPLAY_NAMES,
 } from '@erp/shared';
 
 const router = Router();
+
+const fedExShipmentRecordSelect = {
+  trackingNumber: true,
+  importedAt: true,
+  eventTimestamp: true,
+  sourceFileDate: true,
+  sourceFileName: true,
+  service: true,
+} as const;
+
+const shipmentWorkOrderInclude = {
+  id: true,
+  orderNumber: true,
+  customerName: true,
+  status: true,
+  customer: { select: { id: true, name: true } },
+  shippingScans: {
+    select: {
+      trackingNumber: true,
+      scannedAt: true,
+    },
+    orderBy: {
+      scannedAt: 'desc',
+    },
+    take: 1,
+  },
+  fedExShipmentRecords: {
+    select: fedExShipmentRecordSelect,
+    orderBy: {
+      importedAt: 'desc',
+    },
+    take: 1,
+  },
+} as const;
 
 const shipmentTrackingInclude = {
   labelScans: {
@@ -28,36 +64,262 @@ const shipmentTrackingInclude = {
     take: 1,
   },
   workOrder: {
-    select: {
-      id: true,
-      orderNumber: true,
-      customerName: true,
-      customer: { select: { id: true, name: true } },
-      shippingScans: {
-        select: {
-          trackingNumber: true,
-          scannedAt: true,
-        },
-        orderBy: {
-          scannedAt: 'desc',
-        },
-        take: 1,
-      },
-      fedExShipmentRecords: {
-        select: {
-          trackingNumber: true,
-          importedAt: true,
-        },
-        orderBy: {
-          importedAt: 'desc',
-        },
-        take: 1,
-      },
-    },
+    select: shipmentWorkOrderInclude,
   },
   createdBy: { select: { id: true, displayName: true } },
   packages: true,
 } as const;
+
+const shipmentDetailWorkOrderInclude = {
+  ...shipmentWorkOrderInclude,
+  description: true,
+  customer: { select: { id: true, name: true, email: true, phone: true } },
+  fedExShipmentRecords: {
+    select: {
+      ...fedExShipmentRecordSelect,
+      rawData: true,
+    },
+    orderBy: {
+      importedAt: 'desc',
+    },
+    take: 1,
+  },
+} as const;
+
+const shipmentDetailInclude = {
+  ...shipmentTrackingInclude,
+  trackingEvents: {
+    select: {
+      id: true,
+      eventType: true,
+      eventDate: true,
+      eventTime: true,
+      city: true,
+      state: true,
+      description: true,
+      sourceSystem: true,
+    },
+    orderBy: {
+      eventDate: 'desc',
+    },
+    take: 25,
+  },
+  workOrder: {
+    select: shipmentDetailWorkOrderInclude,
+  },
+} as const;
+
+type ShipmentReadShape = {
+  id: string;
+  carrier: Carrier;
+  status: ShipmentStatus;
+  workOrder?: {
+    status?: string | null;
+    fedExShipmentRecords?: Array<{
+      trackingNumber: string | null;
+      importedAt?: Date | string | null;
+      eventTimestamp?: Date | string | null;
+      sourceFileDate?: Date | string | null;
+      sourceFileName?: string | null;
+      service?: string | null;
+      rawData?: unknown;
+    }>;
+  } | null;
+};
+
+type FedExStatusSummary = {
+  status: string | null;
+  eventType: string | null;
+  description: string | null;
+  eventTimestamp: string | null;
+  sourceFileName: string | null;
+  sourceFileDate: string | null;
+  location: string | null;
+  trackingNumber: string | null;
+  stale: boolean | null;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function pickString(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+  }
+
+  return null;
+}
+
+function pickDateIso(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (!value) {
+      continue;
+    }
+
+    const date = value instanceof Date ? value : new Date(String(value));
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString();
+    }
+  }
+
+  return null;
+}
+
+function formatFedExStatusLabel(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const enumName = normalized.toUpperCase().replace(/[\s-]+/g, '_');
+  if (enumName in ShipmentStatus) {
+    const enumValue = ShipmentStatus[enumName as keyof typeof ShipmentStatus];
+    return SHIPMENT_STATUS_DISPLAY_NAMES[enumValue] ?? normalized;
+  }
+
+  return normalized
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function resolveFedExStatusSummary(shipment: ShipmentReadShape): FedExStatusSummary | null {
+  const latestRecord = shipment.workOrder?.fedExShipmentRecords?.[0];
+  if (!latestRecord) {
+    return null;
+  }
+
+  const rawRecord = asRecord(latestRecord.rawData);
+  const rawRow = asRecord(rawRecord.row);
+  const status = formatFedExStatusLabel(
+    pickString(rawRow, [
+      'status',
+      'shipment status',
+      'current status',
+      'tracking status',
+      'delivery status',
+      'package status',
+      'shipmentStatus',
+    ]) ??
+      pickString(rawRecord, ['status', 'shipmentStatus', 'trackingStatus', 'deliveryStatus']) ??
+      null
+  );
+
+  const eventTimestamp =
+    pickDateIso(rawRow, [
+      'eventTimestamp',
+      'status updated at',
+      'status date',
+      'last scan date',
+      'scan date',
+      'delivery date',
+    ]) ??
+    pickDateIso(rawRecord, ['eventTimestamp', 'statusUpdatedAt', 'statusDate', 'lastScanAt']) ??
+    (latestRecord.eventTimestamp instanceof Date
+      ? latestRecord.eventTimestamp.toISOString()
+      : latestRecord.eventTimestamp
+        ? new Date(latestRecord.eventTimestamp).toISOString()
+        : null) ??
+    (latestRecord.sourceFileDate instanceof Date
+      ? latestRecord.sourceFileDate.toISOString()
+      : latestRecord.sourceFileDate
+        ? new Date(latestRecord.sourceFileDate).toISOString()
+        : null) ??
+    (latestRecord.importedAt instanceof Date
+      ? latestRecord.importedAt.toISOString()
+      : latestRecord.importedAt
+        ? new Date(latestRecord.importedAt).toISOString()
+        : null);
+
+  const city = pickString(rawRow, ['city', 'last scan city', 'scan city', 'destination city']);
+  const state = pickString(rawRow, ['state', 'last scan state', 'scan state', 'destination state']);
+  const zip = pickString(rawRow, ['zip', 'postal code', 'last scan zip', 'scan zip']);
+  const location = [city, state, zip].filter(Boolean).join(', ') || null;
+
+  return {
+    status,
+    eventType: formatFedExStatusLabel(
+      pickString(rawRow, ['eventType', 'event type', 'type', 'scan type']) ?? null
+    ),
+    description:
+      pickString(rawRow, [
+        'description',
+        'message',
+        'status description',
+        'tracking message',
+        'event description',
+      ]) ??
+      pickString(rawRecord, ['description', 'message']) ??
+      null,
+    eventTimestamp,
+    sourceFileName:
+      pickString(rawRecord, ['sourceFileName']) ??
+      latestRecord.sourceFileName ??
+      null,
+    sourceFileDate:
+      pickDateIso(rawRecord, ['sourceFileDate']) ??
+      (latestRecord.sourceFileDate instanceof Date
+        ? latestRecord.sourceFileDate.toISOString()
+        : latestRecord.sourceFileDate
+          ? new Date(latestRecord.sourceFileDate).toISOString()
+          : null),
+    location,
+    trackingNumber: latestRecord.trackingNumber,
+    stale: false,
+  };
+}
+
+export function resolveShipmentReadCorrections<T extends ShipmentReadShape>(
+  shipment: T
+): T & { carrier: Carrier; status: ShipmentStatus; fedExStatusSummary: FedExStatusSummary | null } {
+  const fedExStatusSummary = resolveFedExStatusSummary(shipment);
+  const hasLinkedFedExRecord = Boolean(shipment.workOrder?.fedExShipmentRecords?.length);
+
+  const carrier =
+    shipment.carrier === Carrier.OTHER && hasLinkedFedExRecord
+      ? Carrier.FEDEX
+      : shipment.carrier;
+
+  const fedExStatus = fedExStatusSummary?.status?.toUpperCase() ?? '';
+  const status =
+    fedExStatus.includes('DELIVERED')
+      ? ShipmentStatus.DELIVERED
+      : fedExStatus.includes('EXCEPTION')
+        ? ShipmentStatus.EXCEPTION
+        : fedExStatus.includes('IN TRANSIT') ||
+            fedExStatus.includes('OUT FOR DELIVERY') ||
+            fedExStatus.includes('PICKED UP') ||
+            fedExStatus.includes('LABEL CREATED')
+          ? ShipmentStatus.IN_TRANSIT
+          : shipment.status === ShipmentStatus.PICKED_UP && shipment.workOrder?.status === 'SHIPPED'
+            ? ShipmentStatus.IN_TRANSIT
+            : shipment.status;
+
+  return {
+    ...shipment,
+    carrier,
+    status,
+    fedExStatusSummary,
+  };
+}
+
+function applyReadSideShipmentCorrections<T extends ShipmentReadShape>(
+  shipments: T[]
+): Array<T & { carrier: Carrier; status: ShipmentStatus; fedExStatusSummary: FedExStatusSummary | null }> {
+  return shipments.map((shipment) => resolveShipmentReadCorrections(shipment));
+}
 
 // All routes require authentication
 router.use(authenticate);
@@ -115,11 +377,12 @@ router.get('/', async (req: AuthRequest, res) => {
     prisma.shipment.count({ where }),
   ]);
   const trackedShipments = shipments.map((shipment) => applyShipmentTrackingNumber(shipment));
+  const correctedShipments = applyReadSideShipmentCorrections(trackedShipments);
 
   res.json({
     success: true,
     data: {
-      items: trackedShipments,
+      items: correctedShipments,
       total,
       page,
       pageSize,
@@ -140,6 +403,7 @@ router.get('/:id', async (req: AuthRequest, res) => {
         select: {
           id: true,
           orderNumber: true,
+          status: true,
           description: true,
           customer: { select: { id: true, name: true, email: true, phone: true } },
           shippingScans: {
@@ -171,7 +435,9 @@ router.get('/:id', async (req: AuthRequest, res) => {
     throw NotFoundError('Shipment not found');
   }
 
-  res.json({ success: true, data: applyShipmentTrackingNumber(shipment) });
+  const trackedShipment = applyShipmentTrackingNumber(shipment);
+  const [correctedShipment] = applyReadSideShipmentCorrections([trackedShipment]);
+  res.json({ success: true, data: correctedShipment ?? trackedShipment });
 });
 
 // GET /shipments/order/:workOrderId - Get shipments for a work order
@@ -184,8 +450,9 @@ router.get('/order/:workOrderId', async (req: AuthRequest, res) => {
     orderBy: { shipDate: 'desc' },
   });
   const trackedShipments = shipments.map((shipment) => applyShipmentTrackingNumber(shipment));
+  const correctedShipments = applyReadSideShipmentCorrections(trackedShipments);
 
-  res.json({ success: true, data: trackedShipments });
+  res.json({ success: true, data: correctedShipments });
 });
 
 // POST /shipments - Create new shipment

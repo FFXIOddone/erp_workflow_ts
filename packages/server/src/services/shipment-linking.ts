@@ -1,4 +1,4 @@
-import { Carrier } from '@prisma/client';
+import { Carrier, ShipmentStatus } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { findShipmentEvidence } from '../lib/folder-utils.js';
 
@@ -16,6 +16,33 @@ export interface ShipmentLinkingResult {
   created: number;
 }
 
+type ShipmentCarrierSignals = {
+  evidenceRoot?: string | null;
+  hasFedExRecord?: boolean;
+};
+
+export function inferShipmentCarrierFromSignals(signals: ShipmentCarrierSignals): Carrier {
+  if (signals.hasFedExRecord) {
+    return Carrier.FEDEX;
+  }
+
+  const evidenceRoot = signals.evidenceRoot?.toUpperCase() ?? '';
+  if (evidenceRoot.includes('FEDEX')) {
+    return Carrier.FEDEX;
+  }
+  if (evidenceRoot.includes('FREIGHT')) {
+    return Carrier.FREIGHT;
+  }
+
+  return Carrier.OTHER;
+}
+
+export function inferBackfilledShipmentStatus(
+  fallback: ShipmentStatus = ShipmentStatus.IN_TRANSIT
+): ShipmentStatus {
+  return fallback === ShipmentStatus.PICKED_UP ? ShipmentStatus.IN_TRANSIT : fallback;
+}
+
 let reconcileInFlight: Promise<ShipmentLinkingResult> | null = null;
 
 async function createPlaceholderShipmentForWorkOrder(
@@ -25,6 +52,8 @@ async function createPlaceholderShipmentForWorkOrder(
     shipDate?: Date;
     notes?: string;
     carrier?: Carrier;
+    trackingNumber?: string | null;
+    status?: ShipmentStatus;
   } = {}
 ): Promise<boolean> {
   const existingShipment = await prisma.shipment.findFirst({
@@ -40,9 +69,9 @@ async function createPlaceholderShipmentForWorkOrder(
     data: {
       workOrderId: workOrder.id,
       carrier: options.carrier ?? Carrier.OTHER,
-      trackingNumber: null,
+      trackingNumber: options.trackingNumber ?? null,
       shipDate: options.shipDate ?? workOrder.updatedAt,
-      status: 'PICKED_UP',
+      status: options.status ?? inferBackfilledShipmentStatus(),
       shippingCost: 0,
       notes:
         options.notes ??
@@ -60,9 +89,44 @@ export async function ensureShipmentRecordForWorkOrder(
     createdById?: string;
     shipDate?: Date;
     notes?: string;
+    carrier?: Carrier;
+    status?: ShipmentStatus;
   } = {}
 ): Promise<boolean> {
-  return createPlaceholderShipmentForWorkOrder(workOrder, options);
+  const [linkedFedExEvidence, linkedFedExRecord] = await Promise.all([
+    prisma.fedExShipmentRecord.findFirst({
+      where: {
+        workOrderId: workOrder.id,
+      },
+      select: {
+        id: true,
+      },
+      orderBy: { importedAt: 'desc' },
+    }),
+    prisma.fedExShipmentRecord.findFirst({
+      where: {
+        workOrderId: workOrder.id,
+        trackingNumber: { not: null },
+      },
+      select: {
+        trackingNumber: true,
+      },
+      orderBy: { importedAt: 'desc' },
+    }),
+  ]);
+
+  const carrier =
+    options.carrier ??
+    inferShipmentCarrierFromSignals({
+      hasFedExRecord: Boolean(linkedFedExEvidence),
+    });
+
+  return createPlaceholderShipmentForWorkOrder(workOrder, {
+    ...options,
+    carrier,
+    trackingNumber: linkedFedExRecord?.trackingNumber ?? null,
+    status: inferBackfilledShipmentStatus(options.status),
+  });
 }
 
 export function reconcileShippedOrdersWithShipments(): Promise<ShipmentLinkingResult> {
@@ -93,6 +157,36 @@ export function reconcileShippedOrdersWithShipments(): Promise<ShipmentLinkingRe
       orderBy: { updatedAt: 'desc' },
     });
 
+    const linkedFedExRows = workOrders.length
+      ? await prisma.fedExShipmentRecord.findMany({
+          where: {
+            workOrderId: { in: workOrders.map((workOrder) => workOrder.id) },
+          },
+          select: {
+            workOrderId: true,
+            trackingNumber: true,
+            importedAt: true,
+          },
+          orderBy: [{ importedAt: 'desc' }],
+        })
+      : [];
+
+    const fedExEvidenceByWorkOrder = new Set<string>();
+    const latestFedExByWorkOrder = new Map<string, { trackingNumber: string | null }>();
+    for (const row of linkedFedExRows) {
+      if (!row.workOrderId) {
+        continue;
+      }
+
+      fedExEvidenceByWorkOrder.add(row.workOrderId);
+
+      if (!latestFedExByWorkOrder.has(row.workOrderId) && row.trackingNumber?.trim()) {
+        latestFedExByWorkOrder.set(row.workOrderId, {
+          trackingNumber: row.trackingNumber.trim(),
+        });
+      }
+    }
+
     let created = 0;
     for (const workOrder of workOrders) {
       try {
@@ -105,17 +199,17 @@ export function reconcileShippedOrdersWithShipments(): Promise<ShipmentLinkingRe
               workOrder.description ?? undefined,
             )
           : null;
-        const carrier = evidence?.found
-          ? evidence.evidenceRoot?.toUpperCase().includes('FEDEX')
-            ? Carrier.FEDEX
-            : evidence.evidenceRoot?.toUpperCase().includes('FREIGHT')
-              ? Carrier.FREIGHT
-              : Carrier.OTHER
-          : Carrier.OTHER;
+        const linkedFedEx = latestFedExByWorkOrder.get(workOrder.id);
+        const carrier = inferShipmentCarrierFromSignals({
+          evidenceRoot: evidence?.evidenceRoot,
+          hasFedExRecord: fedExEvidenceByWorkOrder.has(workOrder.id),
+        });
 
         const didCreate = await createPlaceholderShipmentForWorkOrder(workOrder, {
           shipDate: workOrder.updatedAt,
           carrier,
+          trackingNumber: linkedFedEx?.trackingNumber ?? null,
+          status: inferBackfilledShipmentStatus(),
           notes: evidence?.found
             ? `Backfilled from SHIPPED order ${workOrder.orderNumber}. Evidence: ${evidence.evidencePath}`
             : `Backfilled from SHIPPED order ${workOrder.orderNumber}`,

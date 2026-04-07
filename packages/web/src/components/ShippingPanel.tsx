@@ -16,6 +16,7 @@ import { api } from '../lib/api';
 import { formatDate } from '../lib/date';
 import { Badge } from './Badge';
 import { ShipmentPhotoCapture } from './ShipmentPhotoCapture';
+import { ShipmentDetailPanel } from './ShipmentDetailPanel';
 import {
   Carrier,
   ShipmentStatus,
@@ -55,6 +56,7 @@ const carrierOptions = Object.values(Carrier);
 export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [selectedShipmentId, setSelectedShipmentId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     carrier: Carrier.UPS as Carrier,
     trackingNumber: '',
@@ -87,6 +89,7 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
       api.post(`/shipments/${shipmentId}/deliver`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shipments', 'order', workOrderId] });
+      queryClient.invalidateQueries({ queryKey: ['shipments', 'detail'] });
       toast.success('Marked as delivered');
     },
     onError: () => {
@@ -192,7 +195,17 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
             return (
               <div
                 key={shipment.id}
-                className="p-3 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors"
+                className="p-3 rounded-lg border border-gray-200 hover:border-primary-300 hover:shadow-sm transition-all cursor-pointer"
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedShipmentId(shipment.id)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setSelectedShipmentId(shipment.id);
+                  }
+                }}
+                title="Open shipment details"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
@@ -215,6 +228,7 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-primary-600 hover:text-primary-800 font-mono flex items-center gap-1"
+                            onClick={(event) => event.stopPropagation()}
                           >
                             {shipment.trackingNumber}
                             <ExternalLink className="h-3 w-3" />
@@ -268,7 +282,10 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
                     )}
                   </div>
 
-                  <div className="flex flex-col items-end gap-2">
+                  <div
+                    className="flex flex-col items-end gap-2"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <ShipmentPhotoCapture orderId={workOrderId} />
                     {shipment.status !== 'DELIVERED' && (
                       <button
@@ -279,6 +296,7 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
                         Mark Delivered
                       </button>
                     )}
+                    <span className="text-[11px] text-gray-400">Click row for details</span>
                   </div>
                 </div>
               </div>
@@ -286,6 +304,13 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
           })}
         </div>
       )}
+
+      <ShipmentDetailPanel
+        open={Boolean(selectedShipmentId)}
+        shipmentId={selectedShipmentId}
+        orderNumber={orderNumber}
+        onClose={() => setSelectedShipmentId(null)}
+      />
 
       {/* Create Shipment Modal */}
       {showCreateModal && (
