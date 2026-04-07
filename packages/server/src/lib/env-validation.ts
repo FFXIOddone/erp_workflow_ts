@@ -83,6 +83,12 @@ const envSchema = z.object({
   QB_ODBC_DSN: z.string().optional(),
   QB_HOST: z.string().optional(),
 
+  // Optional: FedEx API
+  FEDEX_API_BASE_URL: z.string().url().optional(),
+  FEDEX_API_CLIENT_ID: z.string().optional(),
+  FEDEX_API_CLIENT_SECRET: z.string().optional(),
+  FEDEX_API_ACCOUNT_NUMBER: z.string().optional(),
+
   // Optional: File Storage
   UPLOAD_DIR: z.string().optional().default('./uploads'),
   MAX_FILE_SIZE: z.string().regex(/^\d+$/).optional().default('10485760'), // 10MB
@@ -173,6 +179,7 @@ function logConfigSummary(env: EnvConfig): void {
     '☁️  Email (AWS SES)': !!(env.AWS_REGION && env.SES_FROM_EMAIL),
     '🛒 WooCommerce': !!(env.WOOCOMMERCE_URL),
     '📊 QuickBooks': !!(env.QB_ODBC_DSN || env.QB_HOST),
+    '📦 FedEx API': !!(env.FEDEX_API_CLIENT_ID && env.FEDEX_API_CLIENT_SECRET),
     '🌐 Customer Portal': !!(env.PORTAL_URL),
   };
 

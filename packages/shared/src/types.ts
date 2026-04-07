@@ -257,6 +257,8 @@ export interface User {
   role: UserRole;
   isActive: boolean;
   allowedStations: PrintingMethod[];
+  eulaAcceptedAt?: Date | null;
+  eulaAcceptedVersion?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

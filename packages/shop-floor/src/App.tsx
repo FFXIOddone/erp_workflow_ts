@@ -4,6 +4,7 @@ import { useAuthStore } from './stores/auth';
 import { useConfigStore, StationId } from './stores/config';
 import { isTauri, invoke } from './lib/tauri-bridge';
 import { LoginScreen } from './components/LoginScreen';
+import { EulaGate } from './components/EulaGate';
 import { StationPicker } from './components/StationPicker';
 import { UpdateChecker } from './components/UpdateChecker';
 import { PrintingStation } from './stations/PrintingStation';
@@ -13,6 +14,7 @@ import { ShippingStation } from './stations/ShippingStation';
 import { InstallationStation } from './stations/InstallationStation';
 import { OrderEntryStation } from './stations/OrderEntryStation';
 import toast from 'react-hot-toast';
+import { hasAcceptedEula } from '@erp/shared';
 
 const STATION_LABELS: Record<StationId, string> = {
   DESIGN: 'Design Studio',
@@ -161,6 +163,10 @@ function App() {
   // Not logged in — show login screen
   if (!isAuthenticated) {
     return <LoginScreen />;
+  }
+
+  if (!hasAcceptedEula(user)) {
+    return <EulaGate />;
   }
 
   // Logged in but no station selected — show picker

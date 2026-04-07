@@ -6,6 +6,10 @@ import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
 import { reconcileShippedOrdersWithShipments } from '../services/shipment-linking.js';
 import { applyShipmentTrackingNumber } from '../services/shipment-tracking.js';
+import {
+  scheduleFedExTrackingRefreshIfStale,
+  syncFedExTrackingForShipment,
+} from '../services/fedex-api.js';
 import { broadcast } from '../ws/server.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import {
@@ -67,6 +71,26 @@ const shipmentTrackingInclude = {
     select: shipmentWorkOrderInclude,
   },
   createdBy: { select: { id: true, displayName: true } },
+  trackingEvents: {
+    where: {
+      sourceSystem: 'fedex_api',
+    },
+    select: {
+      eventType: true,
+      eventDate: true,
+      eventTime: true,
+      city: true,
+      state: true,
+      description: true,
+      sourceSystem: true,
+      rawData: true,
+      createdAt: true,
+    },
+    orderBy: {
+      eventDate: 'desc',
+    },
+    take: 1,
+  },
   packages: true,
 } as const;
 
@@ -96,8 +120,12 @@ const shipmentDetailInclude = {
       eventTime: true,
       city: true,
       state: true,
+      zip: true,
+      country: true,
       description: true,
       sourceSystem: true,
+      rawData: true,
+      createdAt: true,
     },
     orderBy: {
       eventDate: 'desc',
@@ -113,6 +141,17 @@ type ShipmentReadShape = {
   id: string;
   carrier: Carrier;
   status: ShipmentStatus;
+  trackingEvents?: Array<{
+    eventType: string;
+    eventDate: Date | string;
+    eventTime?: Date | string | null;
+    city?: string | null;
+    state?: string | null;
+    description?: string | null;
+    sourceSystem?: string | null;
+    rawData?: unknown;
+    createdAt?: Date | string | null;
+  }>;
   workOrder?: {
     status?: string | null;
     fedExShipmentRecords?: Array<{
@@ -196,6 +235,45 @@ function formatFedExStatusLabel(value: string | null): string | null {
 }
 
 function resolveFedExStatusSummary(shipment: ShipmentReadShape): FedExStatusSummary | null {
+  const latestFedExApiEvent = shipment.trackingEvents?.find(
+    (event) => event.sourceSystem?.toLowerCase() === 'fedex_api'
+  );
+
+  if (latestFedExApiEvent) {
+    const eventRawData = asRecord(latestFedExApiEvent.rawData);
+    const fetchedAtIso =
+      pickDateIso(eventRawData, ['fetchedAt']) ??
+      (latestFedExApiEvent.createdAt
+        ? new Date(latestFedExApiEvent.createdAt).toISOString()
+        : null);
+    const eventDateIso = new Date(latestFedExApiEvent.eventDate).toISOString();
+    const staleThresholdMs = 24 * 60 * 60 * 1000;
+    const staleFromDate = fetchedAtIso ? new Date(fetchedAtIso) : new Date(eventDateIso);
+    const isStale = Number.isNaN(staleFromDate.getTime())
+      ? null
+      : Date.now() - staleFromDate.getTime() > staleThresholdMs;
+
+    return {
+      status: formatFedExStatusLabel(
+        pickString(eventRawData, ['derivedStatus', 'status']) ?? latestFedExApiEvent.eventType
+      ),
+      eventType: formatFedExStatusLabel(latestFedExApiEvent.eventType ?? null),
+      description: latestFedExApiEvent.description ?? null,
+      eventTimestamp: eventDateIso,
+      sourceFileName: 'fedex_api',
+      sourceFileDate: fetchedAtIso,
+      location:
+        [latestFedExApiEvent.city, latestFedExApiEvent.state]
+          .filter((value): value is string => Boolean(value))
+          .join(', ') || null,
+      trackingNumber:
+        pickString(eventRawData, ['trackingNumber']) ??
+        shipment.workOrder?.fedExShipmentRecords?.[0]?.trackingNumber ??
+        null,
+      stale: isStale,
+    };
+  }
+
   const latestRecord = shipment.workOrder?.fedExShipmentRecords?.[0];
   if (!latestRecord) {
     return null;
@@ -437,7 +515,34 @@ router.get('/:id', async (req: AuthRequest, res) => {
 
   const trackedShipment = applyShipmentTrackingNumber(shipment);
   const [correctedShipment] = applyReadSideShipmentCorrections([trackedShipment]);
+
+  void scheduleFedExTrackingRefreshIfStale(id).catch((error) => {
+    console.warn(`FedEx background refresh check failed for shipment ${id}:`, error);
+  });
+
   res.json({ success: true, data: correctedShipment ?? trackedShipment });
+});
+
+// POST /shipments/:id/refresh-status - Force a FedEx API refresh for this shipment
+router.post('/:id/refresh-status', async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const force = req.body?.force === true;
+
+  const result = await syncFedExTrackingForShipment(id, { force });
+  if (result.status === 'synced') {
+    broadcast({
+      type: 'SHIPMENT_UPDATED',
+      payload: {
+        id: result.shipmentId,
+        status: result.shipmentStatus,
+        trackingNumber: result.trackingNumber,
+        carrier: result.carrier,
+        actualDelivery: result.actualDelivery,
+      },
+    });
+  }
+
+  res.json({ success: true, data: result });
 });
 
 // GET /shipments/order/:workOrderId - Get shipments for a work order

@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/auth';
+import { hasAcceptedEula } from '@erp/shared';
 import {
   Layout,
   ErrorBoundary,
@@ -9,6 +10,7 @@ import {
   DashboardSkeleton,
 } from './components';
 import { LoginPage } from './pages/LoginPage';
+import { EulaPage } from './pages/EulaPage';
 
 // Lazy-loaded pages — each becomes its own chunk
 const DashboardPage = lazy(() =>
@@ -78,10 +80,28 @@ const EquipmentFormPage = lazy(() => import('./pages/EquipmentFormPage'));
 const EquipmentWatchPage = lazy(() => import('./pages/EquipmentWatchPage'));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const { isAuthenticated, user } = useAuthStore();
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (!hasAcceptedEula(user)) {
+    return <Navigate to="/eula" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function EulaRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, user } = useAuthStore();
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (hasAcceptedEula(user)) {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
@@ -96,6 +116,10 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (!hasAcceptedEula(user)) {
+    return <Navigate to="/eula" replace />;
   }
 
   if (user?.role === 'OPERATOR' || user?.role === 'VIEWER') {
@@ -131,6 +155,14 @@ function App() {
       <Suspense fallback={<AppShellSkeleton />}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/eula"
+            element={
+              <EulaRoute>
+                <EulaPage />
+              </EulaRoute>
+            }
+          />
           <Route
             path="/"
             element={

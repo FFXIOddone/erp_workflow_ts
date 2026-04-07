@@ -19,6 +19,8 @@ model User {
   role            UserRole         @default(OPERATOR)
   isActive        Boolean          @default(true)
   allowedStations PrintingMethod[]
+  eulaAcceptedAt  DateTime?
+  eulaAcceptedVersion String?
   profilePhoto    String? // URL to profile photo
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt

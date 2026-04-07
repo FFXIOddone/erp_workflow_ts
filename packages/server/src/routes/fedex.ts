@@ -7,6 +7,11 @@ import {
   resolveFedExLogFile,
   syncFedExShipmentRecords,
 } from '../services/fedex.js';
+import {
+  fetchFedExStatusPreview,
+  isFedExApiConfigured,
+  syncFedExTrackingForShipment,
+} from '../services/fedex-api.js';
 
 export const fedexRouter = Router();
 
@@ -19,6 +24,15 @@ type FedExSyncRequestBody = {
   date?: unknown;
   filePath?: unknown;
   dryRun?: unknown;
+};
+
+type FedExTrackPreviewBody = {
+  trackingNumber?: unknown;
+  force?: unknown;
+};
+
+type FedExShipmentRefreshBody = {
+  force?: unknown;
 };
 
 function parseDateValue(value: unknown): Date | null {
@@ -151,6 +165,51 @@ fedexRouter.post('/sync', wrapAsync(async (req: AuthRequest, res: Response) => {
     filePath,
     dryRun,
   });
+
+  res.json({
+    success: true,
+    data: result,
+  });
+}));
+
+// GET /fedex/api-status - Report whether FedEx API credentials are configured
+fedexRouter.get('/api-status', wrapAsync(async (_req: AuthRequest, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      configured: isFedExApiConfigured(),
+    },
+  });
+}));
+
+// POST /fedex/track-preview - Fetch live FedEx status by tracking number (no DB writes)
+fedexRouter.post('/track-preview', wrapAsync(async (req: AuthRequest, res: Response) => {
+  const body = (req.body ?? {}) as FedExTrackPreviewBody;
+  const trackingNumber = typeof body.trackingNumber === 'string' ? body.trackingNumber.trim() : '';
+  const force = body.force === true;
+
+  if (!trackingNumber) {
+    throw BadRequestError('trackingNumber is required');
+  }
+
+  const preview = await fetchFedExStatusPreview(trackingNumber, { force });
+
+  res.json({
+    success: true,
+    data: preview,
+  });
+}));
+
+// POST /fedex/shipments/:shipmentId/refresh - Force a shipment status refresh from FedEx API
+fedexRouter.post('/shipments/:shipmentId/refresh', wrapAsync(async (req: AuthRequest, res: Response) => {
+  const { shipmentId } = req.params;
+  if (!shipmentId) {
+    throw BadRequestError('shipmentId is required');
+  }
+
+  const body = (req.body ?? {}) as FedExShipmentRefreshBody;
+  const force = body.force === true;
+  const result = await syncFedExTrackingForShipment(shipmentId, { force });
 
   res.json({
     success: true,

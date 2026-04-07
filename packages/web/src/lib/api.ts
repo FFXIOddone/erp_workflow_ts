@@ -15,11 +15,23 @@ export const api = axios.create({
 
 // Guard against multiple 401 redirects firing simultaneously
 let isRedirectingToLogin = false;
+let isRedirectingToEula = false;
 
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    const eulaRequired =
+      error.response?.status === 403 &&
+      typeof error.response?.data?.error === 'string' &&
+      error.response.data.error.includes('EULA acceptance required');
+
+    if (eulaRequired && !isRedirectingToEula) {
+      isRedirectingToEula = true;
+      window.location.replace('/eula');
+      return new Promise(() => {});
+    }
+
     if (error.response?.status === 401 && !isRedirectingToLogin) {
       isRedirectingToLogin = true;
       console.warn(

@@ -3,6 +3,7 @@ import jwt, { type SignOptions } from 'jsonwebtoken';
 import { prisma } from '../db/client.js';
 import { UnauthorizedError, ForbiddenError } from './error-handler.js';
 import type { User, UserRole, PrintingMethod } from '@erp/shared';
+import { hasAcceptedEula } from '@erp/shared';
 
 export interface AuthRequest extends Request {
   user?: User;
@@ -93,10 +94,21 @@ export async function authenticate(
       role: user.role as UserRole,
       isActive: user.isActive,
       allowedStations: user.allowedStations as PrintingMethod[],
+      eulaAcceptedAt: user.eulaAcceptedAt,
+      eulaAcceptedVersion: user.eulaAcceptedVersion,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
     req.userId = user.id;
+
+    const isAuthRoute = req.baseUrl.endsWith('/auth');
+    if (!isAuthRoute && !hasAcceptedEula(req.user)) {
+      res.status(403).json({
+        success: false,
+        error: 'EULA acceptance required',
+      });
+      return;
+    }
 
     next();
   } catch (error) {

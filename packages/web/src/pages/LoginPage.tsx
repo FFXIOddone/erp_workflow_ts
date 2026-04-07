@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import toast from 'react-hot-toast';
 import { LogIn, Lock, User, Eye, EyeOff } from 'lucide-react';
+import { hasAcceptedEula } from '@erp/shared';
 
 export function LoginPage() {
   const [username, setUsername] = useState('');
@@ -19,6 +20,10 @@ export function LoginPage() {
     try {
       const user = await login(username, password);
       toast.success('Welcome back!');
+      if (!hasAcceptedEula(user)) {
+        navigate('/eula');
+        return;
+      }
       // Route operators/viewers directly to shop floor (separate SPA — requires full page reload)
       if (user?.role === 'OPERATOR' || user?.role === 'VIEWER') {
         window.location.href = '/shop-floor/';

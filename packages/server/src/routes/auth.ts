@@ -1,6 +1,7 @@
 import { Router, type Response } from 'express';
 import bcrypt from 'bcrypt';
 import { LoginSchema, UserRole } from '@erp/shared';
+import { EULA_VERSION } from '@erp/shared';
 import { prisma } from '../db/client.js';
 import { generateToken, authenticate, type AuthRequest } from '../middleware/auth.js';
 import { UnauthorizedError } from '../middleware/error-handler.js';
@@ -89,6 +90,8 @@ authRouter.post('/login', loginRateLimiter, preLoginCheck, async (req: AuthReque
         email: user.email,
         role: user.role,
         allowedStations: user.allowedStations,
+        eulaAcceptedAt: user.eulaAcceptedAt,
+        eulaAcceptedVersion: user.eulaAcceptedVersion,
       },
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
@@ -120,6 +123,53 @@ authRouter.post('/refresh', authenticate, async (req: AuthRequest, res: Response
     data: {
       token,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+  });
+});
+
+// POST /auth/accept-eula
+authRouter.post('/accept-eula', authenticate, async (req: AuthRequest, res: Response) => {
+  if (!req.userId || !req.user) {
+    throw UnauthorizedError();
+  }
+
+  const acceptedAt = new Date();
+  const user = await prisma.user.update({
+    where: { id: req.userId },
+    data: {
+      eulaAcceptedAt: acceptedAt,
+      eulaAcceptedVersion: EULA_VERSION,
+    },
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+      email: true,
+      role: true,
+      isActive: true,
+      allowedStations: true,
+      eulaAcceptedAt: true,
+      eulaAcceptedVersion: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  logActivity({
+    action: ActivityAction.UPDATE,
+    entityType: EntityType.USER,
+    entityId: user.id,
+    entityName: user.username,
+    description: `Accepted ERP EULA version ${EULA_VERSION}`,
+    userId: user.id,
+    req,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      user,
+      acceptedAt,
     },
   });
 });

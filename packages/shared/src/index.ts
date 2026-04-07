@@ -10,6 +10,9 @@ export * from './schemas.js';
 // Constants
 export * from './constants.js';
 
+// EULA
+export * from './eula.js';
+
 // Routing inference
 export * from './routing-inference.js';
 
