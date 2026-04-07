@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { ShieldCheck, FileText, CheckCircle2 } from 'lucide-react';
@@ -77,6 +77,13 @@ export function EulaPage() {
               <p className="text-xs uppercase tracking-[0.24em] text-white/50">
                 Version {EULA_VERSION}
               </p>
+              <Link
+                to="/agreement"
+                className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:bg-white/10"
+              >
+                <FileText className="h-4 w-4" />
+                View full agreement
+              </Link>
             </div>
           </div>
         </div>

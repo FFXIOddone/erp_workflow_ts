@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ShieldCheck, FileText, CheckCircle2, LogOut } from 'lucide-react';
 import { hasAcceptedEula, EULA_POINTS, EULA_SUMMARY, EULA_TITLE, EULA_VERSION } from '@erp/shared';
 import { apiPost } from '../lib/api';
@@ -57,6 +58,14 @@ export function EulaGate() {
               <p className="text-xs uppercase tracking-[0.24em] text-white/50">
                 Version {EULA_VERSION}
               </p>
+              <Link
+                to="/agreement"
+                reloadDocument
+                className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:bg-white/10"
+              >
+                <FileText className="h-4 w-4" />
+                View full agreement
+              </Link>
             </div>
           </div>
         </div>

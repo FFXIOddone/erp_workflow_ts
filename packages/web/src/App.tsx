@@ -54,6 +54,9 @@ const ReportsPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage }))
 );
+const AgreementPage = lazy(() =>
+  import('./pages/AgreementPage').then((m) => ({ default: m.AgreementPage }))
+);
 const ActivityPage = lazy(() =>
   import('./pages/ActivityPage').then((m) => ({ default: m.ActivityPage }))
 );
@@ -154,6 +157,7 @@ function App() {
       <ToastContainer />
       <Suspense fallback={<AppShellSkeleton />}>
         <Routes>
+          <Route path="/agreement" element={<AgreementPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route
             path="/eula"
