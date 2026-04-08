@@ -44,6 +44,18 @@ interface Shipment {
     dimensions: string | null;
     description: string | null;
   }[];
+  fedExStatusSummary?: {
+    status?: string | null;
+    eventType?: string | null;
+    description?: string | null;
+    eventTimestamp?: string | null;
+    sourceFileName?: string | null;
+    sourceFileDate?: string | null;
+    location?: string | null;
+    trackingNumber?: string | null;
+    stale?: boolean | null;
+    issue?: string | null;
+  } | null;
 }
 
 interface ShippingPanelProps {
@@ -191,6 +203,12 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
             const trackingUrl = shipment.trackingNumber
               ? getTrackingUrl(shipment.carrier, shipment.trackingNumber)
               : null;
+            const fedExSummary = shipment.fedExStatusSummary;
+            const fedExStatusText =
+              fedExSummary?.issue && !fedExSummary.status
+                ? 'Tracking reference unresolved'
+                : fedExSummary?.status ?? fedExSummary?.eventType ?? null;
+            const fedExLocationText = fedExSummary?.location ?? 'No Address Found';
 
             return (
               <div
@@ -278,6 +296,22 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
                     {shipment.notes && (
                       <div className="text-xs text-gray-600 mt-1">
                         Notes: {shipment.notes}
+                      </div>
+                    )}
+
+                    {fedExSummary && (
+                      <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                        <div className="font-medium">
+                          {fedExStatusText ?? 'No FedEx status found'}
+                        </div>
+                        <div className="mt-0.5">
+                          Last scan location: {fedExLocationText}
+                        </div>
+                        {fedExSummary.issue && (
+                          <div className="mt-0.5 text-amber-800">
+                            Issue: {fedExSummary.issue}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

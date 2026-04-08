@@ -184,6 +184,7 @@ type FedExStatusSummary = {
   location: string | null;
   trackingNumber: string | null;
   stale: boolean | null;
+  issue: string | null;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -242,6 +243,27 @@ function formatFedExStatusLabel(value: string | null): string | null {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function extractFedExLookupIssue(rawData: unknown): string | null {
+  const root = asRecord(rawData);
+  const response = asRecord(root.response);
+  const output = asRecord(response.output);
+  const completeTrackResults = Array.isArray(output.completeTrackResults) ? output.completeTrackResults : [];
+
+  for (const completeTrackResult of completeTrackResults) {
+    const trackResultRecord = asRecord(completeTrackResult);
+    const trackResults = Array.isArray(trackResultRecord.trackResults) ? trackResultRecord.trackResults : [];
+    for (const trackResult of trackResults) {
+      const error = asRecord(asRecord(trackResult).error);
+      const message = pickString(error, ['message', 'code']);
+      if (message) {
+        return message;
+      }
+    }
+  }
+
+  return pickString(root, ['issue', 'error', 'message', 'warning']);
+}
+
 function resolveFedExStatusSummary(shipment: ShipmentReadShape): FedExStatusSummary | null {
   const latestFedExApiEvent = shipment.trackingEvents?.find(
     (event) => event.sourceSystem?.toLowerCase() === 'fedex_api'
@@ -281,6 +303,7 @@ function resolveFedExStatusSummary(shipment: ShipmentReadShape): FedExStatusSumm
         normalizeTrackingNumber(shipment.workOrder?.fedExShipmentRecords?.[0]?.trackingNumber) ??
         null,
       stale: isStale,
+      issue: null,
     };
   }
 
@@ -291,6 +314,7 @@ function resolveFedExStatusSummary(shipment: ShipmentReadShape): FedExStatusSumm
 
   const rawRecord = asRecord(latestRecord.rawData);
   const rawRow = asRecord(rawRecord.row);
+  const lookupIssue = extractFedExLookupIssue(rawRecord);
   const status = formatFedExStatusLabel(
     pickString(rawRow, [
       'status',
@@ -369,6 +393,9 @@ function resolveFedExStatusSummary(shipment: ShipmentReadShape): FedExStatusSumm
     location,
     trackingNumber: normalizeTrackingNumber(latestRecord.trackingNumber),
     stale: false,
+    issue:
+      lookupIssue ??
+      (!location ? 'No Address Found' : null),
   };
 }
 

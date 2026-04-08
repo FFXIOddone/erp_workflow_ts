@@ -105,6 +105,7 @@ Import row used by the FedEx shipments browser and reconciliation tools.
 - If the FedEx Track API has live status, use it for the current shipment state and preferred location/status fields.
 - If API data and legacy import rows disagree, prefer the API snapshot for the shipment summary and detail panels.
 - Keep label / Ship Manager import rows as reconciliation evidence, not the visible truth, unless no API data exists yet.
+- If the API or legacy lookup cannot find an address, show the problem explicitly as `No Address Found` or the returned lookup error instead of inventing a destination.
 - If the shipments browser shows sandbox data, label it clearly as sandbox so it is not mistaken for live shipment truth.
 - If a service code is numeric or shorthand, normalize it before display.
 

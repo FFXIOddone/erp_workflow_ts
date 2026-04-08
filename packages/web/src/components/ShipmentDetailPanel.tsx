@@ -51,6 +51,7 @@ interface FedExStatusSummary {
   location?: string | null;
   trackingNumber?: string | null;
   stale?: boolean | null;
+  issue?: string | null;
 }
 
 interface ShipmentDetail {
@@ -207,6 +208,11 @@ export function ShipmentDetailPanel({
     ? getTrackingUrl(shipment.carrier, shipment.trackingNumber)
     : null;
   const fedExSummary = useMemo(() => resolveFedExSummary(shipment), [shipment]);
+  const fedExStatusText =
+    fedExSummary?.issue && !fedExSummary.status
+      ? 'Tracking reference unresolved'
+      : fedExSummary?.status ?? fedExSummary?.eventType ?? 'Available';
+  const fedExLocationText = fedExSummary?.location ?? 'No Address Found';
   const trackingEvents = useMemo(
     () =>
       [...(shipment?.trackingEvents ?? [])].sort((a, b) =>
@@ -312,7 +318,7 @@ export function ShipmentDetailPanel({
                 <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-blue-900 sm:grid-cols-2">
                   <div>
                     <span className="font-medium">Status:</span>{' '}
-                    {fedExSummary.status ?? fedExSummary.eventType ?? 'Available'}
+                    {fedExStatusText}
                   </div>
                   {fedExSummary.eventTimestamp && (
                     <div>
@@ -325,9 +331,12 @@ export function ShipmentDetailPanel({
                       <span className="font-medium">Details:</span> {fedExSummary.description}
                     </div>
                   )}
-                  {fedExSummary.location && (
+                  <div className="sm:col-span-2">
+                    <span className="font-medium">Last scan location:</span> {fedExLocationText}
+                  </div>
+                  {fedExSummary.issue && (
                     <div className="sm:col-span-2">
-                      <span className="font-medium">Last scan location:</span> {fedExSummary.location}
+                      <span className="font-medium">Issue:</span> {fedExSummary.issue}
                     </div>
                   )}
                   {(fedExSummary.sourceFileName || fedExSummary.sourceFileDate) && (

@@ -72,4 +72,44 @@ describe('resolveShipmentReadCorrections', () => {
     expect(corrected.carrier).toBe(Carrier.OTHER);
     expect(corrected.status).toBe(ShipmentStatus.PICKED_UP);
   });
+
+  it('surfaces a FedEx lookup issue when the reference number cannot be found', () => {
+    const corrected = resolveShipmentReadCorrections({
+      id: 'shipment-4',
+      carrier: Carrier.FEDEX,
+      status: ShipmentStatus.IN_TRANSIT,
+      workOrder: {
+        status: 'SHIPPED',
+        fedExShipmentRecords: [
+          {
+            trackingNumber: 'PO421',
+            importedAt: new Date('2026-04-08T17:43:06Z'),
+            rawData: {
+              response: {
+                output: {
+                  completeTrackResults: [
+                    {
+                      trackResults: [
+                        {
+                          error: {
+                            code: 'TRACKING.REFERENCENUMBER.NOTFOUND',
+                            message: 'Reference number cannot be found. Please correct the reference number and try again.',
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(corrected.fedExStatusSummary?.issue).toBe(
+      'Reference number cannot be found. Please correct the reference number and try again.'
+    );
+    expect(corrected.fedExStatusSummary?.location).toBeNull();
+  });
 });
