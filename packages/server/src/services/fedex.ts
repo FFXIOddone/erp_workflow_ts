@@ -618,6 +618,13 @@ async function resolveFedExWorkOrderByExactCandidate(candidate: string): Promise
   return null;
 }
 
+export function resolveUniqueShipmentWorkOrderId(
+  shipments: Array<{ workOrderId: string | null | undefined }>
+): string | null {
+  const uniqueWorkOrderIds = uniqueStrings(shipments.map((shipment) => shipment.workOrderId));
+  return uniqueWorkOrderIds.length === 1 ? uniqueWorkOrderIds[0] : null;
+}
+
 function getFedExMatchTerms(record: FedExShipmentRecordInput): string[] {
   const addressParts = [
     record.destinationAddressLine1,
@@ -780,7 +787,7 @@ async function resolveFedExWorkOrderId(record: FedExShipmentRecordInput): Promis
   }
 
   if (record.trackingNumber) {
-    const shipment = await prisma.shipment.findFirst({
+    const shipments = await prisma.shipment.findMany({
       where: {
         trackingNumber: record.trackingNumber,
       },
@@ -789,8 +796,9 @@ async function resolveFedExWorkOrderId(record: FedExShipmentRecordInput): Promis
       },
     });
 
-    if (shipment?.workOrderId) {
-      return shipment.workOrderId;
+    const shipmentWorkOrderId = resolveUniqueShipmentWorkOrderId(shipments);
+    if (shipmentWorkOrderId) {
+      return shipmentWorkOrderId;
     }
   }
 

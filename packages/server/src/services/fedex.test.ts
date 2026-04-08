@@ -9,6 +9,7 @@ import {
   parseFedExLogFile,
   parseFedExShipmentExportCsv,
   parseFedExShipmentDetailReport,
+  resolveUniqueShipmentWorkOrderId,
 } from './fedex.js';
 
 const tempFiles: string[] = [];
@@ -88,7 +89,7 @@ TRACKING #       ACT WG Service Type Desc                        C NET     LNET
     expect(records[0]).toMatchObject({
       sourceFileName: 'KF Ground.txt',
       trackingNumber: '495213067555',
-      service: 'FedEx Ground Service',
+      service: 'Ground',
       recipientCompanyName: 'Kwik-Fill S0214',
       recipientContactName: 'STORE MANAGER',
       destinationAddressLine1: '4994 Mahoning Ave.',
@@ -117,7 +118,7 @@ TRACKING #       ACT WG Service Type Desc                        C NET     LNET
     expect(records[0]).toMatchObject({
       sourceFileName: 'shipments_2026-03-26_1100.csv',
       trackingNumber: '805941978240',
-      service: 'FedEx Ground Service',
+      service: 'Ground',
       recipientCompanyName: 'URC (M0029)',
       recipientContactName: 'STORE MANAGER',
       destinationAddressLine1: '123 Main St.',
@@ -143,5 +144,21 @@ TRACKING #       ACT WG Service Type Desc                        C NET     LNET
     });
 
     expect(candidates).toContain('64359');
+  });
+
+  it('does not resolve ambiguous shipment tracking ownership', () => {
+    expect(
+      resolveUniqueShipmentWorkOrderId([
+        { workOrderId: 'wo-1' },
+        { workOrderId: 'wo-2' },
+      ])
+    ).toBeNull();
+
+    expect(
+      resolveUniqueShipmentWorkOrderId([
+        { workOrderId: 'wo-1' },
+        { workOrderId: 'wo-1' },
+      ])
+    ).toBe('wo-1');
   });
 });
