@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import type { FedExShipmentRecord, Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
+import { formatTrackingLocation, normalizeTrackingNumber } from './shipment-tracking.js';
 
 const FEDEX_LOG_FILE_PREFIX = 'FxLogSr';
 const FEDEX_LOG_FILE_REGEX = /^FxLogSr(\d{8})\.xml$/i;
@@ -71,6 +72,16 @@ export type FedExShipmentRecordWithWorkOrder = FedExShipmentRecord & {
     orderNumber: string;
     customerName: string;
   } | null;
+  locationLabel: string | null;
+  latestStatus: string | null;
+  latestStatusCode: string | null;
+  latestDescription: string | null;
+};
+
+export type FedExShipmentSummaryRecord = FedExShipmentRecordWithWorkOrder & {
+  recordCount: number;
+  workOrderCount: number;
+  linkedWorkOrderCount: number;
 };
 
 type FedExShipmentRecordRow = {
@@ -115,8 +126,32 @@ export interface FedExShipmentSyncResult {
   warnings: string[];
 }
 
+export interface FedExShipmentHistorySyncResult {
+  status: 'synced' | 'missing' | 'empty';
+  totalFiles: number;
+  sourceFileNames: string[];
+  totalRecords: number;
+  imported: number;
+  updated: number;
+  skipped: number;
+  backfill: {
+    linkedRecords: number;
+    updatedRecords: number;
+    updatedShipments: number;
+  } | null;
+  warnings: string[];
+}
+
 export interface FedExShipmentRecordPage {
   items: FedExShipmentRecordWithWorkOrder[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface FedExShipmentSummaryPage {
+  items: FedExShipmentSummaryRecord[];
   total: number;
   page: number;
   pageSize: number;
@@ -167,6 +202,59 @@ function splitMatchTerms(value: string | null | undefined): string[] {
     .filter((token) => token.length >= 3);
 
   return uniqueStrings([normalized, ...tokens]);
+}
+
+const FEDEX_SERVICE_LABEL_BY_CODE: Record<string, string> = {
+  '01': 'Priority Overnight',
+  '03': '2Day',
+  '05': 'Standard Overnight',
+  '06': 'First Overnight',
+  '20': 'Express Saver',
+  '22': 'Next Day by 9:00 AM',
+  '23': 'Next Day by 10 a.m.',
+  '24': 'Next Day by 12 noon',
+  '25': 'Next Day',
+  '26': 'FedEx Economy',
+  '32': '1Day Freight',
+  '39': 'First Overnight Freight',
+  '49': '2Day AM',
+  '70': '1Day Freight',
+  '80': '2Day Freight',
+  '83': '3Day Freight',
+  '90': 'Home Delivery',
+  '92': 'Ground',
+  SB: 'Ground Economy Bound Printed Matter',
+  SL: 'Ground Economy Parcel Select Lightweight',
+  SM: 'Ground Economy Media',
+  SP: 'Ground Economy Parcel Select',
+  SR: 'Ground Economy Returns',
+};
+
+const FEDEX_SERVICE_LABEL_ALIASES: Record<string, string> = {
+  'FEDEX GROUND': 'Ground',
+  'FEDEX GROUND SERVICE': 'Ground',
+  'FEDEX FREIGHT PRIORITY': 'Freight Priority',
+  'FEDEX FREIGHT ECONOMY': 'Freight Economy',
+  'FEDEX HOME DELIVERY': 'Home Delivery',
+  'FEDEX EXPRESS SAVER': 'Express Saver',
+  'GROUND SERVICE': 'Ground',
+};
+
+export function normalizeFedExServiceLabel(service: string | null | undefined): string | null {
+  const trimmed = service?.trim() ?? '';
+  if (!trimmed) {
+    return null;
+  }
+
+  const unquoted = trimmed.replace(/^['"]+|['"]+$/g, '').trim();
+  if (!unquoted) {
+    return null;
+  }
+
+  const collapsed = unquoted.replace(/\s+/g, ' ');
+  const code = collapsed.toUpperCase();
+
+  return FEDEX_SERVICE_LABEL_BY_CODE[code] ?? FEDEX_SERVICE_LABEL_ALIASES[code] ?? collapsed;
 }
 
 type FedExWorkOrderCandidate = {
@@ -454,10 +542,18 @@ export function extractFedExWorkOrderCandidates(rawData: Record<string, unknown>
     'ref3',
     'po',
     'wo',
+    'packageidentifier',
+    'packageidentifiers',
+    'trackingnumberuniqueid',
   ];
 
   const visit = (value: unknown, keyPath: string[] = []): void => {
     if (typeof value === 'string') {
+      const normalizedLeafKey = normalizeFedExHeaderKey(keyPath[keyPath.length - 1] ?? '');
+      if (normalizedLeafKey === 'type') {
+        return;
+      }
+
       const normalizedKeyPath = normalizeFedExHeaderKey(keyPath.join(' '));
       if (!keyHints.some((hint) => normalizedKeyPath.includes(hint))) {
         return;
@@ -794,8 +890,9 @@ function buildRecordFromBlock(block: string, fileName: string, sourceFileDate: D
   const fields = extractFieldMap(payload);
   const eventTimestamp = extractEventTimestamp(decodedBlock);
 
-  const trackingNumber = fields.FDXPSP_I_TRACKING_NUMBER?.trim() ?? null;
-  const service = fields.FDXPSP_I_SERVICE?.trim() ?? null;
+  const rawTrackingNumber = fields.FDXPSP_I_TRACKING_NUMBER?.trim() ?? null;
+  const trackingNumber = normalizeTrackingNumber(rawTrackingNumber);
+  const service = normalizeFedExServiceLabel(fields.FDXPSP_I_SERVICE);
   const recipientCompanyName = fields.FDXPSP_I_RECIPIENT_COMPANY_NAME?.trim() ?? null;
   const recipientContactName = fields.FDXPSP_I_RECIPIENT_CONTACT_NAME?.trim() ?? null;
   const destinationAddressLine1 = fields.FDXPSP_I_DEST_ADDRESS_LINE1?.trim() ?? null;
@@ -813,12 +910,18 @@ function buildRecordFromBlock(block: string, fileName: string, sourceFileDate: D
     fields.FDXPSP_I_DEST_COUNTRY_CODE?.trim() ??
     fields.FDXPSP_I_DEST_COUNTRY?.trim() ??
     null;
+  const locationLabel = formatTrackingLocation({
+    city: destinationCity,
+    state: destinationState,
+    zip: destinationPostalCode,
+    country: destinationCountry,
+  });
 
   const sourceKey = hashRecordSource([
     fileName,
     sourceFileDate.toISOString(),
     eventTimestamp?.toISOString() ?? '',
-    trackingNumber ?? '',
+    rawTrackingNumber ?? '',
     recipientCompanyName ?? '',
     destinationAddressLine1 ?? '',
     destinationCity ?? '',
@@ -849,6 +952,7 @@ function buildRecordFromBlock(block: string, fileName: string, sourceFileDate: D
       sourceFilePath,
       sourceFileDate: sourceFileDate.toISOString(),
       eventTimestamp: eventTimestamp?.toISOString() ?? null,
+      locationLabel,
     },
   };
 }
@@ -1020,6 +1124,37 @@ export async function resolveFedExLogFile(date = new Date()): Promise<FedExLogRe
   return null;
 }
 
+export async function resolveFedExShipmentLogFiles(rootPaths = getFedExLogRoots()): Promise<string[]> {
+  const candidates = new Map<string, number>();
+
+  for (const rootPath of rootPaths) {
+    let entries: import('fs').Dirent[] = [];
+    try {
+      entries = await fs.readdir(rootPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !FEDEX_LOG_FILE_REGEX.test(entry.name)) {
+        continue;
+      }
+
+      const filePath = path.win32.join(rootPath, entry.name);
+      try {
+        const stats = await fs.stat(filePath);
+        candidates.set(filePath, stats.mtimeMs);
+      } catch {
+        // Skip files we cannot inspect in the current environment.
+      }
+    }
+  }
+
+  return [...candidates.entries()]
+    .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))
+    .map(([filePath]) => filePath);
+}
+
 export async function parseFedExLogFile(filePath: string): Promise<FedExShipmentRecordInput[]> {
   const fileName = path.win32.basename(filePath);
   const sourceFileDate = parseDateFromFileName(fileName) ?? new Date();
@@ -1117,26 +1252,33 @@ export async function parseFedExShipmentDetailReport(filePath: string): Promise<
     }
 
     const recipientLine = lines[index + 1]?.trimEnd() ?? '';
-    const recipient = parseFedExShipmentReportRecipientLine(recipientLine);
-    if (!recipient) {
-      continue;
-    }
+  const recipient = parseFedExShipmentReportRecipientLine(recipientLine);
+  if (!recipient) {
+    continue;
+  }
 
-    const trackingNumber = trackingMatch[1].trim();
-    const service = trackingMatch[3].trim();
+    const rawTrackingNumber = trackingMatch[1].trim();
+    const trackingNumber = normalizeTrackingNumber(rawTrackingNumber);
+    const service = normalizeFedExServiceLabel(trackingMatch[3]);
     const rawPayload = `${reportLine.trimEnd()}\n${recipientLine.trimEnd()}`.trim();
+    const locationLabel = formatTrackingLocation({
+      city: recipient.destinationCity,
+      state: recipient.destinationState,
+      zip: recipient.destinationPostalCode,
+      country: null,
+    });
 
     const sourceKey = hashRecordSource([
       fileName,
       sourceFileDate.toISOString(),
-      trackingNumber,
+      rawTrackingNumber,
       recipient.recipientCompanyName ?? '',
       recipient.recipientContactName ?? '',
       recipient.destinationAddressLine1 ?? '',
       recipient.destinationCity ?? '',
       recipient.destinationState ?? '',
       recipient.destinationPostalCode ?? '',
-      service,
+      service ?? '',
       rawPayload,
     ]);
 
@@ -1163,6 +1305,7 @@ export async function parseFedExShipmentDetailReport(filePath: string): Promise<
         sourceFilePath: filePath,
         sourceFileDate: sourceFileDate.toISOString(),
         sourceType: 'shipment_detail_report',
+        locationLabel,
       },
     });
 
@@ -1228,25 +1371,27 @@ export async function parseFedExShipmentExportCsv(filePath: string): Promise<Fed
   const records: FedExShipmentRecordInput[] = [];
 
   for (const row of rows) {
-    const trackingNumber =
+    const rawTrackingNumber =
       pickFedExRowValue(row, [
         'tracking number',
         'tracking #',
         'tracking#',
         'tracking',
       ]) ?? null;
+    const trackingNumber = normalizeTrackingNumber(rawTrackingNumber);
 
     if (!trackingNumber) {
       continue;
     }
 
-    const service =
+    const service = normalizeFedExServiceLabel(
       pickFedExRowValue(row, [
         'service type desc',
         'service type description',
         'service type',
         'service',
-      ]) ?? null;
+      ]) ?? null
+    );
 
     const recipientCompanyName =
       pickFedExRowValue(row, [
@@ -1309,6 +1454,12 @@ export async function parseFedExShipmentExportCsv(filePath: string): Promise<Fed
       pickFedExRowValue(row, [
         'country',
       ]) ?? null;
+    const locationLabel = formatTrackingLocation({
+      city: destinationCity,
+      state: destinationState,
+      zip: destinationPostalCode,
+      country: destinationCountry,
+    });
 
     const eventTimestamp =
       parseFedExCsvRowDate(
@@ -1330,7 +1481,7 @@ export async function parseFedExShipmentExportCsv(filePath: string): Promise<Fed
       fileName,
       sourceFileDate.toISOString(),
       eventTimestamp?.toISOString() ?? '',
-      trackingNumber,
+      rawTrackingNumber ?? '',
       recipientCompanyName ?? '',
       recipientContactName ?? '',
       destinationAddressLine1 ?? '',
@@ -1364,6 +1515,7 @@ export async function parseFedExShipmentExportCsv(filePath: string): Promise<Fed
         sourceFileDate: sourceFileDate.toISOString(),
         eventTimestamp: eventTimestamp?.toISOString() ?? null,
         sourceType: 'shipment_export_csv',
+        locationLabel,
       },
     });
   }
@@ -1443,8 +1595,8 @@ function mapFedExShipmentRecordRowToInput(row: FedExShipmentRecordRow): FedExShi
     sourceFilePath: row.sourceFilePath,
     sourceFileDate: row.sourceFileDate,
     eventTimestamp: row.eventTimestamp,
-    trackingNumber: row.trackingNumber,
-    service: row.service,
+    trackingNumber: normalizeTrackingNumber(row.trackingNumber),
+    service: normalizeFedExServiceLabel(row.service),
     recipientCompanyName: row.recipientCompanyName,
     recipientContactName: row.recipientContactName,
     destinationAddressLine1: row.destinationAddressLine1,
@@ -1456,6 +1608,224 @@ function mapFedExShipmentRecordRowToInput(row: FedExShipmentRecordRow): FedExShi
     sourceKey: row.sourceKey,
     rawPayload: row.rawPayload,
     rawData: (row.rawData ?? {}) as Record<string, unknown>,
+  };
+}
+
+interface FedExShipmentRecordLocationSource {
+  rawData: unknown;
+  destinationAddressLine1?: string | null;
+  destinationCity?: string | null;
+  destinationState?: string | null;
+  destinationPostalCode?: string | null;
+  destinationCountry?: string | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function pickString(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== 'string') {
+      continue;
+    }
+    const trimmed = value.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return null;
+}
+
+function resolveFedExShipmentRecordStatus(rawData: unknown): {
+  latestStatus: string | null;
+  latestStatusCode: string | null;
+  latestDescription: string | null;
+} {
+  const root = asRecord(rawData);
+  const row = asRecord(root.row);
+
+  const latestStatus =
+    pickString(root, ['status', 'shipmentStatus', 'trackingStatus', 'deliveryStatus']) ??
+    pickString(row, ['status', 'shipment status', 'tracking status', 'delivery status']) ??
+    null;
+
+  const latestStatusCode =
+    pickString(root, ['code', 'statusCode']) ??
+    pickString(row, ['eventType', 'event type', 'code']) ??
+    null;
+
+  const latestDescription =
+    pickString(root, ['description', 'message']) ??
+    pickString(row, ['description', 'status description', 'event description']) ??
+    null;
+
+  return {
+    latestStatus,
+    latestStatusCode,
+    latestDescription,
+  };
+}
+
+export function resolveFedExShipmentRecordLocationLabel(
+  record: FedExShipmentRecordLocationSource
+): string | null {
+  const rawLocation = formatTrackingLocation(record.rawData);
+  if (rawLocation) {
+    return rawLocation;
+  }
+
+  const fallbackParts = [
+    record.destinationAddressLine1,
+    record.destinationCity,
+    record.destinationState,
+    record.destinationPostalCode,
+    record.destinationCountry,
+  ].filter((part): part is string => Boolean(part?.trim()));
+
+  return fallbackParts.length > 0 ? fallbackParts.join(', ') : null;
+}
+
+function normalizeFedExShipmentRecordPageItem<T extends { trackingNumber: string | null; service: string | null } & FedExShipmentRecordLocationSource>(
+  item: T
+): T & {
+  locationLabel: string | null;
+  latestStatus: string | null;
+  latestStatusCode: string | null;
+  latestDescription: string | null;
+} {
+  const statusMeta = resolveFedExShipmentRecordStatus(item.rawData);
+  return {
+    ...item,
+    trackingNumber: normalizeTrackingNumber(item.trackingNumber),
+    service: normalizeFedExServiceLabel(item.service),
+    locationLabel: resolveFedExShipmentRecordLocationLabel(item),
+    latestStatus: statusMeta.latestStatus,
+    latestStatusCode: statusMeta.latestStatusCode,
+    latestDescription: statusMeta.latestDescription,
+  };
+}
+
+export async function repairFedExTrackingNumberFormatting(options: {
+  dryRun?: boolean;
+} = {}): Promise<{
+  status: 'synced' | 'empty';
+  updatedFedExRecords: number;
+  updatedShipments: number;
+  warnings: string[];
+}> {
+  const warnings: string[] = [];
+
+  const [fedExRecords, shipments] = await Promise.all([
+    prisma.fedExShipmentRecord.findMany({
+      where: {
+        trackingNumber: { not: null },
+      },
+      select: {
+        id: true,
+        trackingNumber: true,
+      },
+    }),
+    prisma.shipment.findMany({
+      where: {
+        trackingNumber: { not: null },
+      },
+      select: {
+        id: true,
+        trackingNumber: true,
+      },
+    }),
+  ]);
+
+  let updatedFedExRecords = 0;
+  for (const record of fedExRecords) {
+    const normalizedTrackingNumber = normalizeTrackingNumber(record.trackingNumber);
+    if (!normalizedTrackingNumber || normalizedTrackingNumber === record.trackingNumber) {
+      continue;
+    }
+
+    if (!options.dryRun) {
+      await prisma.fedExShipmentRecord.update({
+        where: { id: record.id },
+        data: { trackingNumber: normalizedTrackingNumber },
+      });
+    }
+    updatedFedExRecords += 1;
+  }
+
+  let updatedShipments = 0;
+  for (const shipment of shipments) {
+    const normalizedTrackingNumber = normalizeTrackingNumber(shipment.trackingNumber);
+    if (!normalizedTrackingNumber || normalizedTrackingNumber === shipment.trackingNumber) {
+      continue;
+    }
+
+    if (!options.dryRun) {
+      await prisma.shipment.update({
+        where: { id: shipment.id },
+        data: { trackingNumber: normalizedTrackingNumber },
+      });
+    }
+    updatedShipments += 1;
+  }
+
+  if (updatedFedExRecords === 0 && updatedShipments === 0) {
+    warnings.push('No quoted or whitespace-padded FedEx tracking numbers were found to normalize.');
+  }
+
+  return {
+    status: updatedFedExRecords > 0 || updatedShipments > 0 ? 'synced' : 'empty',
+    updatedFedExRecords,
+    updatedShipments,
+    warnings,
+  };
+}
+
+export async function repairFedExServiceFormatting(options: {
+  dryRun?: boolean;
+} = {}): Promise<{
+  status: 'synced' | 'empty';
+  updatedFedExRecords: number;
+  warnings: string[];
+}> {
+  const warnings: string[] = [];
+
+  const fedExRecords = await prisma.fedExShipmentRecord.findMany({
+    where: {
+      service: { not: null },
+    },
+    select: {
+      id: true,
+      service: true,
+    },
+  });
+
+  let updatedFedExRecords = 0;
+  for (const record of fedExRecords) {
+    const normalizedService = normalizeFedExServiceLabel(record.service);
+    if (!normalizedService || normalizedService === record.service) {
+      continue;
+    }
+
+    if (!options.dryRun) {
+      await prisma.fedExShipmentRecord.update({
+        where: { id: record.id },
+        data: { service: normalizedService },
+      });
+    }
+    updatedFedExRecords += 1;
+  }
+
+  if (updatedFedExRecords === 0) {
+    warnings.push('No FedEx shipment record service labels needed normalization.');
+  }
+
+  return {
+    status: updatedFedExRecords > 0 ? 'synced' : 'empty',
+    updatedFedExRecords,
+    warnings,
   };
 }
 
@@ -1691,6 +2061,72 @@ export async function syncFedExShipmentRecords(options: {
 
   lastFedExSync = result;
   return result;
+}
+
+export async function syncFedExShipmentHistory(options: {
+  rootPaths?: string[];
+  dryRun?: boolean;
+} = {}): Promise<FedExShipmentHistorySyncResult> {
+  const warnings: string[] = [];
+  const filePaths = await resolveFedExShipmentLogFiles(options.rootPaths ?? getFedExLogRoots());
+
+  if (filePaths.length === 0) {
+    return {
+      status: 'missing',
+      totalFiles: 0,
+      sourceFileNames: [],
+      totalRecords: 0,
+      imported: 0,
+      updated: 0,
+      skipped: 0,
+      backfill: null,
+      warnings: ['No FedEx log files were found.'],
+    };
+  }
+
+  let totalRecords = 0;
+  let imported = 0;
+  let updated = 0;
+  let skipped = 0;
+  const sourceFileNames: string[] = [];
+
+  for (const filePath of filePaths) {
+    const result = await syncFedExShipmentRecords({
+      filePath,
+      dryRun: options.dryRun,
+    });
+
+    totalRecords += result.totalRecords;
+    imported += result.imported;
+    updated += result.updated;
+    skipped += result.skipped;
+    if (result.sourceFileName) {
+      sourceFileNames.push(result.sourceFileName);
+    }
+    warnings.push(...result.warnings);
+  }
+
+  const backfill = options.dryRun
+    ? null
+    : await backfillFedExShipmentTrackingFromDatabase();
+
+  if (backfill && (backfill.updatedRecords > 0 || backfill.updatedShipments > 0)) {
+    console.log(
+      `FedEx history backfill: ${backfill.linkedRecords} linked, ${backfill.updatedRecords} records updated, ${backfill.updatedShipments} shipment rows updated`
+    );
+  }
+
+  return {
+    status: totalRecords > 0 ? 'synced' : 'empty',
+    totalFiles: filePaths.length,
+    sourceFileNames,
+    totalRecords,
+    imported,
+    updated,
+    skipped,
+    backfill,
+    warnings,
+  };
 }
 
 export async function syncFedExShipmentReports(options: {
@@ -1971,19 +2407,25 @@ export async function syncFedExShipmentExports(options: {
   return result;
 }
 
-export async function listFedExShipmentRecords(
-  query: FedExShipmentQuery = {}
-): Promise<FedExShipmentRecordPage> {
-  const page = Math.max(1, query.page ?? 1);
-  const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 25));
+function buildFedExShipmentRecordWhere(
+  query: FedExShipmentQuery = {},
+  options: { requireTrackingNumber?: boolean } = {}
+): Prisma.FedExShipmentRecordWhereInput {
+  const andConditions: Prisma.FedExShipmentRecordWhereInput[] = [];
 
-  const where: Prisma.FedExShipmentRecordWhereInput = {};
+  if (options.requireTrackingNumber) {
+    andConditions.push({
+      trackingNumber: { not: null },
+    });
+  }
 
   if (query.trackingNumber) {
-    where.trackingNumber = {
-      contains: query.trackingNumber,
-      mode: 'insensitive',
-    };
+    andConditions.push({
+      trackingNumber: {
+        contains: query.trackingNumber,
+        mode: 'insensitive',
+      },
+    });
   }
 
   if (query.search) {
@@ -1995,7 +2437,7 @@ export async function listFedExShipmentRecords(
       'destinationCity',
     ]);
     if (searchWhere) {
-      Object.assign(where, searchWhere);
+      andConditions.push(searchWhere);
     }
   }
 
@@ -2007,8 +2449,84 @@ export async function listFedExShipmentRecords(
     if (query.toDate) {
       dateFilter.lte = query.toDate;
     }
-    where.sourceFileDate = dateFilter;
+    andConditions.push({
+      sourceFileDate: dateFilter,
+    });
   }
+
+  if (andConditions.length === 0) {
+    return {};
+  }
+
+  if (andConditions.length === 1) {
+    return andConditions[0];
+  }
+
+  return {
+    AND: andConditions,
+  };
+}
+
+export function summarizeFedExShipmentRecords(
+  records: Array<
+    FedExShipmentRecord & {
+      workOrder: {
+        id: string;
+        orderNumber: string;
+        customerName: string;
+      } | null;
+    }
+  >
+): FedExShipmentSummaryRecord[] {
+  const groupedByTracking = new Map<
+    string,
+    { summary: FedExShipmentSummaryRecord; workOrderIds: Set<string> }
+  >();
+
+  for (const record of records) {
+    const normalizedRecord = normalizeFedExShipmentRecordPageItem(record);
+    const trackingNumber = normalizeTrackingNumber(normalizedRecord.trackingNumber);
+    if (!trackingNumber) {
+      continue;
+    }
+
+    const existingGroup = groupedByTracking.get(trackingNumber);
+    if (existingGroup) {
+      existingGroup.summary.recordCount += 1;
+      if (normalizedRecord.workOrder?.id) {
+        existingGroup.workOrderIds.add(normalizedRecord.workOrder.id);
+      }
+      existingGroup.summary.workOrderCount = existingGroup.workOrderIds.size;
+      existingGroup.summary.linkedWorkOrderCount = existingGroup.workOrderIds.size;
+      continue;
+    }
+
+    const workOrderIds = new Set<string>();
+    if (normalizedRecord.workOrder?.id) {
+      workOrderIds.add(normalizedRecord.workOrder.id);
+    }
+
+    groupedByTracking.set(trackingNumber, {
+      summary: {
+        ...normalizedRecord,
+        trackingNumber,
+        recordCount: 1,
+        workOrderCount: workOrderIds.size,
+        linkedWorkOrderCount: workOrderIds.size,
+      },
+      workOrderIds,
+    });
+  }
+
+  return [...groupedByTracking.values()].map((group) => group.summary);
+}
+
+export async function listFedExShipmentRecords(
+  query: FedExShipmentQuery = {}
+): Promise<FedExShipmentRecordPage> {
+  const page = Math.max(1, query.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 25));
+  const where = buildFedExShipmentRecordWhere(query);
 
   const [items, total] = await Promise.all([
     prisma.fedExShipmentRecord.findMany({
@@ -2028,6 +2546,42 @@ export async function listFedExShipmentRecords(
     }),
     prisma.fedExShipmentRecord.count({ where }),
   ]);
+
+  return {
+    items: items.map(normalizeFedExShipmentRecordPageItem),
+    total,
+    page,
+    pageSize,
+    totalPages: Math.ceil(total / pageSize),
+  };
+}
+
+export async function listFedExShipmentSummaries(
+  query: FedExShipmentQuery = {}
+): Promise<FedExShipmentSummaryPage> {
+  const page = Math.max(1, query.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, query.pageSize ?? 25));
+  const where = buildFedExShipmentRecordWhere(query, {
+    requireTrackingNumber: true,
+  });
+
+  const records = await prisma.fedExShipmentRecord.findMany({
+    where,
+    orderBy: [{ sourceFileDate: 'desc' }, { eventTimestamp: 'desc' }, { importedAt: 'desc' }],
+    include: {
+      workOrder: {
+        select: {
+          id: true,
+          orderNumber: true,
+          customerName: true,
+        },
+      },
+    },
+  });
+
+  const grouped = summarizeFedExShipmentRecords(records);
+  const total = grouped.length;
+  const items = grouped.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
 
   return {
     items,
