@@ -108,6 +108,122 @@ describe('normalizeFedExServiceLabel', () => {
 });
 
 describe('summarizeFedExShipmentRecords', () => {
+  it('prefers API snapshot rows over legacy import rows for shipment summaries', () => {
+    const sourceFileDate = new Date('2026-04-08T12:00:00.000Z');
+    const makeRecord = (overrides: Record<string, unknown>) =>
+      ({
+        id: 'record-default',
+        sourceFileName: 'fedex_api_track',
+        sourceFilePath: 'https://apis.fedex.com',
+        sourceFileDate,
+        eventTimestamp: sourceFileDate,
+        trackingNumber: '495213069146',
+        service: 'Ground',
+        recipientCompanyName: 'FedEx API',
+        recipientContactName: null,
+        destinationAddressLine1: null,
+        destinationCity: 'East Syracuse',
+        destinationState: 'NY',
+        destinationPostalCode: '13057',
+        destinationCountry: 'US',
+        workOrderId: 'wo-1',
+        sourceKey: 'source-key-default',
+        rawPayload: '{}',
+        rawData: {
+          sourceBaseUrl: 'https://apis.fedex.com',
+          row: {
+            status: 'Delivered',
+            eventType: 'DL',
+            description: 'Delivered',
+            eventTimestamp: sourceFileDate.toISOString(),
+            city: 'East Syracuse',
+            state: 'NY',
+            zip: '13057',
+            country: 'US',
+          },
+          events: [],
+        },
+        importedAt: sourceFileDate,
+        updatedAt: sourceFileDate,
+        workOrder: {
+          id: 'wo-1',
+          orderNumber: '64524',
+          customerName: 'Pribusin',
+        },
+        ...overrides,
+      }) as any;
+
+    const summaries = summarizeFedExShipmentRecords([
+      makeRecord({
+        id: 'legacy-row',
+        sourceKey: 'source-key-legacy',
+        sourceFileName: 'KF Ground.txt',
+        sourceFilePath: '\\\\192.168.254.131\\Users\\Shipping1\\OneDrive - Wilde Signs\\Desktop\\KF Ground.txt',
+        sourceFileDate: new Date('2026-04-06T12:00:00.000Z'),
+        eventTimestamp: new Date('2026-04-06T12:00:00.000Z'),
+        trackingNumber: '495213069146',
+        recipientCompanyName: 'Kwik-Fill M0367',
+        recipientContactName: 'STORE MANAGER',
+        destinationAddressLine1: '7078 Manlius Center',
+        destinationCity: 'EAST SYRACUSE',
+        destinationState: 'NY',
+        destinationPostalCode: '13057',
+        destinationCountry: 'US',
+        rawData: {
+          row: {
+            status: 'Delivered',
+            eventType: 'DL',
+            description: 'Delivered to recipient',
+          },
+        },
+      }),
+      makeRecord({
+        id: 'api-row',
+        sourceKey: 'source-key-api',
+        sourceFileName: 'fedex_api_track',
+        sourceFilePath: 'https://apis.fedex.com',
+        sourceFileDate: new Date('2026-04-08T12:00:00.000Z'),
+        eventTimestamp: new Date('2026-04-08T12:00:00.000Z'),
+        trackingNumber: '495213069146',
+        recipientCompanyName: 'FedEx API',
+        recipientContactName: null,
+        destinationAddressLine1: null,
+        destinationCity: 'East Syracuse',
+        destinationState: 'NY',
+        destinationPostalCode: '13057',
+        destinationCountry: 'US',
+        rawData: {
+          sourceBaseUrl: 'https://apis.fedex.com',
+          row: {
+            status: 'Delivered',
+            eventType: 'DL',
+            description: 'Delivered',
+            eventTimestamp: sourceFileDate.toISOString(),
+            city: 'East Syracuse',
+            state: 'NY',
+            zip: '13057',
+            country: 'US',
+          },
+          events: [],
+        },
+      }),
+    ]);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      id: 'api-row',
+      trackingNumber: '495213069146',
+      recordCount: 2,
+      workOrderCount: 1,
+      service: 'Ground',
+      latestStatus: 'Delivered',
+      latestStatusCode: 'DL',
+      latestDescription: 'Delivered',
+      sourceFileName: 'fedex_api_track',
+      sourceFilePath: 'https://apis.fedex.com',
+    });
+  });
+
   it('groups records by normalized tracking number and reports record/work-order counts', () => {
     const sourceFileDate = new Date('2026-04-08T12:00:00.000Z');
     const makeRecord = (overrides: Record<string, unknown>) =>

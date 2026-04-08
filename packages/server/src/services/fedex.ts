@@ -1708,6 +1708,64 @@ function normalizeFedExShipmentRecordPageItem<T extends { trackingNumber: string
   };
 }
 
+function isFedExApiShipmentRecord(
+  item: {
+    sourceFileName: string;
+    sourceFilePath: string | null;
+    rawData: unknown;
+  }
+): boolean {
+  const sourceName = item.sourceFileName.trim().toLowerCase();
+  const sourcePath = item.sourceFilePath?.trim().toLowerCase() ?? '';
+  const rawData = asRecord(item.rawData);
+  const sourceBaseUrl = typeof rawData.sourceBaseUrl === 'string' ? rawData.sourceBaseUrl.trim().toLowerCase() : '';
+
+  return (
+    sourceName.startsWith('fedex_api') ||
+    sourcePath.includes('apis.fedex.com') ||
+    sourcePath.includes('apis-sandbox.fedex.com') ||
+    sourceBaseUrl.includes('apis.fedex.com') ||
+    sourceBaseUrl.includes('apis-sandbox.fedex.com')
+  );
+}
+
+type FedExShipmentSummaryCandidate = {
+  id: string;
+  sourceFileName: string;
+  sourceFilePath: string | null;
+  rawData: unknown;
+  sourceFileDate: Date;
+  eventTimestamp: Date | null;
+  importedAt: Date;
+};
+
+function compareFedExShipmentSummaryCandidates(
+  left: FedExShipmentSummaryCandidate,
+  right: FedExShipmentSummaryCandidate
+): number {
+  const leftIsApi = isFedExApiShipmentRecord(left);
+  const rightIsApi = isFedExApiShipmentRecord(right);
+
+  if (leftIsApi !== rightIsApi) {
+    return leftIsApi ? 1 : -1;
+  }
+
+  const leftTimestamp = left.eventTimestamp?.getTime() ?? left.sourceFileDate.getTime() ?? left.importedAt.getTime();
+  const rightTimestamp = right.eventTimestamp?.getTime() ?? right.sourceFileDate.getTime() ?? right.importedAt.getTime();
+
+  if (leftTimestamp !== rightTimestamp) {
+    return leftTimestamp - rightTimestamp;
+  }
+
+  const leftImportedAt = left.importedAt.getTime();
+  const rightImportedAt = right.importedAt.getTime();
+  if (leftImportedAt !== rightImportedAt) {
+    return leftImportedAt - rightImportedAt;
+  }
+
+  return 0;
+}
+
 export async function repairFedExTrackingNumberFormatting(options: {
   dryRun?: boolean;
 } = {}): Promise<{
@@ -2498,6 +2556,19 @@ export function summarizeFedExShipmentRecords(
       }
       existingGroup.summary.workOrderCount = existingGroup.workOrderIds.size;
       existingGroup.summary.linkedWorkOrderCount = existingGroup.workOrderIds.size;
+      if (
+        compareFedExShipmentSummaryCandidates(
+          existingGroup.summary,
+          normalizedRecord as FedExShipmentSummaryCandidate
+        ) < 0
+      ) {
+        existingGroup.summary = {
+          ...normalizedRecord,
+          recordCount: existingGroup.summary.recordCount,
+          workOrderCount: existingGroup.workOrderIds.size,
+          linkedWorkOrderCount: existingGroup.workOrderIds.size,
+        };
+      }
       continue;
     }
 

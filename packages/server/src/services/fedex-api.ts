@@ -964,6 +964,8 @@ export async function syncFedExTrackingForShipment(
           rawData: rawData as Prisma.InputJsonValue,
         },
         update: {
+          sourceFileName: sourceType,
+          sourceFilePath: snapshot.sourceBaseUrl,
           sourceFileDate: snapshot.fetchedAt,
           eventTimestamp: snapshot.latestEventTimestamp,
           trackingNumber: snapshot.trackingNumber,

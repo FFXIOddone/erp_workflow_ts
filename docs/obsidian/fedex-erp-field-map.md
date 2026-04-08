@@ -10,9 +10,9 @@ This note shows how FedEx shipment data flows into the ERP, what each field mean
 
 ## Data Source Priority
 
-1. Shipment label / Ship Manager import rows are the source of truth for tracking number, recipient, destination, and service.
-2. FedEx Track API is the source of truth for live shipment status and scan history.
-3. ERP shipment rows cache the linked record for fast reads in the UI.
+1. FedEx Track API is the source of truth for live shipment status, scan history, and the canonical shipment snapshot now that production API access is live.
+2. ERP shipment rows cache that API snapshot for fast reads in the UI.
+3. Shipment label / Ship Manager import rows are legacy fallback evidence only, used when API data is temporarily unavailable or a shipment has not yet been refreshed.
 
 ## Live Tracking Snapshot -> ERP
 
@@ -102,8 +102,9 @@ Import row used by the FedEx shipments browser and reconciliation tools.
 ## Trust Rules
 
 - If tracking number exists, use it first.
-- If the FedEx Track API has live status, use it for the current shipment state.
-- If a label row and live status disagree on destination, prefer the label row for destination and the Track API for status.
+- If the FedEx Track API has live status, use it for the current shipment state and preferred location/status fields.
+- If API data and legacy import rows disagree, prefer the API snapshot for the shipment summary and detail panels.
+- Keep label / Ship Manager import rows as reconciliation evidence, not the visible truth, unless no API data exists yet.
 - If the shipments browser shows sandbox data, label it clearly as sandbox so it is not mistaken for live shipment truth.
 - If a service code is numeric or shorthand, normalize it before display.
 
@@ -113,4 +114,3 @@ Import row used by the FedEx shipments browser and reconciliation tools.
 - It does not mean number of orders.
 - It does not mean number of packages.
 - It only means how many scan events FedEx returned for that tracking number.
-
