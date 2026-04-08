@@ -21,7 +21,7 @@ describe('resolveFedExShipmentRecordLocationLabel', () => {
     ).toBe('Muskegon, MI, US');
   });
 
-  it('falls back to destination fields when no scan location is present', () => {
+  it('does not fall back to destination fields when no scan location is present', () => {
     expect(
       resolveFedExShipmentRecordLocationLabel({
         rawData: null,
@@ -31,7 +31,7 @@ describe('resolveFedExShipmentRecordLocationLabel', () => {
         destinationPostalCode: '49503',
         destinationCountry: 'US',
       })
-    ).toBe('123 Main St, Grand Rapids, MI, 49503, US');
+    ).toBeNull();
   });
 });
 
@@ -221,6 +221,73 @@ describe('summarizeFedExShipmentRecords', () => {
       latestDescription: 'Delivered',
       sourceFileName: 'fedex_api_track',
       sourceFilePath: 'https://apis.fedex.com',
+    });
+  });
+
+  it('surfaces FedEx lookup issues from raw API payloads', () => {
+    const sourceFileDate = new Date('2026-04-08T12:00:00.000Z');
+    const summaries = summarizeFedExShipmentRecords([
+      {
+        id: 'issue-row',
+        sourceFileName: 'fedex_api_reference_track',
+        sourceFilePath: 'https://apis.fedex.com',
+        sourceFileDate,
+        eventTimestamp: sourceFileDate,
+        trackingNumber: 'PO421',
+        service: 'Ground',
+        recipientCompanyName: 'Mastertag',
+        recipientContactName: null,
+        destinationAddressLine1: null,
+        destinationCity: null,
+        destinationState: null,
+        destinationPostalCode: null,
+        destinationCountry: null,
+        workOrderId: 'wo-1',
+        sourceKey: 'source-key-issue',
+        rawPayload: '{}',
+        rawData: {
+          sourceBaseUrl: 'https://apis.fedex.com',
+          lookup: {
+            type: 'CUSTOMER_REFERENCE',
+            value: 'PO421',
+          },
+          response: {
+            output: {
+              completeTrackResults: [
+                {
+                  trackResults: [
+                    {
+                      error: {
+                        code: 'TRACKING.REFERENCENUMBER.NOTFOUND',
+                        message: 'Reference number cannot be found. Please correct the reference number and try again.',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          row: {
+            status: null,
+            eventType: null,
+            description: null,
+          },
+        },
+        importedAt: sourceFileDate,
+        updatedAt: sourceFileDate,
+        workOrder: {
+          id: 'wo-1',
+          orderNumber: '64586',
+          customerName: 'Mastertag',
+        },
+      } as any,
+    ]);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      trackingNumber: 'PO421',
+      issue: 'Reference number cannot be found. Please correct the reference number and try again.',
+      locationLabel: null,
     });
   });
 

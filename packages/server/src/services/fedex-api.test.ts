@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { collectFedExReferenceCandidates, resolveFedExApiBaseUrl } from './fedex-api.js';
+import {
+  collectFedExReferenceCandidates,
+  isLikelyFedExTrackingNumber,
+  resolveFedExApiBaseUrl,
+} from './fedex-api.js';
 
 describe('collectFedExReferenceCandidates', () => {
   it('builds reference lookups from normal order fields', () => {
@@ -65,5 +69,13 @@ describe('resolveFedExApiBaseUrl', () => {
     expect(resolveFedExApiBaseUrl('production')).toBe('https://apis.fedex.com');
     expect(resolveFedExApiBaseUrl('prod')).toBe('https://apis.fedex.com');
     expect(resolveFedExApiBaseUrl('https://apis.fedex.com/')).toBe('https://apis.fedex.com');
+  });
+});
+
+describe('isLikelyFedExTrackingNumber', () => {
+  it('distinguishes numeric tracking numbers from PO-style references', () => {
+    expect(isLikelyFedExTrackingNumber('495213069146')).toBe(true);
+    expect(isLikelyFedExTrackingNumber('PO421')).toBe(false);
+    expect(isLikelyFedExTrackingNumber(' 495213069146 ')).toBe(true);
   });
 });

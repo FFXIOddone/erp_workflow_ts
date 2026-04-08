@@ -76,6 +76,7 @@ export type FedExShipmentRecordWithWorkOrder = FedExShipmentRecord & {
   latestStatus: string | null;
   latestStatusCode: string | null;
   latestDescription: string | null;
+  issue: string | null;
 };
 
 export type FedExShipmentSummaryRecord = FedExShipmentRecordWithWorkOrder & {
@@ -1669,23 +1670,43 @@ function resolveFedExShipmentRecordStatus(rawData: unknown): {
   };
 }
 
+function resolveFedExShipmentRecordIssue(rawData: unknown): string | null {
+  const root = asRecord(rawData);
+  const response = asRecord(root.response);
+  const output = asRecord(response.output);
+  const completeTrackResults = Array.isArray(output.completeTrackResults) ? output.completeTrackResults : [];
+
+  for (const completeTrackResult of completeTrackResults) {
+    const trackResultRecord = asRecord(completeTrackResult);
+    const trackResults = Array.isArray(trackResultRecord.trackResults) ? trackResultRecord.trackResults : [];
+    for (const trackResult of trackResults) {
+      const error = asRecord(asRecord(trackResult).error);
+      const message = pickString(error, ['message', 'code']);
+      if (message) {
+        return message;
+      }
+    }
+  }
+
+  return pickString(root, ['issue', 'error', 'message', 'warning']);
+}
+
 export function resolveFedExShipmentRecordLocationLabel(
   record: FedExShipmentRecordLocationSource
 ): string | null {
-  const rawLocation = formatTrackingLocation(record.rawData);
-  if (rawLocation) {
-    return rawLocation;
+  const rawData = asRecord(record.rawData);
+  const rawRow = asRecord(rawData.row);
+  const scanLocation =
+    formatTrackingLocation(rawData.location) ??
+    formatTrackingLocation(rawData.scanLocation) ??
+    formatTrackingLocation(rawRow.location) ??
+    formatTrackingLocation(rawRow.scanLocation);
+
+  if (scanLocation) {
+    return scanLocation;
   }
 
-  const fallbackParts = [
-    record.destinationAddressLine1,
-    record.destinationCity,
-    record.destinationState,
-    record.destinationPostalCode,
-    record.destinationCountry,
-  ].filter((part): part is string => Boolean(part?.trim()));
-
-  return fallbackParts.length > 0 ? fallbackParts.join(', ') : null;
+  return pickString(rawData, ['locationLabel']) ?? pickString(rawRow, ['locationLabel']) ?? null;
 }
 
 function normalizeFedExShipmentRecordPageItem<T extends { trackingNumber: string | null; service: string | null } & FedExShipmentRecordLocationSource>(
@@ -1695,6 +1716,7 @@ function normalizeFedExShipmentRecordPageItem<T extends { trackingNumber: string
   latestStatus: string | null;
   latestStatusCode: string | null;
   latestDescription: string | null;
+  issue: string | null;
 } {
   const statusMeta = resolveFedExShipmentRecordStatus(item.rawData);
   return {
@@ -1705,6 +1727,7 @@ function normalizeFedExShipmentRecordPageItem<T extends { trackingNumber: string
     latestStatus: statusMeta.latestStatus,
     latestStatusCode: statusMeta.latestStatusCode,
     latestDescription: statusMeta.latestDescription,
+    issue: resolveFedExShipmentRecordIssue(item.rawData),
   };
 }
 

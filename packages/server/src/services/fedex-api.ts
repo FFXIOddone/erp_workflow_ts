@@ -188,6 +188,50 @@ function normalizeFedExReferenceValue(value: string | null | undefined): string 
   return normalized.length > 0 ? normalized : null;
 }
 
+export function isLikelyFedExTrackingNumber(value: string | null | undefined): boolean {
+  const normalized = normalizeTrackingNumber(value);
+  return Boolean(normalized && /^\d{12,22}$/.test(normalized));
+}
+
+function isFedExTrackLookupNoResultError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes('FedEx Track returned no track result') ||
+    message.includes('TRACKING.TRACKNOTFOUND') ||
+    message.includes('TRACKING.TRACKINGNUMBER.NOTFOUND') ||
+    message.includes('TRACKING.NUMBER.NOTFOUND')
+  );
+}
+
+function buildFedExReferenceCandidateFromTrackingNumber(
+  shipment: Pick<FedExShipmentSyncContext, 'shipDate' | 'workOrder'>,
+  trackingNumber: string | null | undefined
+): FedExReferenceLookup | null {
+  const normalizedValue = normalizeFedExReferenceValue(trackingNumber);
+  if (!normalizedValue || isLikelyFedExTrackingNumber(normalizedValue)) {
+    return null;
+  }
+
+  const { shipDateBegin, shipDateEnd } = buildFedExDateWindow(shipment.shipDate);
+  const destinationCountryCode = normalizeFedExCountryCode(
+    shipment.workOrder?.company?.country ?? shipment.workOrder?.customer?.country ?? null
+  );
+  const destinationPostalCode = normalizeFedExPostalCode(
+    shipment.workOrder?.company?.zipCode ?? shipment.workOrder?.customer?.zipCode ?? null
+  );
+
+  return {
+    type: normalizedValue.toUpperCase().startsWith('PO')
+      ? 'PURCHASE_ORDER'
+      : 'CUSTOMER_REFERENCE',
+    value: normalizedValue,
+    shipDateBegin,
+    shipDateEnd,
+    destinationCountryCode,
+    destinationPostalCode,
+  };
+}
+
 function normalizeFedExCountryCode(value: string | null | undefined): string | null {
   const normalized = value?.trim().toUpperCase() ?? '';
   if (!normalized) {
@@ -775,9 +819,22 @@ export async function syncFedExTrackingForShipment(
     }
 
     const normalizedTrackingNumber = resolveShipmentTrackingNumber(shipment);
+    const trackingNumberLooksLikelyFedEx = isLikelyFedExTrackingNumber(normalizedTrackingNumber);
     let snapshot: FedExTrackingSnapshot | null = null;
     let lookupMode: 'tracking' | 'reference' = 'tracking';
     let referenceCandidate: FedExReferenceLookup | null = null;
+    let trackingLookupIssue: string | null = null;
+    const referenceCandidates = isFedExShipmentCarrierEligible(shipment.carrier)
+      ? collectFedExReferenceCandidates(shipment)
+      : [];
+    const trackingReferenceCandidate = buildFedExReferenceCandidateFromTrackingNumber(
+      shipment,
+      normalizedTrackingNumber
+    );
+
+    if (trackingReferenceCandidate) {
+      referenceCandidates.unshift(trackingReferenceCandidate);
+    }
 
     if (!options.force) {
       const lastSyncedAt = shipment.trackingEvents[0]?.createdAt ?? null;
@@ -797,11 +854,21 @@ export async function syncFedExTrackingForShipment(
       }
     }
 
-    if (normalizedTrackingNumber) {
-      snapshot = await fetchFedExTrackingSnapshot(normalizedTrackingNumber, {
-        force: options.force,
-      });
-    } else {
+    if (normalizedTrackingNumber && trackingNumberLooksLikelyFedEx) {
+      try {
+        snapshot = await fetchFedExTrackingSnapshot(normalizedTrackingNumber, {
+          force: options.force,
+        });
+      } catch (error) {
+        if (!isFedExTrackLookupNoResultError(error)) {
+          throw error;
+        }
+
+        trackingLookupIssue = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    if (!snapshot) {
       if (!isFedExShipmentCarrierEligible(shipment.carrier)) {
         return {
           shipmentId,
@@ -817,7 +884,6 @@ export async function syncFedExTrackingForShipment(
         };
       }
 
-      const referenceCandidates = collectFedExReferenceCandidates(shipment);
       for (const candidate of referenceCandidates) {
         try {
           snapshot = await fetchFedExTrackingSnapshotByReference(candidate, {
@@ -843,11 +909,15 @@ export async function syncFedExTrackingForShipment(
       if (!snapshot) {
         return {
           shipmentId,
-          trackingNumber: null,
+          trackingNumber: normalizedTrackingNumber ?? null,
           status: 'missing_tracking',
-          reason: referenceCandidates.length > 0
-            ? 'FedEx reference lookup did not find a unique match'
-            : 'Shipment has no tracking number or FedEx reference candidates',
+          reason:
+            trackingLookupIssue ??
+            (referenceCandidates.length > 0
+              ? 'FedEx reference lookup did not find a unique match'
+              : normalizedTrackingNumber && !trackingNumberLooksLikelyFedEx
+                ? 'Tracking number does not look like a FedEx tracking number'
+                : 'Shipment has no tracking number or FedEx reference candidates'),
           shipmentStatus: shipment.status,
           actualDelivery: shipment.actualDelivery,
           carrier: shipment.carrier,

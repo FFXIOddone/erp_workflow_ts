@@ -24,6 +24,7 @@ interface FedExShipmentRecord {
   latestScanLocation: string | null;
   latestStatusCode: string | null;
   latestStatus: string | null;
+  issue: string | null;
   recordCount: number | null;
   linkedWorkOrderCount: number | null;
   recipientCompanyName: string | null;
@@ -189,6 +190,10 @@ function normalizeFedExShipmentRecord(raw: unknown, index: number): FedExShipmen
       asString(source.status) ??
       asString(latestRecord.latestStatus) ??
       asString(latestRecord.status),
+    issue:
+      asString(source.issue) ??
+      asString(source.latestIssue) ??
+      asString(latestRecord.issue),
     recordCount:
       asNumber(source.recordCount) ??
       asNumber(source.rawRecordCount) ??
@@ -479,6 +484,7 @@ export function FedExShipmentsPanel(): JSX.Element {
                   record.workOrder?.customerName ??
                   'Recipient not available';
                 const scanLocation = record.latestScanLocation?.trim() || null;
+                const issue = record.issue?.trim() || null;
                 const statusLabel = record.latestStatus?.trim() || null;
                 const logDateLabel = record.sourceFileDate ? formatDate(record.sourceFileDate) : 'Not recorded';
                 const hasCounts = record.recordCount !== null || record.linkedWorkOrderCount !== null;
@@ -515,9 +521,12 @@ export function FedExShipmentsPanel(): JSX.Element {
                         <div className="font-medium text-gray-900">{recipient}</div>
                         {scanLocation ? (
                           <div className="text-sm text-gray-900">Last scan: {scanLocation}</div>
+                        ) : issue ? (
+                          <div className="text-sm text-amber-700">No Address Found</div>
                         ) : (
                           <div className="text-sm text-gray-400">Location not recorded</div>
                         )}
+                        {issue ? <div className="text-xs text-amber-700">Issue: {issue}</div> : null}
                       </div>
                     </td>
                     <td className="px-6 py-4 align-top">
@@ -546,6 +555,8 @@ export function FedExShipmentsPanel(): JSX.Element {
                             Status: {statusLabel}
                             {record.latestStatusCode ? ` (${record.latestStatusCode})` : ''}
                           </div>
+                        ) : issue ? (
+                          <div className="text-xs text-amber-700">Status not available</div>
                         ) : (
                           <div className="text-xs text-gray-400">Status not available</div>
                         )}
