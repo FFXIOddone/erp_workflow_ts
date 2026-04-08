@@ -141,17 +141,10 @@ impl PrinterMonitor {
     }
 
     async fn poll_snmp(&self, config: &PrinterConfig, _ip: &str, _community: &str) -> Result<PrinterStatus> {
-        // SNMP polling would go here
-        // For now, return a placeholder
-        Ok(PrinterStatus {
-            name: config.name.clone(),
-            printer_type: config.printer_type,
-            status: PrinterState::Ready,
-            current_job: None,
-            queue_length: 0,
-            ink_levels: None,
-            media_remaining: None,
-        })
+        Err(CoreError::Api(format!(
+            "SNMP printer polling is not implemented for {} yet",
+            config.name
+        )))
     }
 
     async fn poll_jdf(&self, config: &PrinterConfig, url: &str) -> Result<PrinterStatus> {
@@ -210,5 +203,29 @@ impl PrinterMonitor {
             ink_levels: None,
             media_remaining: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn snmp_polling_reports_unimplemented_instead_of_fake_ready() {
+        let monitor = PrinterMonitor::new(vec![PrinterConfig {
+            id: "printer-1".to_string(),
+            name: "HP Latex 570".to_string(),
+            printer_type: PrinterType::HpLatex,
+            connection: PrinterConnection::Snmp {
+                ip: "192.168.254.10".to_string(),
+                community: "public".to_string(),
+            },
+        }]);
+
+        let results = monitor.poll_all().await;
+
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0].status, PrinterState::Offline));
+        assert_eq!(results[0].name, "HP Latex 570");
     }
 }
