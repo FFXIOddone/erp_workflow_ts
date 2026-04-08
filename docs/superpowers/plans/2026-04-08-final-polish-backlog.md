@@ -7,10 +7,10 @@ Close the remaining polish gaps in the ERP without duplicating the already-compl
 
 ## Slices
 - [x] Replace the `PrinterMonitor` SNMP placeholder in `packages/wilde-core` with an explicit unsupported/error path so it never reports a false "Ready" state.
-- [ ] Fix the `OrdersPage` advanced filter crash by normalizing the users payload before the dropdown renders.
-- [ ] Fix the Shop Floor station-selection crash by normalizing order and station payloads before array methods are used.
-- [ ] Repair the Subcontractors page 400 error so the page loads cleanly and shows a useful empty/error state.
-- [ ] Replace missing PWA icon references with valid assets and correct manifest file types.
+- [x] Fix the `OrdersPage` advanced filter crash by normalizing the users payload before the dropdown renders.
+- [x] Fix the Shop Floor station-selection crash by normalizing order and station payloads before array methods are used.
+- [x] Repair the Subcontractors page 400 error so the page loads cleanly and shows a useful empty/error state.
+- [x] Replace missing PWA icon references with valid assets and correct manifest file types.
 - [ ] Remove the Activity page count flash and show a stable loading placeholder until stats arrive.
 - [ ] Ensure Job Costing never shows `Invalid Date` for the last-calculated value.
 - [ ] Audit user-facing `Unknown` fallbacks across the web app and replace them with context-specific copy.

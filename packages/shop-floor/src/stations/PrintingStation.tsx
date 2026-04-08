@@ -637,6 +637,7 @@ export function PrintingStation() {
   const [sendingBatchRip, setSendingBatchRip] = useState(false);
   const fetchRef = useRef<() => void>();
   const operationsFetchRef = useRef<() => void>();
+  const safeOrders = Array.isArray(orders) ? orders : [];
 
   // Determine user's print stations
   const userStations = useMemo(() => {
@@ -948,7 +949,7 @@ export function PrintingStation() {
     > = {} as any;
 
     userStations.forEach((station) => {
-      const stationOrders = orders.filter((o) => getOrderPrintStations(o).includes(station));
+      const stationOrders = safeOrders.filter((o) => getOrderPrintStations(o).includes(station));
       const s = {
         notStarted: 0,
         inProgress: 0,
@@ -966,10 +967,10 @@ export function PrintingStation() {
       stats[station] = s;
     });
     return stats;
-  }, [orders, userStations]);
+  }, [safeOrders, userStations]);
 
   const filteredOrders = useMemo(() => {
-    let filtered = orders;
+    let filtered = safeOrders;
 
     if (selectedStation !== 'ALL') {
       filtered = filtered.filter((o) => getOrderPrintStations(o).includes(selectedStation));
@@ -1006,7 +1007,7 @@ export function PrintingStation() {
       const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
       return aDate - bDate;
     });
-  }, [orders, selectedStation, showCompleted, userStations]);
+  }, [safeOrders, selectedStation, showCompleted, userStations]);
 
   const groupedOrders = useMemo(() => {
     if (selectedStation === 'ALL') return { all: filteredOrders };
@@ -1587,7 +1588,7 @@ export function PrintingStation() {
 
   // ─── Main Render ────────────────────────────────────
 
-  if (loading && orders.length === 0) {
+  if (loading && safeOrders.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
         <RefreshCw className="w-8 h-8 animate-spin text-gray-400" />
@@ -1979,7 +1980,7 @@ export function PrintingStation() {
             operationsLoading={operationsLoading}
             onRefresh={fetchPrintingOperations}
             onSendToRip={(order) => {
-              const matchedOrder = orders.find((o) => o.id === order.id);
+              const matchedOrder = safeOrders.find((o) => o.id === order.id);
               if (matchedOrder) openSendToRipModal(matchedOrder);
             }}
           />

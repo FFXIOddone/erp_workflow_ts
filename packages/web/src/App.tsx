@@ -38,6 +38,9 @@ const TemplatesPage = lazy(() =>
 const CompaniesPage = lazy(() =>
   import('./pages/CompaniesPage').then((m) => ({ default: m.CompaniesPage }))
 );
+const SubcontractorsPage = lazy(() =>
+  import('./pages/SubcontractorsPage').then((m) => ({ default: m.SubcontractorsPage }))
+);
 const CompanyDetailPage = lazy(() =>
   import('./pages/CompanyDetailPage').then((m) => ({ default: m.CompanyDetailPage }))
 );
@@ -268,6 +271,14 @@ function App() {
               element={
                 <ErrorBoundary>
                   <CompaniesPage />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="subcontractors"
+              element={
+                <ErrorBoundary>
+                  <SubcontractorsPage />
                 </ErrorBoundary>
               }
             />

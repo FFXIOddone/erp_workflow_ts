@@ -445,6 +445,7 @@ export function ProductionStation() {
   } | null>(null);
 
   const { subscribe } = useWebSocket();
+  const safeOrders = Array.isArray(orders) ? orders : [];
 
   const fetchOrders = useCallback(async () => {
     if (!token) return;
@@ -600,7 +601,7 @@ export function ProductionStation() {
   }, []);
 
   const expandedOrder = expandedId
-    ? (orders.find((order) => order.id === expandedId) ?? null)
+    ? (safeOrders.find((order) => order.id === expandedId) ?? null)
     : null;
 
   useEffect(() => {
@@ -610,11 +611,11 @@ export function ProductionStation() {
   }, [fetchOrders]);
 
   useEffect(() => {
-    if (orders.length === 0) {
+    if (safeOrders.length === 0) {
       return;
     }
 
-    const missingIds = orders
+    const missingIds = safeOrders
       .filter((order) => !linkedDataByOrderId[order.id])
       .map((order) => order.id);
 
@@ -623,7 +624,7 @@ export function ProductionStation() {
     }
 
     void Promise.all(missingIds.map((orderId) => loadLinkedData(orderId, { silent: true })));
-  }, [linkedDataByOrderId, loadLinkedData, orders]);
+  }, [linkedDataByOrderId, loadLinkedData, safeOrders]);
 
   useEffect(() => {
     const unsubscribe = subscribe((msg) => {
@@ -933,14 +934,14 @@ export function ProductionStation() {
 
   const productionOrders = useMemo(
     () =>
-      orders.filter((order) => {
+      safeOrders.filter((order) => {
         const all = [
           ...(order.routing ?? []),
           ...(order.stationProgress ?? []).map((sp) => sp.station),
         ];
         return all.some((station) => PRODUCTION_SIDE_STATIONS.includes(station));
       }),
-    [orders],
+    [safeOrders],
   );
 
   const filtered = useMemo(() => {

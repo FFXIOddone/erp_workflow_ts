@@ -386,7 +386,7 @@ export const useNotificationStore = create<NotificationState & NotificationActio
           if (categoryPrefs?.push && prefs.browserPushEnabled && get().pushPermission === 'granted') {
             new Notification(notification.title, {
               body: notification.message,
-              icon: '/icons/icon-192x192.png',
+              icon: '/icons/icon-192x192.svg',
               tag: newNotification.id,
             });
           }

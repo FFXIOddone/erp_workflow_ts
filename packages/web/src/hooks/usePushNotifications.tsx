@@ -55,8 +55,8 @@ interface PushSubscriptionJSON {
 
 const PUSH_PUBLIC_KEY = import.meta.env.VITE_PUSH_PUBLIC_KEY || '';
 const SW_PATH = '/sw.js';
-const DEFAULT_ICON = '/icons/icon-192x192.png';
-const DEFAULT_BADGE = '/icons/badge-72x72.png';
+const DEFAULT_ICON = '/icons/icon-192x192.svg';
+const DEFAULT_BADGE = '/icons/icon-192x192.svg';
 
 // ============================================================================
 // Utility Functions

@@ -113,11 +113,23 @@ export function OrdersPage() {
     queryKey: ['users', 'filter-list'],
     queryFn: async () => {
       const response = await api.get('/users');
-      const data = response.data.data;
-      return Array.isArray(data) ? data : (data?.items || []);
+      const data = response.data?.data;
+      const rawUsers: unknown[] = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+      return rawUsers.filter((user: unknown): user is { id: string; displayName: string } => {
+        return Boolean(
+          user &&
+            typeof user === 'object' &&
+            typeof (user as Record<string, unknown>).id === 'string' &&
+            typeof (user as Record<string, unknown>).displayName === 'string'
+        );
+      });
     },
     staleTime: 10 * 60 * 1000, // Users rarely change
   });
+  const filterUsers = useMemo(
+    () => (Array.isArray(usersData) ? usersData : []),
+    [usersData]
+  );
   
   const activeFilterCount = [
     statusFilter,
@@ -526,7 +538,7 @@ export function OrdersPage() {
                       className="w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                     >
                       <option value="">Anyone</option>
-                      {usersData.map((u) => (
+                      {filterUsers.map((u) => (
                         <option key={u.id} value={u.id}>{u.displayName}</option>
                       ))}
                     </select>
@@ -876,7 +888,7 @@ export function OrdersPage() {
       <BulkActionsToolbar
         selectedIds={Array.from(selectedIds)}
         onClear={clearSelection}
-        users={usersData ?? []}
+        users={filterUsers}
       />
 
       {showLabelPrint && (
