@@ -49,8 +49,7 @@ import {
   Circle,
   ArrowRight,
 } from 'lucide-react';
-import { PrintingMethod, StationStatus } from '@erp/shared';
-import { STATION_DISPLAY_NAMES } from '@erp/shared';
+import { PrintingMethod, StationStatus, STATION_DISPLAY_NAMES, getStationColorTheme, getStationStateStyle } from '@erp/shared';
 
 // ============================================================
 // Types
@@ -123,6 +122,12 @@ export interface WsStationUpdate {
 // ============================================================
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+
+function toProgressState(status: StationStatus): 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' {
+  if (status === StationStatus.COMPLETED) return 'COMPLETED';
+  if (status === StationStatus.IN_PROGRESS) return 'IN_PROGRESS';
+  return 'NOT_STARTED';
+}
 
 function useConnectionPulse(status: ConnectionStatus) {
   const [pulse, setPulse] = useState(false);
@@ -301,51 +306,53 @@ export function StationCard({
   const displayName = station.displayName || STATION_DISPLAY_NAMES[station.name] || station.name;
   const activeJob = station.activeJobs[0];
   const hasActiveWork = station.status === StationStatus.IN_PROGRESS && activeJob;
-  
-  const statusColors = {
-    [StationStatus.NOT_STARTED]: 'border-gray-200 dark:border-gray-700',
-    [StationStatus.IN_PROGRESS]: 'border-blue-500 dark:border-blue-400',
-    [StationStatus.COMPLETED]: 'border-green-500 dark:border-green-400',
-  };
-  
-  const statusBadgeColors = {
-    [StationStatus.NOT_STARTED]: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
-    [StationStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-    [StationStatus.COMPLETED]: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  };
+  const theme = getStationColorTheme(station.name);
+  const stateStyle = getStationStateStyle(station.name, toProgressState(station.status));
   
   return (
     <div
       onClick={onClick}
       className={clsx(
-        'bg-white dark:bg-gray-800 rounded-xl border-2 transition-all duration-200',
-        statusColors[station.status],
+        'rounded-xl border-2 transition-all duration-200',
         onClick && 'cursor-pointer hover:shadow-lg hover:-translate-y-0.5',
-        hasActiveWork && 'ring-2 ring-blue-500/20',
+        hasActiveWork && 'ring-2',
         className
       )}
+      style={{
+        backgroundColor: stateStyle.backgroundColor,
+        borderColor: stateStyle.borderColor,
+      }}
     >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+      <div className="px-4 py-3 border-b border-white/20">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div
               className={clsx(
                 'w-10 h-10 rounded-lg flex items-center justify-center',
-                hasActiveWork ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'
+                hasActiveWork ? 'shadow-sm' : 'shadow-none'
               )}
+              style={{
+                backgroundColor: theme.subStationLevel > 0 ? theme.softColor : theme.solidColor,
+                color: theme.subStationLevel > 0 ? theme.softTextColor : theme.solidTextColor,
+              }}
             >
               <Activity className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-gray-900 dark:text-white">
+              <h3 className="font-semibold" style={{ color: stateStyle.color }}>
                 {displayName}
               </h3>
               <span
                 className={clsx(
                   'inline-block text-xs font-medium px-2 py-0.5 rounded-full',
-                  statusBadgeColors[station.status]
+                  'border'
                 )}
+                style={{
+                  backgroundColor: stateStyle.backgroundColor,
+                  color: stateStyle.color,
+                  borderColor: stateStyle.borderColor,
+                }}
               >
                 {station.status === StationStatus.IN_PROGRESS ? 'Active' : 
                  station.status === StationStatus.COMPLETED ? 'Complete' : 'Idle'}
@@ -365,14 +372,19 @@ export function StationCard({
       
       {/* Active Job */}
       {hasActiveWork && activeJob && (
-        <div className="px-4 py-3 bg-blue-50/50 dark:bg-blue-900/10">
+        <div
+          className="px-4 py-3"
+          style={{
+            background: theme.subStationLevel > 0 ? theme.gradientColor : theme.softColor,
+          }}
+        >
           <ActiveJobDisplay job={activeJob} compact={compact} />
         </div>
       )}
       
       {/* Operators */}
       {station.operators.length > 0 && (
-        <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+        <div className="px-4 py-3 border-b border-white/20">
           <OperatorList operators={station.operators} />
         </div>
       )}
@@ -401,8 +413,8 @@ export function StationCard({
       
       {/* Alerts */}
       {station.alerts && station.alerts.length > 0 && (
-        <div className="px-4 py-2 bg-yellow-50 dark:bg-yellow-900/20 border-t border-yellow-100 dark:border-yellow-800">
-          <div className="flex items-center gap-2 text-sm text-yellow-700 dark:text-yellow-400">
+        <div className="px-4 py-2 border-t border-white/20" style={{ backgroundColor: theme.softColor }}>
+          <div className="flex items-center gap-2 text-sm" style={{ color: theme.softTextColor }}>
             <AlertTriangle className="w-4 h-4" />
             <span>{station.alerts[0].message}</span>
             {station.alerts.length > 1 && (
@@ -638,32 +650,35 @@ export function StationTimeline({ stations, currentStationId, className }: Stati
         const isCurrent = station.id === currentStationId;
         const isComplete = station.status === StationStatus.COMPLETED;
         const isActive = station.status === StationStatus.IN_PROGRESS;
+        const theme = getStationColorTheme(station.name);
+        const stateStyle = getStationStateStyle(station.name, toProgressState(station.status));
+        const chipBackground = theme.subStationLevel > 0 ? theme.gradientColor : stateStyle.backgroundColor;
+        const chipBorder = theme.subStationLevel > 0 ? theme.gradientBorderColor : stateStyle.borderColor;
+        const chipText = theme.subStationLevel > 0 ? theme.gradientTextColor : stateStyle.color;
         
         return (
           <React.Fragment key={station.id}>
             {index > 0 && (
               <ArrowRight
-                className={clsx(
-                  'w-4 h-4 flex-shrink-0',
-                  isComplete ? 'text-green-500' : 'text-gray-300'
-                )}
+                className="w-4 h-4 flex-shrink-0"
+                style={{ color: isComplete || isActive ? theme.baseColor : '#d1d5db' }}
               />
             )}
             <div
-              className={clsx(
-                'flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium flex-shrink-0 transition-colors',
-                isCurrent && 'ring-2 ring-blue-500',
-                isComplete && 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-                isActive && !isCurrent && 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-                !isComplete && !isActive && 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
-              )}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium flex-shrink-0 transition-colors border"
+              style={{
+                background: chipBackground,
+                borderColor: chipBorder,
+                color: chipText,
+                ...(isCurrent ? { boxShadow: `0 0 0 2px ${theme.baseColor}` } : {}),
+              }}
             >
               {isComplete ? (
-                <CheckCircle className="w-4 h-4" />
+                <CheckCircle className="w-4 h-4" style={{ color: theme.baseColor }} />
               ) : isActive ? (
-                <Play className="w-4 h-4" />
+                <Play className="w-4 h-4" style={{ color: theme.baseColor }} />
               ) : (
-                <Circle className="w-4 h-4" />
+                <Circle className="w-4 h-4" style={{ color: theme.dotColor }} />
               )}
               <span>{STATION_DISPLAY_NAMES[station.name] || station.name}</span>
             </div>

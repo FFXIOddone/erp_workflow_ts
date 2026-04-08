@@ -5,7 +5,18 @@ import toast from 'react-hot-toast';
 import { useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatDate } from '../lib/date';
-import { STATUS_DISPLAY_NAMES, STATUS_COLORS, STATION_DISPLAY_NAMES, UserRole, PrintingMethod, SUB_STATION_PARENTS, PARENT_SUB_STATIONS } from '@erp/shared';
+import {
+  STATUS_DISPLAY_NAMES,
+  STATUS_COLORS,
+  STATION_DISPLAY_NAMES,
+  UserRole,
+  PrintingMethod,
+  SUB_STATION_PARENTS,
+  PARENT_SUB_STATIONS,
+  getStationColorTheme,
+  getStationStateStyle,
+  type StationProgressState,
+} from '@erp/shared';
 import { buildDesignFollowOnPayload, buildDuplicateOrderPayload, isDesignOnlySource, type OrderRecreationSource } from '../lib/order-recreation';
 import { useAuthStore } from '../stores/auth';
 import { NetworkFileBrowser } from '../components/NetworkFileBrowser';
@@ -26,6 +37,12 @@ const PRIORITY_LABELS: Record<number, { label: string; color: string }> = {
 };
 
 const DEFAULT_PRIORITY = { label: 'Normal', color: 'text-blue-600' };
+
+function toProgressState(status: string): StationProgressState {
+  if (status === 'COMPLETED') return 'COMPLETED';
+  if (status === 'IN_PROGRESS') return 'IN_PROGRESS';
+  return 'NOT_STARTED';
+}
 
 export function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -446,27 +463,27 @@ export function OrderDetailPage() {
                   const subs = PARENT_SUB_STATIONS[sp.station as keyof typeof PARENT_SUB_STATIONS];
                   const hasSubStations = subs && subs.length > 0;
                   const hasAccess = canAccessStation(sp.station);
+                  const parentTheme = getStationColorTheme(sp.station);
+                  const parentStyle = getStationStateStyle(sp.station, toProgressState(sp.status));
 
                   return (
                     <div key={sp.id} className="space-y-1.5">
                       <div
-                        className={`flex flex-col gap-3 rounded-lg border p-3 transition-all sm:flex-row sm:items-center sm:justify-between ${
-                          sp.status === 'COMPLETED'
-                            ? 'border-green-200 bg-green-50'
-                            : sp.status === 'IN_PROGRESS'
-                            ? 'border-blue-200 bg-blue-50'
-                            : 'border-gray-200 bg-gray-50'
-                        }`}
+                        className="flex flex-col gap-3 rounded-lg border p-3 transition-all sm:flex-row sm:items-center sm:justify-between"
+                        style={{
+                          backgroundColor: parentStyle.backgroundColor,
+                          borderColor: parentStyle.borderColor,
+                        }}
                       >
                         <div className="flex min-w-0 items-center gap-3">
                           {sp.status === 'COMPLETED' ? (
-                            <CheckCircle className="h-5 w-5 text-green-500" />
+                            <CheckCircle className="h-5 w-5" style={{ color: parentTheme.baseColor }} />
                           ) : sp.status === 'IN_PROGRESS' ? (
-                            <Clock className="h-5 w-5 text-blue-500" />
+                            <Clock className="h-5 w-5" style={{ color: parentTheme.baseColor }} />
                           ) : (
-                            <AlertCircle className="h-5 w-5 text-gray-400" />
+                            <AlertCircle className="h-5 w-5" style={{ color: parentStyle.color }} />
                           )}
-                          <span className="min-w-0 break-words font-medium text-gray-900">
+                          <span className="min-w-0 break-words font-medium" style={{ color: parentStyle.color }}>
                             {STATION_DISPLAY_NAMES[sp.station] ?? sp.station}
                           </span>
                         </div>
@@ -482,8 +499,16 @@ export function OrderDetailPage() {
                             className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
                               sp.status === 'COMPLETED'
                                 ? 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-100'
-                                : 'bg-primary-600 text-white shadow-sm hover:bg-primary-700'
+                                : 'shadow-sm'
                             }`}
+                            style={
+                              sp.status === 'COMPLETED'
+                                ? undefined
+                                : {
+                                    backgroundColor: parentTheme.solidColor,
+                                    color: parentTheme.solidTextColor,
+                                  }
+                            }
                           >
                             {sp.status === 'COMPLETED' ? 'Undo' : 'Complete'}
                           </button>
@@ -499,26 +524,29 @@ export function OrderDetailPage() {
                         const sub = stationMap.get(subStation);
                         if (!sub) return null;
                         const subAccess = canAccessStation(sub.station);
+                        const subTheme = getStationColorTheme(sub.station);
+                        const subStyle = getStationStateStyle(sub.station, toProgressState(sub.status));
+                        const subBackground =
+                          subTheme.subStationLevel > 0 ? subTheme.gradientColor : subStyle.backgroundColor;
+
                         return (
                           <div
                             key={sub.id}
-                            className={`ml-6 flex flex-col gap-2.5 rounded-lg border p-2.5 transition-all sm:flex-row sm:items-center sm:justify-between ${
-                              sub.status === 'COMPLETED'
-                                ? 'border-green-100 bg-green-50/70'
-                                : sub.status === 'IN_PROGRESS'
-                                ? 'border-blue-100 bg-blue-50/70'
-                                : 'border-gray-100 bg-gray-50/70'
-                            }`}
+                            className="ml-6 flex flex-col gap-2.5 rounded-lg border p-2.5 transition-all sm:flex-row sm:items-center sm:justify-between"
+                            style={{
+                              background: subBackground,
+                              borderColor: subTheme.subStationLevel > 0 ? subTheme.gradientBorderColor : subStyle.borderColor,
+                            }}
                           >
                             <div className="flex min-w-0 items-center gap-2">
                               {sub.status === 'COMPLETED' ? (
-                                <CheckCircle className="h-4 w-4 text-green-500" />
+                                <CheckCircle className="h-4 w-4" style={{ color: subTheme.baseColor }} />
                               ) : sub.status === 'IN_PROGRESS' ? (
-                                <Clock className="h-4 w-4 text-blue-500" />
+                                <Clock className="h-4 w-4" style={{ color: subTheme.baseColor }} />
                               ) : (
-                                <AlertCircle className="h-4 w-4 text-gray-400" />
+                                <AlertCircle className="h-4 w-4" style={{ color: subTheme.softTextColor }} />
                               )}
-                              <span className="min-w-0 break-words text-sm font-medium text-gray-800">
+                              <span className="min-w-0 break-words text-sm font-medium" style={{ color: subStyle.color }}>
                                 {STATION_DISPLAY_NAMES[sub.station] ?? sub.station}
                               </span>
                             </div>
@@ -532,8 +560,16 @@ export function OrderDetailPage() {
                                 className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                                   sub.status === 'COMPLETED'
                                     ? 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-100'
-                                  : 'bg-primary-600 text-white shadow-sm hover:bg-primary-700'
+                                  : 'shadow-sm'
                                 }`}
+                                style={
+                                  sub.status === 'COMPLETED'
+                                    ? undefined
+                                    : {
+                                        backgroundColor: subTheme.solidColor,
+                                        color: subTheme.solidTextColor,
+                                      }
+                                }
                               >
                                 {sub.status === 'COMPLETED' ? 'Undo' : 'Complete'}
                               </button>

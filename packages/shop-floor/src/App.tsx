@@ -14,7 +14,7 @@ import { ShippingStation } from './stations/ShippingStation';
 import { InstallationStation } from './stations/InstallationStation';
 import { OrderEntryStation } from './stations/OrderEntryStation';
 import toast from 'react-hot-toast';
-import { hasAcceptedEula } from '@erp/shared';
+import { getStationColorTheme, hasAcceptedEula } from '@erp/shared';
 
 const STATION_LABELS: Record<StationId, string> = {
   DESIGN: 'Design Studio',
@@ -23,15 +23,6 @@ const STATION_LABELS: Record<StationId, string> = {
   SHIPPING: 'Shipping',
   ORDER_ENTRY: 'Order Entry',
   INSTALLATION: 'Installation',
-};
-
-const STATION_COLORS: Record<StationId, string> = {
-  DESIGN: 'bg-purple-600',
-  PRINTING: 'bg-blue-600',
-  PRODUCTION: 'bg-orange-600',
-  SHIPPING: 'bg-green-600',
-  ORDER_ENTRY: 'bg-indigo-600',
-  INSTALLATION: 'bg-amber-600',
 };
 
 function StationView({ station }: { station: StationId }) {
@@ -88,6 +79,7 @@ function App() {
   };
   const blockedStation = activeStation && !isStationAllowed(activeStation) ? activeStation : null;
   const visibleStation = blockedStation ? null : activeStation;
+  const stationTheme = visibleStation ? getStationColorTheme(visibleStation) : null;
 
   // Clear station on logout so the next login always shows the picker
   useEffect(() => {
@@ -179,12 +171,16 @@ function App() {
     <div className="h-screen flex flex-col bg-gray-100">
       {/* Top bar */}
       <header
-        className={`${STATION_COLORS[visibleStation]} text-white flex items-center px-4 py-2 gap-3 shadow-md select-none`}
-        style={{ WebkitAppRegion: 'drag' } as any}
+        className="flex items-center px-4 py-2 gap-3 shadow-md select-none"
+        style={{
+          WebkitAppRegion: 'drag',
+          backgroundColor: stationTheme?.solidColor,
+          color: stationTheme?.solidTextColor,
+        } as any}
       >
         <button
           onClick={() => setActiveStation(null)}
-          className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+          className="p-1.5 hover:bg-black/10 rounded-lg transition-colors"
           style={{ WebkitAppRegion: 'no-drag' } as any}
           title="Switch station"
         >
@@ -209,7 +205,7 @@ function App() {
         {/* Settings button */}
         <button
           onClick={() => setShowSettings(!showSettings)}
-          className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+          className="p-1.5 hover:bg-black/10 rounded-lg transition-colors"
           style={{ WebkitAppRegion: 'no-drag' } as any}
           title="Settings"
         >
@@ -222,7 +218,7 @@ function App() {
             logout();
             setActiveStation(null);
           }}
-          className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+          className="p-1.5 hover:bg-black/10 rounded-lg transition-colors"
           style={{ WebkitAppRegion: 'no-drag' } as any}
           title="Logout"
         >

@@ -56,10 +56,23 @@ interface ProductionOrder {
   customerName: string;
   description: string;
   status: string;
-  dueDate: string;
+  priority: number;
+  dueDate: string | null;
   routing: string[];
   stationProgress: StationProgress[];
   lineItems: LineItem[];
+  shipDate?: string | null;
+  mustShipDate?: string | null;
+  effectivePriority?: number | null;
+  customerDefaultPriority?: number | null;
+  customerPreference?: {
+    defaultPriority?: number | null;
+  } | null;
+  customer?: {
+    preference?: {
+      defaultPriority?: number | null;
+    } | null;
+  } | null;
 }
 
 interface ProductionCutJob {
@@ -227,6 +240,59 @@ function firstTrimmed(...values: Array<string | null | undefined>): string | nul
     if (trimmed) return trimmed;
   }
   return null;
+}
+
+function toSortTimestamp(value: string | null | undefined): number {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : Number.POSITIVE_INFINITY;
+}
+
+function normalizePriority(value: number | null | undefined): number | null {
+  if (!Number.isFinite(value)) return null;
+  const numeric = Math.trunc(value as number);
+  if (numeric < 1 || numeric > 5) return null;
+  return numeric;
+}
+
+function resolveEffectivePriority(order: ProductionOrder): number {
+  const candidates = [
+    normalizePriority(order.effectivePriority),
+    normalizePriority(order.customerDefaultPriority),
+    normalizePriority(order.customerPreference?.defaultPriority),
+    normalizePriority(order.customer?.preference?.defaultPriority),
+    normalizePriority(order.priority),
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate !== null) return candidate;
+  }
+
+  return 5;
+}
+
+function compareProductionQueueOrder(a: ProductionOrder, b: ProductionOrder): number {
+  const dateA = toSortTimestamp(a.shipDate ?? a.mustShipDate ?? a.dueDate);
+  const dateB = toSortTimestamp(b.shipDate ?? b.mustShipDate ?? b.dueDate);
+  if (dateA !== dateB) return dateA - dateB;
+
+  // Lower numeric value is treated as higher urgency in existing production logic.
+  const priorityA = resolveEffectivePriority(a);
+  const priorityB = resolveEffectivePriority(b);
+  if (priorityA !== priorityB) return priorityA - priorityB;
+
+  const orderNumberDiff = a.orderNumber.localeCompare(b.orderNumber, undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+  if (orderNumberDiff !== 0) return orderNumberDiff;
+
+  const customerDiff = a.customerName.localeCompare(b.customerName, undefined, {
+    sensitivity: 'base',
+  });
+  if (customerDiff !== 0) return customerDiff;
+
+  return a.id.localeCompare(b.id);
 }
 
 function getBestLiveCutId(cutData: ProductionCutData | null | undefined): string | null {
@@ -740,6 +806,7 @@ export function ProductionStation() {
     }
   };
 
+
   const handleReprintRequest = async () => {
     if (!reprintModal || !reprintDesc.trim()) return;
 
@@ -921,9 +988,15 @@ export function ProductionStation() {
     return normalizedQuery
       ? scored
           .filter((entry) => entry.score > 0)
-          .sort((a, b) => b.score - a.score || a.order.orderNumber.localeCompare(b.order.orderNumber))
+          .sort(
+            (a, b) =>
+              b.score - a.score ||
+              compareProductionQueueOrder(a.order, b.order),
+          )
           .map((entry) => entry.order)
-      : scored.map((entry) => entry.order);
+      : scored
+          .map((entry) => entry.order)
+          .sort(compareProductionQueueOrder);
   }, [
     cutDataByOrderNumber,
     fileChainByOrder,

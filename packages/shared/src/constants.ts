@@ -98,12 +98,12 @@ export const STATUS_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export const STATUS_COLORS: Record<string, string> = {
-  PENDING: '#f59e0b', // amber
-  IN_PROGRESS: '#3b82f6', // blue
+  PENDING: '#08e8de', // order entry
+  IN_PROGRESS: '#2563eb', // printing
   ON_HOLD: '#ef4444', // red
-  COMPLETED: '#22c55e', // green
-  SHIPPED: '#8b5cf6', // purple
-  CANCELLED: '#6b7280', // gray
+  COMPLETED: '#10b981', // complete
+  SHIPPED: '#22c55e', // shipping
+  CANCELLED: '#64748b', // slate
 };
 
 export const PRIORITY_LABELS: Record<number, string> = {
@@ -862,7 +862,7 @@ export const PRINT_JOB_STATUS_COLORS: Record<string, string> = {
   PENDING: '#6b7280', // gray
   QUEUED: '#3b82f6', // blue
   IN_PROGRESS: '#f59e0b', // amber
-  PRINTING: '#8b5cf6', // purple
+  PRINTING: '#2563eb', // blue
   PAUSED: '#f97316', // orange
   COMPLETED: '#22c55e', // green
   FAILED: '#ef4444', // red
@@ -907,7 +907,7 @@ export const RIP_JOB_STATUS_COLORS: Record<string, string> = {
   PROCESSING: '#06b6d4', // cyan
   READY: '#3b82f6', // blue
   SENDING: '#f59e0b', // amber
-  PRINTING: '#8b5cf6', // purple
+  PRINTING: '#2563eb', // blue
   PRINTED: '#22c55e', // green
   COMPLETED: '#10b981', // emerald
   FAILED: '#ef4444', // red

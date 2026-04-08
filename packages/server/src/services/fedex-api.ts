@@ -1,8 +1,14 @@
 import { Carrier, ShipmentStatus, TrackingEventType, type Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
-import { resolveShipmentTrackingNumber, type ShipmentTrackingCandidate } from './shipment-tracking.js';
+import {
+  formatTrackingLocation,
+  normalizeTrackingNumber,
+  resolveShipmentTrackingNumber,
+  type ShipmentTrackingCandidate,
+} from './shipment-tracking.js';
 
-const DEFAULT_FEDEX_API_BASE_URL = 'https://apis-sandbox.fedex.com';
+const FEDEX_API_BASE_URL_PRODUCTION = 'https://apis.fedex.com';
+const FEDEX_API_BASE_URL_SANDBOX = 'https://apis-sandbox.fedex.com';
 const TRACKING_SNAPSHOT_TTL_MS = 2 * 60 * 1000;
 const STATUS_SYNC_MIN_INTERVAL_MS = 15 * 60 * 1000;
 const BACKGROUND_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
@@ -18,6 +24,21 @@ type FedExApiTokenCache = {
   baseUrl: string;
   token: string;
   expiresAt: number;
+};
+
+type FedExReferenceType =
+  | 'BILL_OF_LADING'
+  | 'CUSTOMER_REFERENCE'
+  | 'INVOICE'
+  | 'PURCHASE_ORDER';
+
+type FedExReferenceLookup = {
+  type: FedExReferenceType;
+  value: string;
+  shipDateBegin: string;
+  shipDateEnd: string;
+  destinationCountryCode?: string | null;
+  destinationPostalCode?: string | null;
 };
 
 type FedExTrackScanEvent = {
@@ -64,7 +85,42 @@ type FedExShipmentSyncContext = ShipmentTrackingCandidate & {
   carrier: Carrier;
   status: ShipmentStatus;
   actualDelivery: Date | null;
+  shipDate: Date | null;
   workOrderId: string | null;
+  workOrder: {
+    orderNumber: string;
+    customerName: string;
+    description: string;
+    poNumber: string | null;
+    quickbooksOrderNum: string | null;
+    company: {
+      name: string | null;
+      address: string | null;
+      city: string | null;
+      state: string | null;
+      zipCode: string | null;
+      country: string | null;
+      shipToLine1: string | null;
+      shipToLine2: string | null;
+      shipToLine3: string | null;
+      shipToLine4: string | null;
+      shipToLine5: string | null;
+    } | null;
+    customer: {
+      name: string | null;
+      companyName: string | null;
+      address: string | null;
+      city: string | null;
+      state: string | null;
+      zipCode: string | null;
+      country: string | null;
+      shipToLine1: string | null;
+      shipToLine2: string | null;
+      shipToLine3: string | null;
+      shipToLine4: string | null;
+      shipToLine5: string | null;
+    } | null;
+  } | null;
   trackingEvents: Array<{
     createdAt: Date;
   }>;
@@ -89,13 +145,8 @@ const trackingRequestInFlight = new Map<string, Promise<FedExTrackingSnapshot>>(
 const shipmentSyncInFlight = new Map<string, Promise<FedExShipmentStatusSyncResult>>();
 const backgroundRefreshByShipment = new Map<string, number>();
 
-function normalizeTrackingNumber(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const normalized = value.replace(/\s+/g, '').trim();
-  return normalized.length > 0 ? normalized : null;
+export function isFedExShipmentCarrierEligible(carrier: Carrier | null | undefined): boolean {
+  return carrier === Carrier.FEDEX || carrier === Carrier.OTHER;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -128,6 +179,123 @@ function parseDate(value: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function formatFedExDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeFedExReferenceValue(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, ' ').trim() ?? '';
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeFedExCountryCode(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toUpperCase() ?? '';
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === 'USA' || normalized === 'UNITED STATES') {
+    return 'US';
+  }
+  return normalized.length > 2 ? normalized.slice(0, 2) : normalized;
+}
+
+function normalizeFedExPostalCode(value: string | null | undefined): string | null {
+  const normalized = value?.trim() ?? '';
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractFedExPurchaseOrderToken(value: string | null | undefined): string | null {
+  const text = value?.trim() ?? '';
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(/\bPO[\s-]*[A-Z0-9-]{3,}\b/i);
+  if (!match) {
+    return null;
+  }
+
+  return match[0].replace(/\s+/g, '').replace(/PO[-\s]*/i, 'PO').toUpperCase();
+}
+
+function buildFedExDateWindow(shipDate: Date | null | undefined): { shipDateBegin: string; shipDateEnd: string } {
+  const baseDate = shipDate ? new Date(shipDate) : new Date();
+  const beginDate = new Date(baseDate);
+  beginDate.setDate(beginDate.getDate() - 15);
+  const endDate = new Date(baseDate);
+  endDate.setDate(endDate.getDate() + 1);
+
+  return {
+    shipDateBegin: formatFedExDate(beginDate),
+    shipDateEnd: formatFedExDate(endDate),
+  };
+}
+
+export function resolveFedExApiBaseUrl(rawBaseUrl: string | null | undefined): string {
+  const normalized = rawBaseUrl?.trim().toLowerCase() ?? '';
+  if (!normalized) {
+    return FEDEX_API_BASE_URL_PRODUCTION;
+  }
+
+  if (normalized === 'sandbox') {
+    return FEDEX_API_BASE_URL_SANDBOX;
+  }
+
+  if (normalized === 'production' || normalized === 'prod') {
+    return FEDEX_API_BASE_URL_PRODUCTION;
+  }
+
+  return (rawBaseUrl?.trim() ?? FEDEX_API_BASE_URL_PRODUCTION).replace(/\/+$/, '');
+}
+
+export function collectFedExReferenceCandidates(
+  shipment: Pick<FedExShipmentSyncContext, 'shipDate' | 'workOrder'>
+): FedExReferenceLookup[] {
+  const candidates = new Map<string, FedExReferenceLookup>();
+  const workOrder = shipment.workOrder;
+  if (!workOrder) {
+    return [];
+  }
+
+  const { shipDateBegin, shipDateEnd } = buildFedExDateWindow(shipment.shipDate);
+  const destinationCountryCode = normalizeFedExCountryCode(
+    workOrder.company?.country ?? workOrder.customer?.country ?? null
+  );
+  const destinationPostalCode = normalizeFedExPostalCode(
+    workOrder.company?.zipCode ?? workOrder.customer?.zipCode ?? null
+  );
+
+  const addCandidate = (type: FedExReferenceType, value: string | null | undefined): void => {
+    const normalizedValue = normalizeFedExReferenceValue(value);
+    if (!normalizedValue) {
+      return;
+    }
+
+    const key = `${type}:${normalizedValue}`;
+    if (candidates.has(key)) {
+      return;
+    }
+
+    candidates.set(key, {
+      type,
+      value: normalizedValue,
+      shipDateBegin,
+      shipDateEnd,
+      destinationCountryCode,
+      destinationPostalCode,
+    });
+  };
+
+  addCandidate('PURCHASE_ORDER', workOrder.poNumber);
+  addCandidate('PURCHASE_ORDER', extractFedExPurchaseOrderToken(workOrder.customerName));
+  addCandidate('PURCHASE_ORDER', extractFedExPurchaseOrderToken(workOrder.description));
+  addCandidate('INVOICE', workOrder.quickbooksOrderNum);
+  addCandidate('CUSTOMER_REFERENCE', workOrder.quickbooksOrderNum);
+  addCandidate('CUSTOMER_REFERENCE', workOrder.orderNumber);
+
+  return [...candidates.values()];
+}
+
 async function loadFedExShipmentSyncContext(shipmentId: string): Promise<FedExShipmentSyncContext | null> {
   return prisma.shipment.findUnique({
     where: { id: shipmentId },
@@ -137,6 +305,7 @@ async function loadFedExShipmentSyncContext(shipmentId: string): Promise<FedExSh
       status: true,
       trackingNumber: true,
       actualDelivery: true,
+      shipDate: true,
       workOrderId: true,
       labelScans: {
         select: {
@@ -150,6 +319,42 @@ async function loadFedExShipmentSyncContext(shipmentId: string): Promise<FedExSh
       },
       workOrder: {
         select: {
+          orderNumber: true,
+          customerName: true,
+          description: true,
+          poNumber: true,
+          quickbooksOrderNum: true,
+          company: {
+            select: {
+              name: true,
+              address: true,
+              city: true,
+              state: true,
+              zipCode: true,
+              country: true,
+              shipToLine1: true,
+              shipToLine2: true,
+              shipToLine3: true,
+              shipToLine4: true,
+              shipToLine5: true,
+            },
+          },
+          customer: {
+            select: {
+              name: true,
+              companyName: true,
+              address: true,
+              city: true,
+              state: true,
+              zipCode: true,
+              country: true,
+              shipToLine1: true,
+              shipToLine2: true,
+              shipToLine3: true,
+              shipToLine4: true,
+              shipToLine5: true,
+            },
+          },
           shippingScans: {
             select: {
               trackingNumber: true,
@@ -197,7 +402,7 @@ function resolveFedExApiConfig(): FedExApiConfig | null {
   }
 
   return {
-    baseUrl: (process.env.FEDEX_API_BASE_URL?.trim() || DEFAULT_FEDEX_API_BASE_URL).replace(/\/+$/, ''),
+    baseUrl: resolveFedExApiBaseUrl(process.env.FEDEX_API_BASE_URL),
     clientId,
     clientSecret,
     accountNumber: process.env.FEDEX_API_ACCOUNT_NUMBER?.trim() || null,
@@ -317,6 +522,11 @@ function parseFedExTrackingSnapshot(
     throw new Error(`FedEx Track returned no track result for ${trackingNumber}`);
   }
 
+  const trackingInfo = asRecord(trackResult.trackingNumberInfo);
+  const resolvedTrackingNumber =
+    pickString(firstCompleteTrack, ['trackingNumber']) ??
+    pickString(trackingInfo, ['trackingNumber']) ??
+    trackingNumber;
   const latestStatusDetail = asRecord(trackResult.latestStatusDetail);
   const latestStatusLocation = asRecord(latestStatusDetail.scanLocation);
   const serviceDetail = asRecord(trackResult.serviceDetail);
@@ -352,7 +562,7 @@ function parseFedExTrackingSnapshot(
   const latestEventTimestamp = scanEvents[0]?.timestamp ?? parseDate(pickString(latestStatusDetail, ['scanDate']));
 
   return {
-    trackingNumber,
+    trackingNumber: resolvedTrackingNumber,
     latestStatus: pickString(latestStatusDetail, ['statusByLocale', 'derivedCode']),
     latestStatusCode: pickString(latestStatusDetail, ['code', 'derivedCode']),
     latestDescription: pickString(latestStatusDetail, ['description', 'statusByLocale']),
@@ -377,16 +587,13 @@ function parseFedExTrackingSnapshot(
   };
 }
 
-export async function fetchFedExTrackingSnapshot(
-  trackingNumber: string,
+async function fetchFedExTrackingSnapshotFromRequest(
+  cacheKey: string,
+  requestUrl: string,
+  requestBody: Record<string, unknown>,
+  trackingIdentifier: string,
   options: { force?: boolean } = {}
 ): Promise<FedExTrackingSnapshot> {
-  const normalizedTrackingNumber = normalizeTrackingNumber(trackingNumber);
-  if (!normalizedTrackingNumber) {
-    throw new Error('Tracking number is required');
-  }
-
-  const cacheKey = normalizedTrackingNumber;
   const now = Date.now();
   const cached = snapshotCache.get(cacheKey);
   if (!options.force && cached && cached.expiresAt > now) {
@@ -406,22 +613,13 @@ export async function fetchFedExTrackingSnapshot(
   const requestPromise = (async () => {
     const token = await getFedExAccessToken(config);
 
-    const response = await fetch(`${config.baseUrl}/track/v1/trackingnumbers`, {
+    const response = await fetch(`${config.baseUrl}${requestUrl}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        includeDetailedScans: true,
-        trackingInfo: [
-          {
-            trackingNumberInfo: {
-              trackingNumber: normalizedTrackingNumber,
-            },
-          },
-        ],
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -432,7 +630,7 @@ export async function fetchFedExTrackingSnapshot(
     }
 
     const payload = (await response.json()) as Record<string, unknown>;
-    const snapshot = parseFedExTrackingSnapshot(normalizedTrackingNumber, config.baseUrl, payload);
+    const snapshot = parseFedExTrackingSnapshot(trackingIdentifier, config.baseUrl, payload);
 
     snapshotCache.set(cacheKey, {
       snapshot,
@@ -440,13 +638,75 @@ export async function fetchFedExTrackingSnapshot(
     });
 
     return snapshot;
-  })()
-    .finally(() => {
-      trackingRequestInFlight.delete(cacheKey);
-    });
+  })().finally(() => {
+    trackingRequestInFlight.delete(cacheKey);
+  });
 
   trackingRequestInFlight.set(cacheKey, requestPromise);
   return requestPromise;
+}
+
+export async function fetchFedExTrackingSnapshot(
+  trackingNumber: string,
+  options: { force?: boolean } = {}
+): Promise<FedExTrackingSnapshot> {
+  const normalizedTrackingNumber = normalizeTrackingNumber(trackingNumber);
+  if (!normalizedTrackingNumber) {
+    throw new Error('Tracking number is required');
+  }
+
+  return fetchFedExTrackingSnapshotFromRequest(
+    `tracking:${normalizedTrackingNumber}`,
+    '/track/v1/trackingnumbers',
+    {
+      includeDetailedScans: true,
+      trackingInfo: [
+        {
+          trackingNumberInfo: {
+            trackingNumber: normalizedTrackingNumber,
+          },
+        },
+      ],
+    },
+    normalizedTrackingNumber,
+    options
+  );
+}
+
+export async function fetchFedExTrackingSnapshotByReference(
+  candidate: FedExReferenceLookup,
+  options: { force?: boolean } = {}
+): Promise<FedExTrackingSnapshot> {
+  const normalizedReferenceValue = normalizeFedExReferenceValue(candidate.value);
+  if (!normalizedReferenceValue) {
+    throw new Error('Reference value is required');
+  }
+
+  const config = resolveFedExApiConfig();
+  if (!config) {
+    throw new Error('FedEx API is not configured');
+  }
+
+  const requestBody: Record<string, unknown> = {
+    referencesInformation: {
+      type: candidate.type,
+      value: normalizedReferenceValue,
+      ...(config.accountNumber ? { accountNumber: config.accountNumber } : {}),
+      shipDateBegin: candidate.shipDateBegin,
+      shipDateEnd: candidate.shipDateEnd,
+      ...(candidate.destinationCountryCode ? { destinationCountryCode: candidate.destinationCountryCode } : {}),
+      ...(candidate.destinationPostalCode ? { destinationPostalCode: candidate.destinationPostalCode } : {}),
+    },
+    includeDetailedScans: true,
+  };
+
+  return fetchFedExTrackingSnapshotFromRequest(
+    `reference:${candidate.type}:${normalizedReferenceValue}:${candidate.shipDateBegin}:${candidate.shipDateEnd}:${candidate.destinationCountryCode ?? ''}:${candidate.destinationPostalCode ?? ''}`,
+    '/track/v1/referencenumbers',
+    requestBody,
+    normalizedReferenceValue,
+    options
+  );
 }
 
 function toFedExTrackingEventData(
@@ -469,6 +729,12 @@ function toFedExTrackingEventData(
     sourceSystem: 'fedex_api',
     rawData: {
       fetchedAt: fetchedAt.toISOString(),
+      locationLabel: formatTrackingLocation({
+        city: scanEvent.city,
+        state: scanEvent.state,
+        zip: scanEvent.zip,
+        country: scanEvent.country,
+      }),
       scanEvent: scanEvent.rawData,
       derivedStatus: scanEvent.derivedStatus,
       eventType: scanEvent.eventType,
@@ -509,20 +775,9 @@ export async function syncFedExTrackingForShipment(
     }
 
     const normalizedTrackingNumber = resolveShipmentTrackingNumber(shipment);
-    if (!normalizedTrackingNumber) {
-      return {
-        shipmentId,
-        trackingNumber: null,
-        status: 'missing_tracking',
-        reason: 'Shipment has no tracking number',
-        shipmentStatus: shipment.status,
-        actualDelivery: shipment.actualDelivery,
-        carrier: shipment.carrier,
-        eventCount: 0,
-        lastEventAt: null,
-        fedExStatus: null,
-      };
-    }
+    let snapshot: FedExTrackingSnapshot | null = null;
+    let lookupMode: 'tracking' | 'reference' = 'tracking';
+    let referenceCandidate: FedExReferenceLookup | null = null;
 
     if (!options.force) {
       const lastSyncedAt = shipment.trackingEvents[0]?.createdAt ?? null;
@@ -542,9 +797,83 @@ export async function syncFedExTrackingForShipment(
       }
     }
 
-    const snapshot = await fetchFedExTrackingSnapshot(normalizedTrackingNumber, {
-      force: options.force,
-    });
+    if (normalizedTrackingNumber) {
+      snapshot = await fetchFedExTrackingSnapshot(normalizedTrackingNumber, {
+        force: options.force,
+      });
+    } else {
+      if (!isFedExShipmentCarrierEligible(shipment.carrier)) {
+        return {
+          shipmentId,
+          trackingNumber: null,
+          status: 'missing_tracking',
+          reason: 'Shipment is not eligible for FedEx reference lookup',
+          shipmentStatus: shipment.status,
+          actualDelivery: shipment.actualDelivery,
+          carrier: shipment.carrier,
+          eventCount: 0,
+          lastEventAt: null,
+          fedExStatus: null,
+        };
+      }
+
+      const referenceCandidates = collectFedExReferenceCandidates(shipment);
+      for (const candidate of referenceCandidates) {
+        try {
+          snapshot = await fetchFedExTrackingSnapshotByReference(candidate, {
+            force: options.force,
+          });
+          referenceCandidate = candidate;
+          lookupMode = 'reference';
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (
+            message.includes('TRACKING.REFERENCENUMBER.NOTFOUND') ||
+            message.includes('TRACKING.DATA.NOTUNIQUE') ||
+            message.includes('TRACKING.REFERENCEDATA.INCOMPLETE') ||
+            message.includes('TRACKING.REFERENCEVALUE.EMPTY')
+          ) {
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      if (!snapshot) {
+        return {
+          shipmentId,
+          trackingNumber: null,
+          status: 'missing_tracking',
+          reason: referenceCandidates.length > 0
+            ? 'FedEx reference lookup did not find a unique match'
+            : 'Shipment has no tracking number or FedEx reference candidates',
+          shipmentStatus: shipment.status,
+          actualDelivery: shipment.actualDelivery,
+          carrier: shipment.carrier,
+          eventCount: 0,
+          lastEventAt: null,
+          fedExStatus: null,
+        };
+      }
+    }
+
+    const resolvedTrackingNumber = snapshot.trackingNumber;
+    if (!resolvedTrackingNumber) {
+      return {
+        shipmentId,
+        trackingNumber: null,
+        status: 'missing_tracking',
+        reason: 'FedEx lookup returned no tracking number',
+        shipmentStatus: shipment.status,
+        actualDelivery: shipment.actualDelivery,
+        carrier: shipment.carrier,
+        eventCount: 0,
+        lastEventAt: null,
+        fedExStatus: null,
+      };
+    }
+
     const nextShipmentStatus = mapSnapshotToShipmentStatus(snapshot);
     const nextDeliveryDate =
       nextShipmentStatus === ShipmentStatus.DELIVERED
@@ -560,7 +889,7 @@ export async function syncFedExTrackingForShipment(
         where: { id: shipmentId },
         data: {
           carrier: shipment.carrier === Carrier.OTHER ? Carrier.FEDEX : shipment.carrier,
-          trackingNumber: normalizedTrackingNumber,
+          trackingNumber: resolvedTrackingNumber,
           status: nextShipmentStatus,
           actualDelivery: nextDeliveryDate,
         },
@@ -579,15 +908,27 @@ export async function syncFedExTrackingForShipment(
         });
       }
 
-      const sourceKey = `fedex_api:${shipmentId}:${normalizedTrackingNumber}`;
+      const sourceType = lookupMode === 'reference' ? 'fedex_api_reference_track' : 'fedex_api_track';
+      const sourceKey = `${sourceType}:${shipmentId}:${resolvedTrackingNumber}`;
       const rawData = {
-        sourceType: 'fedex_api_track',
+        sourceType,
         fetchedAt: snapshot.fetchedAt.toISOString(),
         status: snapshot.latestStatus,
         code: snapshot.latestStatusCode,
-        description: snapshot.latestDescription,
-        eventTimestamp: snapshot.latestEventTimestamp?.toISOString() ?? null,
-        location: snapshot.latestLocation,
+      description: snapshot.latestDescription,
+      eventTimestamp: snapshot.latestEventTimestamp?.toISOString() ?? null,
+      location: snapshot.latestLocation,
+      locationLabel: formatTrackingLocation(snapshot.latestLocation),
+      lookup: referenceCandidate
+        ? {
+            type: referenceCandidate.type,
+              value: referenceCandidate.value,
+              shipDateBegin: referenceCandidate.shipDateBegin,
+              shipDateEnd: referenceCandidate.shipDateEnd,
+              destinationCountryCode: referenceCandidate.destinationCountryCode ?? null,
+              destinationPostalCode: referenceCandidate.destinationPostalCode ?? null,
+            }
+          : null,
         row: {
           status: snapshot.latestStatus,
           eventType: snapshot.latestStatusCode,
@@ -604,7 +945,7 @@ export async function syncFedExTrackingForShipment(
       await tx.fedExShipmentRecord.upsert({
         where: { sourceKey },
         create: {
-          sourceFileName: 'fedex_api_track',
+          sourceFileName: sourceType,
           sourceFilePath: snapshot.sourceBaseUrl,
           sourceFileDate: snapshot.fetchedAt,
           eventTimestamp: snapshot.latestEventTimestamp,
@@ -640,7 +981,7 @@ export async function syncFedExTrackingForShipment(
 
     return {
       shipmentId,
-      trackingNumber: normalizedTrackingNumber,
+      trackingNumber: resolvedTrackingNumber,
       status: 'synced',
       reason: null,
       shipmentStatus: nextShipmentStatus,
@@ -676,11 +1017,7 @@ export async function scheduleFedExTrackingRefreshIfStale(
   }
 
   const trackingNumber = resolveShipmentTrackingNumber(shipment);
-  if (!trackingNumber) {
-    return;
-  }
-
-  if (shipment.carrier !== Carrier.FEDEX && shipment.carrier !== Carrier.OTHER) {
+  if (!trackingNumber && !isFedExShipmentCarrierEligible(shipment.carrier)) {
     return;
   }
 

@@ -6,14 +6,26 @@ import { api } from '../lib/api';
 import { formatDate, formatDateTime } from '../lib/date';
 import { Badge, EmptyState, Pagination, Spinner } from './index';
 
+interface FedExShipmentWorkOrder {
+  id: string;
+  orderNumber: string;
+  customerName: string;
+}
+
 interface FedExShipmentRecord {
   id: string;
-  sourceFileName: string;
+  sourceFileName: string | null;
   sourceFilePath: string | null;
-  sourceFileDate: string;
+  sourceFileDate: string | null;
   eventTimestamp: string | null;
   trackingNumber: string | null;
   service: string | null;
+  locationLabel: string | null;
+  latestScanLocation: string | null;
+  latestStatusCode: string | null;
+  latestStatus: string | null;
+  recordCount: number | null;
+  linkedWorkOrderCount: number | null;
   recipientCompanyName: string | null;
   recipientContactName: string | null;
   destinationAddressLine1: string | null;
@@ -21,14 +33,10 @@ interface FedExShipmentRecord {
   destinationState: string | null;
   destinationPostalCode: string | null;
   destinationCountry: string | null;
-  sourceKey: string;
-  importedAt: string;
-  updatedAt: string;
-  workOrder: {
-    id: string;
-    orderNumber: string;
-    customerName: string;
-  } | null;
+  sourceKey: string | null;
+  importedAt: string | null;
+  updatedAt: string | null;
+  workOrder: FedExShipmentWorkOrder | null;
 }
 
 interface FedExShipmentsPageData {
@@ -66,6 +74,205 @@ function getTrackingUrl(trackingNumber: string): string {
   return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(trackingNumber)}`;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function asString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function asIsoTimestamp(value: unknown): string | null {
+  const raw = asString(value);
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function resolveWorkOrder(value: unknown): FedExShipmentWorkOrder | null {
+  const source = asRecord(value);
+  const id = asString(source.id);
+  const orderNumber = asString(source.orderNumber);
+  const customerName = asString(source.customerName);
+
+  if (!id || !orderNumber) {
+    return null;
+  }
+
+  return {
+    id,
+    orderNumber,
+    customerName: customerName ?? 'Customer not recorded',
+  };
+}
+
+function resolveTimestampScore(value: string | null): number {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function normalizeFedExShipmentRecord(raw: unknown, index: number): FedExShipmentRecord {
+  const source = asRecord(raw);
+  const latestRecord = asRecord(source.latestRecord);
+  const trackingNumber =
+    asString(source.trackingNumber) ??
+    asString(latestRecord.trackingNumber);
+  const sourceKey =
+    asString(source.sourceKey) ??
+    asString(latestRecord.sourceKey);
+  const id = asString(source.id) ?? sourceKey ?? trackingNumber ?? `fedex-record-${index + 1}`;
+
+  return {
+    id,
+    sourceFileName:
+      asString(source.sourceFileName) ??
+      asString(source.latestSourceFileName) ??
+      asString(latestRecord.sourceFileName),
+    sourceFilePath: asString(source.sourceFilePath) ?? asString(latestRecord.sourceFilePath),
+    sourceFileDate:
+      asIsoTimestamp(source.sourceFileDate) ??
+      asIsoTimestamp(source.latestSourceFileDate) ??
+      asIsoTimestamp(latestRecord.sourceFileDate),
+    eventTimestamp:
+      asIsoTimestamp(source.latestEventTimestamp) ??
+      asIsoTimestamp(source.eventTimestamp) ??
+      asIsoTimestamp(latestRecord.eventTimestamp),
+    trackingNumber,
+    service:
+      asString(source.service) ??
+      asString(source.latestService) ??
+      asString(latestRecord.service),
+    locationLabel:
+      asString(source.locationLabel) ??
+      asString(latestRecord.locationLabel),
+    latestScanLocation:
+      asString(source.latestScanLocation) ??
+      asString(source.latestLocationLabel) ??
+      asString(source.scanLocation) ??
+      asString(source.locationLabel) ??
+      asString(latestRecord.latestScanLocation) ??
+      asString(latestRecord.latestLocationLabel) ??
+      asString(latestRecord.scanLocation) ??
+      asString(latestRecord.locationLabel),
+    latestStatusCode:
+      asString(source.latestStatusCode) ??
+      asString(source.statusCode) ??
+      asString(latestRecord.latestStatusCode) ??
+      asString(latestRecord.statusCode),
+    latestStatus:
+      asString(source.latestStatus) ??
+      asString(source.status) ??
+      asString(latestRecord.latestStatus) ??
+      asString(latestRecord.status),
+    recordCount:
+      asNumber(source.recordCount) ??
+      asNumber(source.rawRecordCount) ??
+      asNumber(source.linkedRecordCount) ??
+      asNumber(latestRecord.recordCount),
+    linkedWorkOrderCount:
+      asNumber(source.linkedWorkOrderCount) ??
+      asNumber(source.orderCount) ??
+      asNumber(latestRecord.linkedWorkOrderCount),
+    recipientCompanyName:
+      asString(source.recipientCompanyName) ??
+      asString(source.latestRecipientCompanyName) ??
+      asString(latestRecord.recipientCompanyName),
+    recipientContactName:
+      asString(source.recipientContactName) ??
+      asString(source.latestRecipientContactName) ??
+      asString(latestRecord.recipientContactName),
+    destinationAddressLine1:
+      asString(source.destinationAddressLine1) ??
+      asString(latestRecord.destinationAddressLine1),
+    destinationCity:
+      asString(source.destinationCity) ??
+      asString(latestRecord.destinationCity),
+    destinationState:
+      asString(source.destinationState) ??
+      asString(latestRecord.destinationState),
+    destinationPostalCode:
+      asString(source.destinationPostalCode) ??
+      asString(latestRecord.destinationPostalCode),
+    destinationCountry:
+      asString(source.destinationCountry) ??
+      asString(latestRecord.destinationCountry),
+    sourceKey,
+    importedAt:
+      asIsoTimestamp(source.importedAt) ??
+      asIsoTimestamp(latestRecord.importedAt),
+    updatedAt:
+      asIsoTimestamp(source.updatedAt) ??
+      asIsoTimestamp(latestRecord.updatedAt),
+    workOrder: resolveWorkOrder(source.workOrder) ?? resolveWorkOrder(latestRecord.workOrder),
+  };
+}
+
+function dedupeGroupedRows(records: FedExShipmentRecord[]): FedExShipmentRecord[] {
+  const looksGrouped = records.some(
+    (record) =>
+      record.recordCount !== null ||
+      record.linkedWorkOrderCount !== null ||
+      record.latestStatus !== null ||
+      record.latestStatusCode !== null ||
+      record.latestScanLocation !== null
+  );
+  if (!looksGrouped) {
+    return records;
+  }
+
+  const byTracking = new Map<string, FedExShipmentRecord>();
+  const passthrough: FedExShipmentRecord[] = [];
+
+  for (const record of records) {
+    if (!record.trackingNumber) {
+      passthrough.push(record);
+      continue;
+    }
+
+    const existing = byTracking.get(record.trackingNumber);
+    if (!existing) {
+      byTracking.set(record.trackingNumber, record);
+      continue;
+    }
+
+    const existingCount = existing.recordCount ?? 1;
+    const nextCount = record.recordCount ?? 1;
+    const existingScore = resolveTimestampScore(existing.eventTimestamp ?? existing.sourceFileDate);
+    const nextScore = resolveTimestampScore(record.eventTimestamp ?? record.sourceFileDate);
+
+    if (nextCount > existingCount || (nextCount === existingCount && nextScore >= existingScore)) {
+      byTracking.set(record.trackingNumber, record);
+    }
+  }
+
+  return [...byTracking.values(), ...passthrough];
+}
+
 export function FedExShipmentsPanel(): JSX.Element {
   const today = getTodayInputValue();
   const [search, setSearch] = useState('');
@@ -77,7 +284,7 @@ export function FedExShipmentsPanel(): JSX.Element {
   const { data, isLoading, isError } = useQuery<FedExShipmentsPageData>({
     queryKey: ['fedex-shipments', { search, fromDate, toDate, page, pageSize }],
     queryFn: async (): Promise<FedExShipmentsPageData> => {
-      const response = await api.get<{ success: boolean; data: FedExShipmentsPageData }>('/fedex/shipments', {
+      const response = await api.get<{ success: boolean; data: Record<string, unknown> }>('/fedex/shipments', {
         params: {
           search: search || undefined,
           fromDate: fromDate ? toStartOfDayIso(fromDate) : undefined,
@@ -87,7 +294,18 @@ export function FedExShipmentsPanel(): JSX.Element {
         },
       });
 
-      return response.data.data;
+      const payload = asRecord(response.data.data);
+      const rawItems = Array.isArray(payload.items) ? payload.items : [];
+      const normalizedItems = rawItems.map((item, index) => normalizeFedExShipmentRecord(item, index));
+      const dedupedItems = dedupeGroupedRows(normalizedItems);
+
+      return {
+        items: dedupedItems,
+        total: asNumber(payload.total) ?? dedupedItems.length,
+        page: asNumber(payload.page) ?? page,
+        pageSize: asNumber(payload.pageSize) ?? pageSize,
+        totalPages: asNumber(payload.totalPages) ?? 1,
+      };
     },
   });
 
@@ -121,7 +339,7 @@ export function FedExShipmentsPanel(): JSX.Element {
             <h2 className="text-xl font-semibold text-gray-900">FedEx Shipments</h2>
           </div>
           <p className="text-sm text-gray-500">
-            Live Ship Manager log records. Defaults to today, but you can search archives by date.
+            Shipment-level FedEx tracking records. Defaults to today, but you can search archives by date.
           </p>
         </div>
         <button
@@ -237,7 +455,7 @@ export function FedExShipmentsPanel(): JSX.Element {
                   Tracking
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Recipient / Destination
+                  Recipient / Scan Location
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
                   Order
@@ -259,15 +477,17 @@ export function FedExShipmentsPanel(): JSX.Element {
                   record.recipientCompanyName ??
                   record.recipientContactName ??
                   record.workOrder?.customerName ??
-                  'Recipient not recorded';
-                const locationParts = [
-                  record.destinationAddressLine1,
-                  record.destinationCity,
-                  record.destinationState,
-                  record.destinationPostalCode,
-                  record.destinationCountry,
-                ].filter((part): part is string => Boolean(part));
-                const location = locationParts.join(', ');
+                  'Recipient not available';
+                const scanLocation = record.latestScanLocation?.trim() || null;
+                const statusLabel = record.latestStatus?.trim() || null;
+                const logDateLabel = record.sourceFileDate ? formatDate(record.sourceFileDate) : 'Not recorded';
+                const hasCounts = record.recordCount !== null || record.linkedWorkOrderCount !== null;
+                const countsLabel = [
+                  record.recordCount !== null ? `raw records: ${record.recordCount}` : null,
+                  record.linkedWorkOrderCount !== null ? `linked orders: ${record.linkedWorkOrderCount}` : null,
+                ]
+                  .filter((part): part is string => Boolean(part))
+                  .join(' | ');
 
                 return (
                   <tr key={record.id} className="hover:bg-gray-50">
@@ -286,13 +506,18 @@ export function FedExShipmentsPanel(): JSX.Element {
                         ) : (
                           <div className="text-sm text-gray-400">Tracking not recorded</div>
                         )}
-                        <div className="text-xs text-gray-500">{record.sourceFileName}</div>
+                        <div className="text-xs text-gray-500">{record.sourceFileName ?? 'Source not recorded'}</div>
+                        {hasCounts ? <div className="text-xs text-gray-500">{countsLabel}</div> : null}
                       </div>
                     </td>
                     <td className="px-6 py-4 align-top">
                       <div className="space-y-1">
                         <div className="font-medium text-gray-900">{recipient}</div>
-                        <div className="text-sm text-gray-500">{location || 'Destination not recorded'}</div>
+                        {scanLocation ? (
+                          <div className="text-sm text-gray-900">Last scan: {scanLocation}</div>
+                        ) : (
+                          <div className="text-sm text-gray-400">Location not recorded</div>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4 align-top">
@@ -314,11 +539,21 @@ export function FedExShipmentsPanel(): JSX.Element {
                       )}
                     </td>
                     <td className="px-6 py-4 align-top">
-                      <Badge variant="neutral">{formatServiceLabel(record.service)}</Badge>
+                      <div className="space-y-1">
+                        <Badge variant="neutral">{formatServiceLabel(record.service)}</Badge>
+                        {statusLabel ? (
+                          <div className="text-xs text-gray-700">
+                            Status: {statusLabel}
+                            {record.latestStatusCode ? ` (${record.latestStatusCode})` : ''}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400">Status not available</div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 align-top">
                       <div className="space-y-1 text-sm text-gray-700">
-                        <div>{formatDate(record.sourceFileDate)}</div>
+                        <div>{logDateLabel}</div>
                         {record.eventTimestamp && (
                           <div className="text-xs text-gray-500">{formatDateTime(record.eventTimestamp)}</div>
                         )}

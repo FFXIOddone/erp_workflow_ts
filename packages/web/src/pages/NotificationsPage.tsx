@@ -12,6 +12,7 @@ import {
   Calendar,
   FileText,
   MessageSquare,
+  ShieldAlert,
   Settings,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -31,6 +32,7 @@ const notificationIcons: Record<NotificationType, React.ElementType> = {
   TIME_OFF_DENIED: Calendar,
   QUOTE_APPROVED: FileText,
   QUOTE_REJECTED: FileText,
+  ORDER_COMPLETION_VALIDATION_REQUESTED: ShieldAlert,
   MENTION: MessageSquare,
   SYSTEM: Settings,
 };
@@ -48,6 +50,7 @@ const notificationColors: Record<NotificationType, string> = {
   TIME_OFF_DENIED: 'bg-red-100 text-red-600',
   QUOTE_APPROVED: 'bg-green-100 text-green-600',
   QUOTE_REJECTED: 'bg-red-100 text-red-600',
+  ORDER_COMPLETION_VALIDATION_REQUESTED: 'bg-amber-100 text-amber-600',
   MENTION: 'bg-blue-100 text-blue-600',
   SYSTEM: 'bg-gray-100 text-gray-600',
 };

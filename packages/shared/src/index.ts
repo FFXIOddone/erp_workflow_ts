@@ -18,3 +18,6 @@ export * from './routing-inference.js';
 
 // Search helpers
 export * from './search.js';
+
+// Station color theme
+export * from './station-theme.js';

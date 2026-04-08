@@ -1,3 +1,5 @@
+import { getStationColorTheme } from '@erp/shared';
+
 export interface ActivityTimelineEventLike {
   type: string;
   description?: string;
@@ -11,61 +13,83 @@ export interface ActivityTimelinePresentation {
   bg: string;
   border: string;
   dot: string;
+  bgColor: string;
+  borderColor: string;
+  dotColor: string;
+  textColor: string;
 }
 
-const DEFAULT_PRESENTATION: ActivityTimelinePresentation = {
-  key: 'DEFAULT',
-  label: 'Activity',
-  bg: 'bg-blue-50',
-  border: 'border-blue-200',
-  dot: 'bg-blue-500',
-};
+function buildStationPresentation(
+  key: string,
+  label: string,
+  station: string,
+): ActivityTimelinePresentation {
+  const theme = getStationColorTheme(station);
+  const isSubStation = theme.subStationLevel > 0;
+  return {
+    key,
+    label,
+    bg: isSubStation ? theme.gradientColor : theme.softColor,
+    border: isSubStation ? theme.gradientBorderColor : theme.softBorderColor,
+    dot: theme.dotColor,
+    bgColor: isSubStation ? theme.gradientColor : theme.softColor,
+    borderColor: isSubStation ? theme.gradientBorderColor : theme.softBorderColor,
+    dotColor: theme.dotColor,
+    textColor: isSubStation ? theme.gradientTextColor : theme.softTextColor,
+  };
+}
+
+const DEFAULT_PRESENTATION: ActivityTimelinePresentation = buildStationPresentation(
+  'DEFAULT',
+  'Activity',
+  'SALES',
+);
 
 const PRESENTATIONS: Record<string, ActivityTimelinePresentation> = {
-  CREATE: { key: 'CREATE', label: 'Created', bg: 'bg-teal-50', border: 'border-teal-300', dot: 'bg-teal-500' },
-  CREATED: { key: 'CREATED', label: 'Created', bg: 'bg-teal-50', border: 'border-teal-300', dot: 'bg-teal-500' },
-  UPDATE: { key: 'UPDATE', label: 'Updated', bg: 'bg-slate-50', border: 'border-slate-300', dot: 'bg-slate-500' },
-  UPDATED: { key: 'UPDATED', label: 'Updated', bg: 'bg-slate-50', border: 'border-slate-300', dot: 'bg-slate-500' },
-  STATUS_CHANGED: { key: 'STATUS_CHANGED', label: 'Status Changed', bg: 'bg-indigo-50', border: 'border-indigo-300', dot: 'bg-indigo-500' },
-  STATUS_CHANGE: { key: 'STATUS_CHANGE', label: 'Status Changed', bg: 'bg-indigo-50', border: 'border-indigo-300', dot: 'bg-indigo-500' },
-  STATION_COMPLETE: { key: 'STATION_COMPLETE', label: 'Station Complete', bg: 'bg-emerald-50', border: 'border-emerald-300', dot: 'bg-emerald-500' },
-  STATION_COMPLETED: { key: 'STATION_COMPLETED', label: 'Station Complete', bg: 'bg-emerald-50', border: 'border-emerald-300', dot: 'bg-emerald-500' },
-  ASSIGN: { key: 'ASSIGN', label: 'Assigned', bg: 'bg-violet-50', border: 'border-violet-300', dot: 'bg-violet-500' },
-  ASSIGNED: { key: 'ASSIGNED', label: 'Assigned', bg: 'bg-violet-50', border: 'border-violet-300', dot: 'bg-violet-500' },
-  UNASSIGN: { key: 'UNASSIGN', label: 'Unassigned', bg: 'bg-violet-50', border: 'border-violet-300', dot: 'bg-violet-400' },
-  IN_RIP_QUEUE: { key: 'IN_RIP_QUEUE', label: 'In RIP Queue', bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-500' },
-  PRINT_QUEUED: { key: 'PRINT_QUEUED', label: 'Print Queued', bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-400' },
-  PRINT_PROCESSING: { key: 'PRINT_PROCESSING', label: 'Printing', bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-500' },
-  PRINT_READY: { key: 'PRINT_READY', label: 'Print Ready', bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-500' },
-  PRINT_PRINTING: { key: 'PRINT_PRINTING', label: 'Printing', bg: 'bg-sky-50', border: 'border-sky-300', dot: 'bg-sky-600' },
-  PRINTED: { key: 'PRINTED', label: 'Printed', bg: 'bg-emerald-50', border: 'border-emerald-300', dot: 'bg-emerald-500' },
-  PRINT_COMPLETED: { key: 'PRINT_COMPLETED', label: 'Printed', bg: 'bg-emerald-50', border: 'border-emerald-300', dot: 'bg-emerald-500' },
-  CUT_QUEUED: { key: 'CUT_QUEUED', label: 'Cut Queued', bg: 'bg-orange-50', border: 'border-orange-300', dot: 'bg-orange-500' },
-  CUT_PROCESSING: { key: 'CUT_PROCESSING', label: 'Cutting', bg: 'bg-orange-50', border: 'border-orange-300', dot: 'bg-orange-600' },
-  CUT_COMPLETED: { key: 'CUT_COMPLETED', label: 'Cut Done', bg: 'bg-orange-50', border: 'border-orange-300', dot: 'bg-orange-700' },
-  EMAIL_SENT: { key: 'EMAIL_SENT', label: 'Email Sent', bg: 'bg-cyan-50', border: 'border-cyan-300', dot: 'bg-cyan-500' },
-  UPLOAD: { key: 'UPLOAD', label: 'Uploaded', bg: 'bg-amber-50', border: 'border-amber-300', dot: 'bg-amber-500' },
-  DOWNLOAD: { key: 'DOWNLOAD', label: 'Downloaded', bg: 'bg-amber-50', border: 'border-amber-300', dot: 'bg-amber-400' },
-  DOCUMENT_ADDED: { key: 'DOCUMENT_ADDED', label: 'Document Added', bg: 'bg-amber-50', border: 'border-amber-300', dot: 'bg-amber-500' },
-  FILE_CREATED: { key: 'FILE_CREATED', label: 'File Created', bg: 'bg-amber-50', border: 'border-amber-300', dot: 'bg-amber-500' },
-  PROOFED: { key: 'PROOFED', label: 'Proofed', bg: 'bg-violet-50', border: 'border-violet-300', dot: 'bg-violet-500' },
-  APPROVED: { key: 'APPROVED', label: 'Approved', bg: 'bg-indigo-50', border: 'border-indigo-300', dot: 'bg-indigo-500' },
-  FINISHING_DONE: { key: 'FINISHING_DONE', label: 'Finishing Done', bg: 'bg-orange-50', border: 'border-orange-300', dot: 'bg-orange-500' },
-  QC_DONE: { key: 'QC_DONE', label: 'QC Done', bg: 'bg-cyan-50', border: 'border-cyan-300', dot: 'bg-cyan-500' },
-  INSTALLED: { key: 'INSTALLED', label: 'Installed', bg: 'bg-emerald-50', border: 'border-emerald-300', dot: 'bg-emerald-500' },
-  SHIP_ORDER: { key: 'SHIP_ORDER', label: 'Shipped', bg: 'bg-rose-50', border: 'border-rose-300', dot: 'bg-rose-500' },
-  SHIPPED: { key: 'SHIPPED', label: 'Shipped', bg: 'bg-rose-50', border: 'border-rose-300', dot: 'bg-rose-500' },
-  MARK_DELIVERED: { key: 'MARK_DELIVERED', label: 'Delivered', bg: 'bg-rose-50', border: 'border-rose-300', dot: 'bg-rose-600' },
-  DELIVERED: { key: 'DELIVERED', label: 'Delivered', bg: 'bg-rose-50', border: 'border-rose-300', dot: 'bg-rose-600' },
-  NOTE_ADDED: { key: 'NOTE_ADDED', label: 'Note Added', bg: 'bg-blue-50', border: 'border-blue-200', dot: 'bg-blue-400' },
-  COMMENT: { key: 'COMMENT', label: 'Comment', bg: 'bg-blue-50', border: 'border-blue-200', dot: 'bg-blue-400' },
-  LINE_ADDED: { key: 'LINE_ADDED', label: 'Line Added', bg: 'bg-lime-50', border: 'border-lime-300', dot: 'bg-lime-500' },
-  LINE_REMOVED: { key: 'LINE_REMOVED', label: 'Line Removed', bg: 'bg-lime-50', border: 'border-lime-300', dot: 'bg-lime-400' },
-  LINE_UPDATED: { key: 'LINE_UPDATED', label: 'Line Updated', bg: 'bg-lime-50', border: 'border-lime-300', dot: 'bg-lime-600' },
-  ROUTING_SET: { key: 'ROUTING_SET', label: 'Routing Set', bg: 'bg-fuchsia-50', border: 'border-fuchsia-300', dot: 'bg-fuchsia-500' },
-  PRIORITY_CHANGED: { key: 'PRIORITY_CHANGED', label: 'Priority Changed', bg: 'bg-yellow-50', border: 'border-yellow-300', dot: 'bg-yellow-500' },
-  LOGIN: { key: 'LOGIN', label: 'Login', bg: 'bg-gray-50', border: 'border-gray-300', dot: 'bg-gray-400' },
-  LOGOUT: { key: 'LOGOUT', label: 'Logout', bg: 'bg-gray-50', border: 'border-gray-300', dot: 'bg-gray-400' },
+  CREATE: buildStationPresentation('CREATE', 'Created', 'ORDER_ENTRY'),
+  CREATED: buildStationPresentation('CREATED', 'Created', 'ORDER_ENTRY'),
+  UPDATE: buildStationPresentation('UPDATE', 'Updated', 'SALES'),
+  UPDATED: buildStationPresentation('UPDATED', 'Updated', 'SALES'),
+  STATUS_CHANGED: buildStationPresentation('STATUS_CHANGED', 'Status Changed', 'SALES'),
+  STATUS_CHANGE: buildStationPresentation('STATUS_CHANGE', 'Status Changed', 'SALES'),
+  STATION_COMPLETE: buildStationPresentation('STATION_COMPLETE', 'Station Complete', 'COMPLETE'),
+  STATION_COMPLETED: buildStationPresentation('STATION_COMPLETED', 'Station Complete', 'COMPLETE'),
+  ASSIGN: buildStationPresentation('ASSIGN', 'Assigned', 'ORDER_ENTRY'),
+  ASSIGNED: buildStationPresentation('ASSIGNED', 'Assigned', 'ORDER_ENTRY'),
+  UNASSIGN: buildStationPresentation('UNASSIGN', 'Unassigned', 'ORDER_ENTRY'),
+  IN_RIP_QUEUE: buildStationPresentation('IN_RIP_QUEUE', 'In RIP Queue', 'ROLL_TO_ROLL_PRINTING'),
+  PRINT_QUEUED: buildStationPresentation('PRINT_QUEUED', 'Print Queued', 'ROLL_TO_ROLL_PRINTING'),
+  PRINT_PROCESSING: buildStationPresentation('PRINT_PROCESSING', 'Printing', 'ROLL_TO_ROLL_PRINTING'),
+  PRINT_READY: buildStationPresentation('PRINT_READY', 'Print Ready', 'ROLL_TO_ROLL_PRINTING'),
+  PRINT_PRINTING: buildStationPresentation('PRINT_PRINTING', 'Printing', 'ROLL_TO_ROLL_PRINTING'),
+  PRINTED: buildStationPresentation('PRINTED', 'Printed', 'ROLL_TO_ROLL'),
+  PRINT_COMPLETED: buildStationPresentation('PRINT_COMPLETED', 'Printed', 'ROLL_TO_ROLL'),
+  CUT_QUEUED: buildStationPresentation('CUT_QUEUED', 'Cut Queued', 'PRODUCTION_ZUND'),
+  CUT_PROCESSING: buildStationPresentation('CUT_PROCESSING', 'Cutting', 'PRODUCTION_ZUND'),
+  CUT_COMPLETED: buildStationPresentation('CUT_COMPLETED', 'Cut Done', 'PRODUCTION_FINISHING'),
+  EMAIL_SENT: buildStationPresentation('EMAIL_SENT', 'Email Sent', 'ORDER_ENTRY'),
+  UPLOAD: buildStationPresentation('UPLOAD', 'Uploaded', 'ORDER_ENTRY'),
+  DOWNLOAD: buildStationPresentation('DOWNLOAD', 'Downloaded', 'ORDER_ENTRY'),
+  DOCUMENT_ADDED: buildStationPresentation('DOCUMENT_ADDED', 'Document Added', 'ORDER_ENTRY'),
+  FILE_CREATED: buildStationPresentation('FILE_CREATED', 'File Created', 'ORDER_ENTRY'),
+  PROOFED: buildStationPresentation('PROOFED', 'Proofed', 'DESIGN_PROOF'),
+  APPROVED: buildStationPresentation('APPROVED', 'Approved', 'DESIGN_APPROVAL'),
+  FINISHING_DONE: buildStationPresentation('FINISHING_DONE', 'Finishing Done', 'PRODUCTION_FINISHING'),
+  QC_DONE: buildStationPresentation('QC_DONE', 'QC Done', 'SHIPPING_QC'),
+  INSTALLED: buildStationPresentation('INSTALLED', 'Installed', 'INSTALLATION'),
+  SHIP_ORDER: buildStationPresentation('SHIP_ORDER', 'Shipped', 'SHIPPING_SHIPMENT'),
+  SHIPPED: buildStationPresentation('SHIPPED', 'Shipped', 'SHIPPING_SHIPMENT'),
+  MARK_DELIVERED: buildStationPresentation('MARK_DELIVERED', 'Delivered', 'SHIPPING_SHIPMENT'),
+  DELIVERED: buildStationPresentation('DELIVERED', 'Delivered', 'SHIPPING_SHIPMENT'),
+  NOTE_ADDED: buildStationPresentation('NOTE_ADDED', 'Note Added', 'ORDER_ENTRY'),
+  COMMENT: buildStationPresentation('COMMENT', 'Comment', 'ORDER_ENTRY'),
+  LINE_ADDED: buildStationPresentation('LINE_ADDED', 'Line Added', 'ORDER_ENTRY'),
+  LINE_REMOVED: buildStationPresentation('LINE_REMOVED', 'Line Removed', 'ORDER_ENTRY'),
+  LINE_UPDATED: buildStationPresentation('LINE_UPDATED', 'Line Updated', 'ORDER_ENTRY'),
+  ROUTING_SET: buildStationPresentation('ROUTING_SET', 'Routing Set', 'ORDER_ENTRY'),
+  PRIORITY_CHANGED: buildStationPresentation('PRIORITY_CHANGED', 'Priority Changed', 'ORDER_ENTRY'),
+  LOGIN: buildStationPresentation('LOGIN', 'Login', 'ORDER_ENTRY'),
+  LOGOUT: buildStationPresentation('LOGOUT', 'Logout', 'ORDER_ENTRY'),
   DEFAULT: DEFAULT_PRESENTATION,
 };
 
@@ -176,13 +200,10 @@ export function resolveActivityTimelinePresentation({
     return getStyle(normalizedType);
   }
 
-  // Allow explicit timeline keys on future events without a schema change.
   if (timelineKey in PRESENTATIONS) {
     return getStyle(timelineKey);
   }
 
-  // Keep source around for future route-level heuristics, but the display should
-  // always remain stable even if the source is unknown.
   void source;
 
   return DEFAULT_PRESENTATION;

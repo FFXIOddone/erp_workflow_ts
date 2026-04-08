@@ -25,6 +25,19 @@ type FedExTrackingRefreshShipment = ShipmentTrackingCandidate & {
   shipDate: Date | null;
 };
 
+export function isHourlyFedExRefreshCandidate(shipment: {
+  carrier: Carrier;
+  trackingNumber: string | null;
+}): boolean {
+  return shipment.carrier === Carrier.FEDEX || Boolean(shipment.trackingNumber);
+}
+
+export function isFullFedExRefreshCandidate(shipment: {
+  trackingNumber: string | null;
+}): boolean {
+  return Boolean(shipment.trackingNumber);
+}
+
 let refreshTimer: NodeJS.Timeout | null = null;
 let refreshInFlight = false;
 let lastRefreshStartedAt: Date | null = null;
@@ -108,6 +121,62 @@ async function loadTrackableFedExShipments(): Promise<FedExTrackingRefreshShipme
   return shipments.map((shipment) => applyShipmentTrackingNumber(shipment)) as FedExTrackingRefreshShipment[];
 }
 
+async function loadTrackedShipmentsForFullReconciliation(): Promise<FedExTrackingRefreshShipment[]> {
+  const shipments = await prisma.shipment.findMany({
+    where: {
+      trackingNumber: { not: null },
+    },
+    select: {
+      id: true,
+      carrier: true,
+      status: true,
+      shipDate: true,
+      trackingNumber: true,
+      labelScans: {
+        select: {
+          trackingNumber: true,
+          scannedAt: true,
+        },
+        orderBy: {
+          scannedAt: 'desc',
+        },
+        take: 1,
+      },
+      workOrder: {
+        select: {
+          shippingScans: {
+            select: {
+              trackingNumber: true,
+              scannedAt: true,
+            },
+            orderBy: {
+              scannedAt: 'desc',
+            },
+            take: 1,
+          },
+          fedExShipmentRecords: {
+            select: {
+              trackingNumber: true,
+              importedAt: true,
+              eventTimestamp: true,
+            },
+            orderBy: {
+              importedAt: 'desc',
+            },
+            take: 1,
+          },
+        },
+      },
+    },
+    orderBy: [
+      { updatedAt: 'desc' },
+      { shipDate: 'desc' },
+    ],
+  });
+
+  return shipments.map((shipment) => applyShipmentTrackingNumber(shipment)) as FedExTrackingRefreshShipment[];
+}
+
 export async function runFedExTrackingRefreshCycle(): Promise<FedExTrackingRefreshCycleResult> {
   const startedAt = new Date();
 
@@ -144,7 +213,7 @@ export async function runFedExTrackingRefreshCycle(): Promise<FedExTrackingRefre
     await reconcileShippedOrdersWithShipments();
 
     const shipments = await loadTrackableFedExShipments();
-    const eligibleShipments = shipments.filter((shipment) => Boolean(shipment.trackingNumber));
+    const eligibleShipments = shipments.filter((shipment) => isHourlyFedExRefreshCandidate(shipment));
     let refreshed = 0;
     let skipped = 0;
     let errors = 0;
@@ -162,6 +231,80 @@ export async function runFedExTrackingRefreshCycle(): Promise<FedExTrackingRefre
           } catch (error) {
             errors += 1;
             console.warn(`[FedEx Hourly] Failed to refresh shipment ${shipment.id}:`, error);
+          }
+        })
+      );
+    }
+
+    return {
+      status: 'synced',
+      startedAt,
+      finishedAt: new Date(),
+      scanned: shipments.length,
+      eligible: eligibleShipments.length,
+      refreshed,
+      skipped,
+      errors,
+    };
+  } finally {
+    refreshInFlight = false;
+  }
+}
+
+export async function runFedExTrackingFullReconciliationCycle(): Promise<FedExTrackingRefreshCycleResult> {
+  const startedAt = new Date();
+
+  if (!isFedExApiConfigured()) {
+    return {
+      status: 'not_configured',
+      startedAt,
+      finishedAt: new Date(),
+      scanned: 0,
+      eligible: 0,
+      refreshed: 0,
+      skipped: 0,
+      errors: 0,
+    };
+  }
+
+  if (refreshInFlight) {
+    return {
+      status: 'skipped',
+      startedAt,
+      finishedAt: new Date(),
+      scanned: 0,
+      eligible: 0,
+      refreshed: 0,
+      skipped: 0,
+      errors: 0,
+    };
+  }
+
+  refreshInFlight = true;
+  lastRefreshStartedAt = startedAt;
+
+  try {
+    await reconcileShippedOrdersWithShipments();
+
+    const shipments = await loadTrackedShipmentsForFullReconciliation();
+    const eligibleShipments = shipments.filter((shipment) => isFullFedExRefreshCandidate(shipment));
+    let refreshed = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const batch of chunkArray(eligibleShipments, 4)) {
+      await Promise.all(
+        batch.map(async (shipment) => {
+          try {
+            const result = await syncFedExTrackingForShipment(shipment.id, { force: true });
+            if (result.status === 'synced') {
+              refreshed += 1;
+            } else {
+              skipped += 1;
+            }
+          } catch (error) {
+            errors += 1;
+            console.warn(`[FedEx Full Reconcile] Failed to refresh shipment ${shipment.id}:`, error);
           }
         })
       );

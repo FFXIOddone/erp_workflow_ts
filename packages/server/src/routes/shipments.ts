@@ -5,7 +5,11 @@ import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
 import { reconcileShippedOrdersWithShipments } from '../services/shipment-linking.js';
-import { applyShipmentTrackingNumber } from '../services/shipment-tracking.js';
+import {
+  applyShipmentTrackingNumber,
+  formatTrackingLocation,
+  normalizeTrackingNumber,
+} from '../services/shipment-tracking.js';
 import {
   scheduleFedExTrackingRefreshIfStale,
   syncFedExTrackingForShipment,
@@ -81,6 +85,8 @@ const shipmentTrackingInclude = {
       eventTime: true,
       city: true,
       state: true,
+      zip: true,
+      country: true,
       description: true,
       sourceSystem: true,
       rawData: true,
@@ -147,6 +153,8 @@ type ShipmentReadShape = {
     eventTime?: Date | string | null;
     city?: string | null;
     state?: string | null;
+    zip?: string | null;
+    country?: string | null;
     description?: string | null;
     sourceSystem?: string | null;
     rawData?: unknown;
@@ -263,12 +271,14 @@ function resolveFedExStatusSummary(shipment: ShipmentReadShape): FedExStatusSumm
       sourceFileName: 'fedex_api',
       sourceFileDate: fetchedAtIso,
       location:
-        [latestFedExApiEvent.city, latestFedExApiEvent.state]
-          .filter((value): value is string => Boolean(value))
-          .join(', ') || null,
+        (formatTrackingLocation(eventRawData.location) ??
+          formatTrackingLocation(eventRawData.scanEvent) ??
+          [latestFedExApiEvent.city, latestFedExApiEvent.state, latestFedExApiEvent.zip, latestFedExApiEvent.country]
+            .filter((value): value is string => Boolean(value))
+            .join(', ')) || null,
       trackingNumber:
-        pickString(eventRawData, ['trackingNumber']) ??
-        shipment.workOrder?.fedExShipmentRecords?.[0]?.trackingNumber ??
+        normalizeTrackingNumber(pickString(eventRawData, ['trackingNumber'])) ??
+        normalizeTrackingNumber(shipment.workOrder?.fedExShipmentRecords?.[0]?.trackingNumber) ??
         null,
       stale: isStale,
     };
@@ -324,7 +334,10 @@ function resolveFedExStatusSummary(shipment: ShipmentReadShape): FedExStatusSumm
   const city = pickString(rawRow, ['city', 'last scan city', 'scan city', 'destination city']);
   const state = pickString(rawRow, ['state', 'last scan state', 'scan state', 'destination state']);
   const zip = pickString(rawRow, ['zip', 'postal code', 'last scan zip', 'scan zip']);
-  const location = [city, state, zip].filter(Boolean).join(', ') || null;
+  const location =
+    (formatTrackingLocation(rawRecord.location) ??
+      formatTrackingLocation(rawRecord.scanEvent) ??
+      [city, state, zip].filter((value): value is string => Boolean(value)).join(', ')) || null;
 
   return {
     status,
@@ -354,7 +367,7 @@ function resolveFedExStatusSummary(shipment: ShipmentReadShape): FedExStatusSumm
           ? new Date(latestRecord.sourceFileDate).toISOString()
           : null),
     location,
-    trackingNumber: latestRecord.trackingNumber,
+    trackingNumber: normalizeTrackingNumber(latestRecord.trackingNumber),
     stale: false,
   };
 }

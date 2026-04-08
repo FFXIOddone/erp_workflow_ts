@@ -327,7 +327,7 @@ export function ShipmentDetailPanel({
                   )}
                   {fedExSummary.location && (
                     <div className="sm:col-span-2">
-                      <span className="font-medium">Location:</span> {fedExSummary.location}
+                      <span className="font-medium">Last scan location:</span> {fedExSummary.location}
                     </div>
                   )}
                   {(fedExSummary.sourceFileName || fedExSummary.sourceFileDate) && (

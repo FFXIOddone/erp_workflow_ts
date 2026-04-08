@@ -19,7 +19,7 @@ import { openExternalPath } from '../lib/order-files';
 import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import { useWebSocket } from '../lib/useWebSocket';
-import { PARENT_SUB_STATIONS } from '@erp/shared';
+import { PARENT_SUB_STATIONS, getStationColorTheme } from '@erp/shared';
 import toast from 'react-hot-toast';
 
 interface StationProgress {
@@ -81,6 +81,7 @@ function formatDateTime(value?: string | null): string {
 export function InstallationStation() {
   const { config } = useConfigStore();
   const { token } = useAuthStore();
+  const installationTheme = getStationColorTheme('INSTALLATION');
   const [jobs, setJobs] = useState<InstallJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -329,9 +330,12 @@ export function InstallationStation() {
   return (
     <div className="flex h-full bg-gray-50">
       <aside className="w-80 border-r bg-white overflow-auto">
-        <div className="p-3 border-b bg-amber-50">
-          <h3 className="font-semibold text-amber-900 flex items-center gap-2">
-            <Wrench className="w-4 h-4" />
+        <div
+          className="p-3 border-b"
+          style={{ backgroundColor: installationTheme.softColor, borderColor: installationTheme.softBorderColor }}
+        >
+          <h3 className="font-semibold flex items-center gap-2" style={{ color: installationTheme.softTextColor }}>
+            <Wrench className="w-4 h-4" style={{ color: installationTheme.baseColor }} />
             Install Jobs
           </h3>
         </div>
@@ -351,9 +355,16 @@ export function InstallationStation() {
           <button
             key={job.id}
             onClick={() => handleSelectJob(job)}
-            className={`w-full text-left p-3 border-b hover:bg-amber-50 ${
-              selectedJob?.id === job.id ? 'bg-amber-100 border-l-4 border-l-amber-500' : ''
-            }`}
+            className="w-full text-left p-3 border-b transition-colors"
+            style={
+              selectedJob?.id === job.id
+                ? {
+                    backgroundColor: installationTheme.softColor,
+                    borderLeftWidth: '4px',
+                    borderLeftColor: installationTheme.baseColor,
+                  }
+                : undefined
+            }
           >
             <div className="font-bold text-sm">{job.orderNumber}</div>
             <div className="text-xs text-gray-500 truncate">{job.customerName}</div>
@@ -375,8 +386,8 @@ export function InstallationStation() {
             <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-700">
-                    <Wrench className="w-4 h-4" />
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide" style={{ color: installationTheme.baseColor }}>
+                    <Wrench className="w-4 h-4" style={{ color: installationTheme.baseColor }} />
                     Installation
                   </div>
                   <h2 className="text-2xl font-bold text-gray-900">{selectedJob.orderNumber}</h2>
@@ -410,7 +421,11 @@ export function InstallationStation() {
                   </button>
                   <button
                     onClick={handleOpenPhotoUpload}
-                    className="flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-sky-700"
+                    className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium"
+                    style={{
+                      backgroundColor: installationTheme.solidColor,
+                      color: installationTheme.solidTextColor,
+                    }}
                   >
                     <Camera className="w-4 h-4" />
                     Camera Upload
@@ -431,7 +446,7 @@ export function InstallationStation() {
               <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <FileImage className="w-4 h-4 text-sky-600" />
+                    <FileImage className="w-4 h-4" style={{ color: installationTheme.baseColor }} />
                     <h3 className="font-semibold text-gray-900">Proof Files</h3>
                   </div>
                   <span className="text-xs rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
@@ -449,7 +464,11 @@ export function InstallationStation() {
                     {proofAttachments.map((attachment) => (
                       <div
                         key={attachment.id}
-                        className="rounded-xl border border-sky-100 bg-sky-50/50 p-4"
+                        className="rounded-xl border p-4"
+                        style={{
+                          borderColor: installationTheme.softBorderColor,
+                          backgroundColor: installationTheme.softColor,
+                        }}
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
@@ -463,7 +482,8 @@ export function InstallationStation() {
                           </div>
                           <button
                             onClick={() => handleOpenProof(attachment)}
-                            className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-sky-700 hover:bg-sky-100"
+                            className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm"
+                            style={{ color: installationTheme.baseColor }}
                           >
                             <Eye className="w-4 h-4" />
                             Open
@@ -482,7 +502,7 @@ export function InstallationStation() {
               <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <Link2 className="w-4 h-4 text-amber-600" />
+                    <Link2 className="w-4 h-4" style={{ color: installationTheme.baseColor }} />
                     <h3 className="font-semibold text-gray-900">Order Notes</h3>
                   </div>
                   <span className="text-xs rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
@@ -507,7 +527,10 @@ export function InstallationStation() {
                     value={installerNote}
                     onChange={(e) => setInstallerNote(e.target.value)}
                     placeholder="Measurements, install issues, customer feedback, site notes..."
-                    className="w-full h-32 resize-none rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                    className="w-full h-32 resize-none rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2"
+                    style={{
+                      borderColor: installationTheme.softBorderColor,
+                    }}
                   />
                   <div className="mt-3 flex items-center justify-end gap-2">
                     <button
@@ -519,7 +542,11 @@ export function InstallationStation() {
                     <button
                       onClick={handleSaveInstallerNote}
                       disabled={!installerNote.trim() || savingNote}
-                      className="flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+                      className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-60"
+                      style={{
+                        backgroundColor: installationTheme.solidColor,
+                        color: installationTheme.solidTextColor,
+                      }}
                     >
                       {savingNote ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                       Save Note
@@ -532,12 +559,13 @@ export function InstallationStation() {
             <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <QrCode className="w-4 h-4 text-violet-600" />
+                  <QrCode className="w-4 h-4" style={{ color: installationTheme.baseColor }} />
                   <h3 className="font-semibold text-gray-900">Phone Photo Upload</h3>
                 </div>
                 <button
                   onClick={handleOpenPhotoUpload}
-                  className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-violet-700 hover:bg-violet-50"
+                  className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm"
+                  style={{ color: installationTheme.baseColor }}
                 >
                   <Camera className="w-4 h-4" />
                   Open QR
@@ -584,7 +612,7 @@ export function InstallationStation() {
             <div className="space-y-4 p-5">
               {photoUploadLoading ? (
                 <div className="flex flex-col items-center justify-center py-8 text-gray-500">
-                  <Loader2 className="w-6 h-6 animate-spin text-violet-600" />
+                  <Loader2 className="w-6 h-6 animate-spin" style={{ color: installationTheme.baseColor }} />
                   <p className="mt-2 text-sm">Preparing photo upload link...</p>
                 </div>
               ) : photoUploadData ? (
@@ -605,7 +633,11 @@ export function InstallationStation() {
                       href={photoUploadData.photoUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700"
+                      className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium"
+                      style={{
+                        backgroundColor: installationTheme.solidColor,
+                        color: installationTheme.solidTextColor,
+                      }}
                     >
                       <Eye className="w-4 h-4" />
                       Open Link

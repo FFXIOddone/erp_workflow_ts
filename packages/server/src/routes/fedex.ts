@@ -4,6 +4,7 @@ import { BadRequestError } from '../middleware/error-handler.js';
 import {
   getFedExSyncStatus,
   listFedExShipmentRecords,
+  listFedExShipmentSummaries,
   resolveFedExLogFile,
   syncFedExShipmentRecords,
 } from '../services/fedex.js';
@@ -13,6 +14,7 @@ import {
   syncFedExTrackingForShipment,
 } from '../services/fedex-api.js';
 import {
+  runFedExTrackingFullReconciliationCycle,
   runFedExTrackingRefreshCycle,
 } from '../services/fedex-tracking-refresh.js';
 
@@ -142,10 +144,19 @@ async function handleFedExRecordList(req: AuthRequest, res: Response): Promise<v
   });
 }
 
-// GET /fedex/shipments - Browse stored FedEx shipment records (defaults to today)
-fedexRouter.get('/shipments', wrapAsync(handleFedExRecordList));
+async function handleFedExShipmentSummaryList(req: AuthRequest, res: Response): Promise<void> {
+  const data = await listFedExShipmentSummaries(resolveFedExRecordFilters(req));
 
-// GET /fedex/records - Backward-compatible alias for the same data
+  res.json({
+    success: true,
+    data,
+  });
+}
+
+// GET /fedex/shipments - Browse grouped FedEx shipment summaries (defaults to today)
+fedexRouter.get('/shipments', wrapAsync(handleFedExShipmentSummaryList));
+
+// GET /fedex/records - Browse raw FedEx import records
 fedexRouter.get('/records', wrapAsync(handleFedExRecordList));
 
 // POST /fedex/sync - Force a sync from the current day's log file
@@ -220,8 +231,18 @@ fedexRouter.post('/shipments/:shipmentId/refresh', wrapAsync(async (req: AuthReq
   });
 }));
 
-// POST /fedex/tracking/refresh-all - Refresh every shipped, trackable shipment via FedEx API
+// POST /fedex/tracking/refresh-all - Full reconciliation for every tracked shipment (including delivered)
 fedexRouter.post('/tracking/refresh-all', wrapAsync(async (_req: AuthRequest, res: Response) => {
+  const result = await runFedExTrackingFullReconciliationCycle();
+
+  res.json({
+    success: true,
+    data: result,
+  });
+}));
+
+// POST /fedex/tracking/refresh-hourly-scope - Run the same scoped refresh used by the hourly scheduler
+fedexRouter.post('/tracking/refresh-hourly-scope', wrapAsync(async (_req: AuthRequest, res: Response) => {
   const result = await runFedExTrackingRefreshCycle();
 
   res.json({

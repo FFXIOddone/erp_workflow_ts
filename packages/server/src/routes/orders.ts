@@ -2013,6 +2013,36 @@ ordersRouter.post('/:id/stations/:station/uncomplete', async (req: AuthRequest, 
 ordersRouter.post('/:id/complete', async (req: AuthRequest, res: Response) => {
   const userId = req.userId!;
   const orderId = req.params.id;
+  const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+  const requestValidationRaw = body.requestValidation;
+  const requestValidation =
+    requestValidationRaw === true ||
+    (typeof requestValidationRaw === 'string' &&
+      requestValidationRaw.trim().toLowerCase() === 'true');
+  const estimatedShipDateRaw = body.estimatedShipDate;
+  const notesRaw = body.notes;
+  const notes =
+    typeof notesRaw === 'string' && notesRaw.trim().length > 0 ? notesRaw.trim() : undefined;
+
+  if (notesRaw !== undefined && notesRaw !== null && typeof notesRaw !== 'string') {
+    throw BadRequestError('notes must be a string');
+  }
+  if (notes && notes.length > 2000) {
+    throw BadRequestError('notes cannot exceed 2000 characters');
+  }
+
+  let estimatedShipDate: Date | undefined;
+  if (
+    estimatedShipDateRaw !== undefined &&
+    estimatedShipDateRaw !== null &&
+    String(estimatedShipDateRaw).trim().length > 0
+  ) {
+    const parsedDate = new Date(String(estimatedShipDateRaw));
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw BadRequestError('estimatedShipDate must be a valid date');
+    }
+    estimatedShipDate = parsedDate;
+  }
 
   const order = await prisma.workOrder.findUnique({
     where: { id: orderId },
@@ -2021,6 +2051,66 @@ ordersRouter.post('/:id/complete', async (req: AuthRequest, res: Response) => {
   if (!order) throw NotFoundError('Order not found');
   if (order.status === 'COMPLETED' || order.status === 'CANCELLED') {
     throw BadRequestError(`Order is already ${order.status.toLowerCase()}`);
+  }
+
+  if (requestValidation) {
+    await prisma.workEvent.create({
+      data: {
+        orderId,
+        eventType: 'NOTE_ADDED',
+        description: 'Order completion validation requested',
+        userId,
+        details: {
+          requestedById: userId,
+          requestedByName: req.user?.displayName ?? null,
+          estimatedShipDate: estimatedShipDate?.toISOString() ?? null,
+          notes: notes ?? null,
+        },
+      },
+    });
+
+    await logActivity({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: orderId,
+      userId,
+      description: `Completion validation requested for order ${order.orderNumber}`,
+      details: {
+        estimatedShipDate: estimatedShipDate?.toISOString() ?? null,
+        notes: notes ?? null,
+      },
+    });
+
+    await notifyAdminsAndManagers({
+      type: 'ORDER_COMPLETION_VALIDATION_REQUESTED',
+      title: 'Order Completion Validation Requested',
+      message: `${req.user?.displayName ?? 'A user'} requested completion validation for order ${order.orderNumber}.`,
+      relatedOrderId: orderId,
+      data: {
+        orderId,
+        orderNumber: order.orderNumber,
+        requestedById: userId,
+        requestedByName: req.user?.displayName ?? null,
+        estimatedShipDate: estimatedShipDate?.toISOString() ?? null,
+        notes: notes ?? null,
+      },
+    });
+
+    broadcast({
+      type: 'ORDER_UPDATED',
+      payload: { orderId, validationRequested: true },
+      timestamp: new Date(),
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        orderId,
+        orderNumber: order.orderNumber,
+        validationRequested: true,
+        estimatedShipDate: estimatedShipDate?.toISOString() ?? null,
+      },
+    });
   }
 
   // Mark all station progress as COMPLETED

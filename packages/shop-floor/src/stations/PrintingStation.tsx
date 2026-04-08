@@ -274,11 +274,11 @@ const STATION_CONFIG: Record<
   },
   FLATBED: {
     label: 'Flatbed',
-    color: 'text-purple-700',
-    bg: 'bg-purple-50',
-    border: 'border-purple-200',
-    icon: 'text-purple-500',
-    ring: 'ring-purple-300',
+    color: 'text-blue-700',
+    bg: 'bg-blue-50',
+    border: 'border-blue-200',
+    icon: 'text-blue-500',
+    ring: 'ring-blue-300',
   },
 };
 

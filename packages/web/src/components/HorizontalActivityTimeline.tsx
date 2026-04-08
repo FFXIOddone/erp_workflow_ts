@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, History, Printer, Scissors, Truck, ZoomIn, ZoomOut, RotateCcw, Maximize2 } from 'lucide-react';
+import { getStationColorTheme } from '@erp/shared';
 import { api } from '../lib/api';
 import { format, startOfDay, setHours, differenceInMinutes } from 'date-fns';
 import { FullscreenPanel } from './FullscreenPanel';
@@ -309,6 +310,10 @@ export function HorizontalActivityTimeline({
     );
   }
 
+  const printingTheme = getStationColorTheme('ROLL_TO_ROLL');
+  const productionTheme = getStationColorTheme('PRODUCTION');
+  const shippingTheme = getStationColorTheme('SHIPPING_RECEIVING');
+
   return (
     <div className="bg-white rounded-xl shadow-soft border border-gray-100 overflow-hidden">
       {/* Header */}
@@ -324,25 +329,53 @@ export function HorizontalActivityTimeline({
           {data?.summary && (
             <div className="flex flex-wrap items-center gap-2 lg:mr-2">
               {data.summary.printJobs > 0 && (
-                <span className="px-2 py-0.5 text-xs font-medium bg-sky-100 text-sky-700 rounded-full flex items-center gap-1">
+                <span
+                  className="px-2 py-0.5 text-xs font-medium rounded-full flex items-center gap-1"
+                  style={{
+                    background: printingTheme.softColor,
+                    color: printingTheme.softTextColor,
+                    border: `1px solid ${printingTheme.softBorderColor}`,
+                  }}
+                >
                   <Printer className="h-3 w-3" />
                   {data.summary.printJobs}
                 </span>
               )}
               {data.summary.printCompleted > 0 && (
-                <span className="px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700 rounded-full flex items-center gap-1">
+                <span
+                  className="px-2 py-0.5 text-xs font-medium rounded-full flex items-center gap-1"
+                  style={{
+                    background: printingTheme.gradientColor,
+                    color: printingTheme.gradientTextColor,
+                    border: `1px solid ${printingTheme.gradientBorderColor}`,
+                  }}
+                >
                   <CheckCircle2 className="h-3 w-3" />
                   {data.summary.printCompleted}
                 </span>
               )}
               {data.summary.cutJobs > 0 && (
-                <span className="px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full flex items-center gap-1">
+                <span
+                  className="px-2 py-0.5 text-xs font-medium rounded-full flex items-center gap-1"
+                  style={{
+                    background: productionTheme.softColor,
+                    color: productionTheme.softTextColor,
+                    border: `1px solid ${productionTheme.softBorderColor}`,
+                  }}
+                >
                   <Scissors className="h-3 w-3" />
                   {data.summary.cutJobs}
                 </span>
               )}
               {data.summary.shipments > 0 && (
-                <span className="px-2 py-0.5 text-xs font-medium bg-rose-100 text-rose-700 rounded-full flex items-center gap-1">
+                <span
+                  className="px-2 py-0.5 text-xs font-medium rounded-full flex items-center gap-1"
+                  style={{
+                    background: shippingTheme.softColor,
+                    color: shippingTheme.softTextColor,
+                    border: `1px solid ${shippingTheme.softBorderColor}`,
+                  }}
+                >
                   <Truck className="h-3 w-3" />
                   {data.summary.shipments}
                 </span>
@@ -460,9 +493,9 @@ export function HorizontalActivityTimeline({
                             transition-all duration-200 ease-out
                             ring-2 ring-white shadow-sm
                             ${isSingle || isPrimary ? 'w-4 h-4' : 'w-3.5 h-3.5'}
-                            ${event.presentation.dot}
                             ${isHovered ? 'scale-125 ring-4 ring-opacity-50' : 'hover:scale-125'}
                           `}
+                          style={{ backgroundColor: event.presentation.dotColor }}
                         />
                       );
                     })}
@@ -488,26 +521,40 @@ export function HorizontalActivityTimeline({
             transform: 'translate(-50%, -100%)',
           }}
         >
-          <div className={`
-            bg-white rounded-lg shadow-lg border px-3 py-2 min-w-[220px] max-w-[360px]
-            ${hoveredGroup.events[0].presentation.border}
-          `}>
+          <div
+            className="relative bg-white rounded-lg shadow-lg border px-3 py-2 min-w-[220px] max-w-[360px]"
+            style={{ borderColor: hoveredGroup.events[0].presentation.borderColor }}
+          >
             {hoveredGroup.events.length === 1 ? (
               <>
                 {/* Action type badge */}
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className={`
-                    w-2.5 h-2.5 rounded-full
-                    ${hoveredGroup.events[0].presentation.dot}
-                  `} />
+                  <span
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ backgroundColor: hoveredGroup.events[0].presentation.dotColor }}
+                  />
                   <span className="text-xs font-semibold text-gray-700">
                     {hoveredGroup.events[0].presentation.label}
                   </span>
                   {hoveredGroup.events[0].source !== 'erp' && (
-                    <span className={`
-                      ml-auto px-1.5 py-0.5 text-[10px] font-medium rounded
-                      ${hoveredGroup.events[0].source === 'thrive' ? 'bg-sky-100 text-sky-700' : 'bg-orange-100 text-orange-700'}
-                    `}>
+                    <span
+                      className="ml-auto px-1.5 py-0.5 text-[10px] font-medium rounded"
+                      style={{
+                        background:
+                          hoveredGroup.events[0].source === 'thrive'
+                            ? printingTheme.softColor
+                            : productionTheme.softColor,
+                        color:
+                          hoveredGroup.events[0].source === 'thrive'
+                            ? printingTheme.softTextColor
+                            : productionTheme.softTextColor,
+                        border: `1px solid ${
+                          hoveredGroup.events[0].source === 'thrive'
+                            ? printingTheme.softBorderColor
+                            : productionTheme.softBorderColor
+                        }`,
+                      }}
+                    >
                       {hoveredGroup.events[0].source === 'thrive' ? 'PRINT' : 'CUT'}
                     </span>
                   )}
@@ -523,7 +570,7 @@ export function HorizontalActivityTimeline({
                   <span>{format(new Date(hoveredGroup.events[0].timestamp), 'MMM d, h:mm:ss a')}</span>
                   {hoveredGroup.events[0].user && (
                     <>
-                      <span className="text-gray-300">•</span>
+                      <span className="text-gray-300">|</span>
                       <span className="font-medium">{hoveredGroup.events[0].user}</span>
                     </>
                   )}
@@ -532,10 +579,10 @@ export function HorizontalActivityTimeline({
             ) : (
               <>
                 <div className="flex items-center gap-2 mb-2">
-                  <span className={`
-                    w-2.5 h-2.5 rounded-full
-                    ${hoveredGroup.events[0].presentation.dot}
-                  `} />
+                  <span
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ backgroundColor: hoveredGroup.events[0].presentation.dotColor }}
+                  />
                   <span className="text-xs font-semibold text-gray-700">
                     {hoveredGroup.events.length} overlapping entries
                   </span>
@@ -545,22 +592,39 @@ export function HorizontalActivityTimeline({
                   {hoveredGroup.events.map((event) => (
                     <div
                       key={event.id}
-                      className={`
-                        rounded-md border px-2 py-1.5
-                        ${event.presentation.border}
-                        ${event.presentation.bg}
-                      `}
+                      className="rounded-md border px-2 py-1.5"
+                      style={{
+                        borderColor: event.presentation.borderColor,
+                        background: event.presentation.bgColor,
+                      }}
                     >
                       <div className="flex items-center gap-2 mb-1">
-                        <span className={`w-2.5 h-2.5 rounded-full ${event.presentation.dot}`} />
+                        <span
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: event.presentation.dotColor }}
+                        />
                         <span className="text-xs font-semibold text-gray-700">
                           {event.presentation.label}
                         </span>
                         {event.source !== 'erp' && (
-                          <span className={`
-                            ml-auto px-1.5 py-0.5 text-[10px] font-medium rounded
-                            ${event.source === 'thrive' ? 'bg-sky-100 text-sky-700' : 'bg-orange-100 text-orange-700'}
-                          `}>
+                          <span
+                            className="ml-auto px-1.5 py-0.5 text-[10px] font-medium rounded"
+                            style={{
+                              background:
+                                event.source === 'thrive'
+                                  ? printingTheme.softColor
+                                  : productionTheme.softColor,
+                              color:
+                                event.source === 'thrive'
+                                  ? printingTheme.softTextColor
+                                  : productionTheme.softTextColor,
+                              border: `1px solid ${
+                                event.source === 'thrive'
+                                  ? printingTheme.softBorderColor
+                                  : productionTheme.softBorderColor
+                              }`,
+                            }}
+                          >
                             {event.source === 'thrive' ? 'PRINT' : 'CUT'}
                           </span>
                         )}
@@ -572,7 +636,7 @@ export function HorizontalActivityTimeline({
                         <span>{format(new Date(event.timestamp), 'MMM d, h:mm:ss a')}</span>
                         {event.user && (
                           <>
-                            <span className="text-gray-300">•</span>
+                            <span className="text-gray-300">|</span>
                             <span className="font-medium">{event.user}</span>
                           </>
                         )}
@@ -594,9 +658,9 @@ export function HorizontalActivityTimeline({
         <div className="px-6 py-3 border-t border-gray-100 bg-gray-50/50">
           <div className="flex flex-wrap items-center gap-1">
             <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mr-2">Legend:</span>
-            {actionTypes.map(({ key, dot, label }) => (
+            {actionTypes.map(({ key, dotColor, label }) => (
               <div key={key} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-gray-100">
-                <span className={`w-2 h-2 rounded-full ${dot}`} />
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dotColor }} />
                 <span className="text-[10px] text-gray-600">{label}</span>
               </div>
             ))}

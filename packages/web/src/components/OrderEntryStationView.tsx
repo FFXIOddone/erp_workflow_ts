@@ -39,10 +39,13 @@ import {
   STATION_DISPLAY_NAMES,
   STATUS_DISPLAY_NAMES,
   STATUS_COLORS,
+  getStationColorTheme,
+  getStationStateStyle,
   inferRoutingFromOrderDetails,
   isDesignOnlyOrder,
   stripOrderCategoryTags,
   matchesSearchFields,
+  type StationProgressState,
 } from '@erp/shared';
 import { api } from '../lib/api';
 import { buildDesignFollowOnPayload, fetchOrderRecreationSource, isDesignOnlySource } from '../lib/order-recreation';
@@ -118,6 +121,12 @@ const STATION_ABBREVS: Record<string, string> = {
   SHIPPING_RECEIVING: 'Ship',
   SALES: 'Sales',
 };
+
+function toProgressState(status: string): StationProgressState {
+  if (status === 'COMPLETED') return 'COMPLETED';
+  if (status === 'IN_PROGRESS') return 'IN_PROGRESS';
+  return 'NOT_STARTED';
+}
 
 function generateTempOrderNumber(): string {
   const random = Math.floor(Math.random() * 900000) + 100000;
@@ -880,18 +889,26 @@ function OrderTableRow({
               const stStatus = sp?.status || 'NOT_STARTED';
               const isDone = stStatus === 'COMPLETED';
               const isInProg = stStatus === 'IN_PROGRESS';
+              const stationStyle = getStationStateStyle(s, toProgressState(stStatus));
+              const stationTheme = getStationColorTheme(s);
               return (
                 <button key={s} type="button"
                   onClick={() => onToggleStation(s, isDone)}
                   disabled={stationMutationPending}
-                  className={clsx(
-                    'inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] font-medium cursor-pointer transition-colors whitespace-nowrap',
-                    isDone ? 'bg-green-100 text-green-700' :
-                    isInProg ? 'bg-blue-100 text-blue-700' :
-                    'bg-gray-100 text-gray-600 hover:bg-gray-200',
-                  )}
+                  className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] font-medium cursor-pointer transition-colors whitespace-nowrap border"
+                  style={{
+                    background: stationTheme.subStationLevel > 0 ? stationTheme.gradientColor : stationStyle.backgroundColor,
+                    borderColor: stationTheme.subStationLevel > 0 ? stationTheme.gradientBorderColor : stationStyle.borderColor,
+                    color: stationTheme.subStationLevel > 0 ? stationTheme.gradientTextColor : stationStyle.color,
+                  }}
                   title={STATION_DISPLAY_NAMES[s] + ': ' + stStatus + ' \u2014 Click to toggle'}>
-                  {isDone ? <CheckCircle2 className="w-2.5 h-2.5" /> : isInProg ? <PlayCircle className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
+                  {isDone ? (
+                    <CheckCircle2 className="w-2.5 h-2.5" style={{ color: stationTheme.baseColor }} />
+                  ) : isInProg ? (
+                    <PlayCircle className="w-2.5 h-2.5" style={{ color: stationTheme.baseColor }} />
+                  ) : (
+                    <Circle className="w-2.5 h-2.5" style={{ color: stationStyle.color }} />
+                  )}
                   {STATION_ABBREVS[s] || s}
                 </button>
               );

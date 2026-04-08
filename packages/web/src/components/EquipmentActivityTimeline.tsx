@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Printer, Scissors, Clock, CheckCircle, Loader2, AlertCircle, History, Mail, FileText } from 'lucide-react';
+import { getStationColorTheme } from '@erp/shared';
 import { api } from '../lib/api';
 import { formatRelativeTime } from '../lib/date';
 import { resolveActivityTimelinePresentation } from './activityTimelinePresentation';
@@ -41,23 +42,23 @@ interface EquipmentActivityItem {
   details?: Record<string, unknown>;
 }
 
-const TYPE_CONFIG: Record<string, { icon: typeof Printer; color: string; bgColor: string }> = {
-  IN_RIP_QUEUE: { icon: Clock, color: 'text-sky-500', bgColor: 'bg-sky-100' },
-  PRINT_QUEUED: { icon: Clock, color: 'text-gray-500', bgColor: 'bg-gray-100' },
-  PRINT_PROCESSING: { icon: Loader2, color: 'text-blue-500', bgColor: 'bg-blue-100' },
-  PRINT_READY: { icon: Printer, color: 'text-cyan-500', bgColor: 'bg-cyan-100' },
-  PRINT_PRINTING: { icon: Printer, color: 'text-purple-500', bgColor: 'bg-purple-100' },
-  PRINT_COMPLETED: { icon: CheckCircle, color: 'text-green-500', bgColor: 'bg-green-100' },
-  PRINTED: { icon: CheckCircle, color: 'text-green-500', bgColor: 'bg-green-100' },
-  CUT_QUEUED: { icon: Scissors, color: 'text-orange-500', bgColor: 'bg-orange-100' },
-  CUT_COMPLETED: { icon: CheckCircle, color: 'text-green-500', bgColor: 'bg-green-100' },
-  EMAIL_SENT: { icon: Mail, color: 'text-cyan-500', bgColor: 'bg-cyan-100' },
-  FILE_CREATED: { icon: FileText, color: 'text-amber-500', bgColor: 'bg-amber-100' },
-  PROOFED: { icon: FileText, color: 'text-violet-500', bgColor: 'bg-violet-100' },
-  APPROVED: { icon: CheckCircle, color: 'text-indigo-500', bgColor: 'bg-indigo-100' },
-  FINISHING_DONE: { icon: CheckCircle, color: 'text-orange-500', bgColor: 'bg-orange-100' },
-  QC_DONE: { icon: CheckCircle, color: 'text-cyan-500', bgColor: 'bg-cyan-100' },
-  INSTALLED: { icon: CheckCircle, color: 'text-emerald-500', bgColor: 'bg-emerald-100' },
+const TYPE_CONFIG: Record<string, { icon: typeof Printer }> = {
+  IN_RIP_QUEUE: { icon: Clock },
+  PRINT_QUEUED: { icon: Clock },
+  PRINT_PROCESSING: { icon: Loader2 },
+  PRINT_READY: { icon: Printer },
+  PRINT_PRINTING: { icon: Printer },
+  PRINT_COMPLETED: { icon: CheckCircle },
+  PRINTED: { icon: CheckCircle },
+  CUT_QUEUED: { icon: Scissors },
+  CUT_COMPLETED: { icon: CheckCircle },
+  EMAIL_SENT: { icon: Mail },
+  FILE_CREATED: { icon: FileText },
+  PROOFED: { icon: FileText },
+  APPROVED: { icon: CheckCircle },
+  FINISHING_DONE: { icon: CheckCircle },
+  QC_DONE: { icon: CheckCircle },
+  INSTALLED: { icon: CheckCircle },
 };
 
 export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: EquipmentActivityProps) {
@@ -69,6 +70,8 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
     },
     refetchInterval: 30000, // Refresh every 30 seconds
   });
+  const printingTheme = getStationColorTheme('ROLL_TO_ROLL');
+  const productionTheme = getStationColorTheme('PRODUCTION');
 
   // Merge order events with equipment activity
   const combinedTimeline: Array<{
@@ -143,13 +146,27 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
         {data?.summary && (
           <div className="ml-auto flex items-center gap-2">
             {data.summary.printJobs > 0 && (
-              <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-full flex items-center gap-1">
+              <span
+                className="px-2 py-0.5 text-xs font-medium rounded-full flex items-center gap-1 border"
+                style={{
+                  background: printingTheme.softColor,
+                  color: printingTheme.softTextColor,
+                  borderColor: printingTheme.softBorderColor,
+                }}
+              >
                 <Printer className="h-3 w-3" />
                 {data.summary.printJobs}
               </span>
             )}
             {data.summary.cutJobs > 0 && (
-              <span className="px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full flex items-center gap-1">
+              <span
+                className="px-2 py-0.5 text-xs font-medium rounded-full flex items-center gap-1 border"
+                style={{
+                  background: productionTheme.softColor,
+                  color: productionTheme.softTextColor,
+                  borderColor: productionTheme.softBorderColor,
+                }}
+              >
                 <Scissors className="h-3 w-3" />
                 {data.summary.cutJobs}
               </span>
@@ -170,13 +187,9 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
             <div className="absolute left-4 top-2 bottom-2 w-0.5 bg-gray-200" />
             
             <div className="space-y-4">
-              {combinedTimeline.map((item, index) => {
+              {combinedTimeline.map((item) => {
                 const presentation = resolveActivityTimelinePresentation(item);
-                const config = TYPE_CONFIG[presentation.key] || { 
-                  icon: AlertCircle, 
-                  color: 'text-gray-500', 
-                  bgColor: 'bg-gray-100' 
-                };
+                const config = TYPE_CONFIG[presentation.key] || { icon: AlertCircle };
                 const Icon = config.icon;
                 
                 const isEquipment = item.source === 'thrive' || item.source === 'zund';
@@ -186,34 +199,52 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
                   : item.source === 'zund'
                     ? 'CUT'
                     : presentation.label;
-                const badgeClass = item.source === 'thrive'
-                  ? 'bg-blue-100 text-blue-700'
+                const sourceTheme = item.source === 'thrive'
+                  ? printingTheme
                   : item.source === 'zund'
-                    ? 'bg-orange-100 text-orange-700'
-                    : `${config.bgColor} ${config.color}`;
+                    ? productionTheme
+                    : null;
+                const badgeStyle = sourceTheme
+                  ? {
+                      background: sourceTheme.softColor,
+                      color: sourceTheme.softTextColor,
+                      borderColor: sourceTheme.softBorderColor,
+                    }
+                  : {
+                      background: presentation.bgColor,
+                      color: presentation.textColor,
+                      borderColor: presentation.borderColor,
+                    };
                 
                 return (
                   <div key={item.id} className="relative pl-10">
                     {/* Timeline dot */}
-                    <div className={`absolute left-0 top-1 w-8 h-8 rounded-full flex items-center justify-center ${config.bgColor} ${
-                      index === 0 ? 'ring-2 ring-offset-2 ring-primary-200' : ''
-                    }`}>
-                      <Icon className={`h-4 w-4 ${config.color}`} />
+                    <div
+                      className="absolute left-0 top-1 w-8 h-8 rounded-full flex items-center justify-center border"
+                      style={{
+                        background: presentation.bgColor,
+                        borderColor: presentation.borderColor,
+                      }}
+                    >
+                      <Icon
+                        className={`h-4 w-4 ${item.source === 'thrive' || item.source === 'zund' ? '' : 'text-gray-500'}`}
+                        style={{ color: presentation.dotColor }}
+                      />
                     </div>
-                    
-                    <div className={`p-3 rounded-lg ${
-                      isEquipment 
-                        ? item.source === 'thrive' 
-                          ? 'bg-blue-50/50 border border-blue-100' 
-                          : 'bg-orange-50/50 border border-orange-100'
-                        : index === 0 
-                          ? 'bg-primary-50/50 border border-primary-100' 
-                          : 'bg-gray-50/50 border border-gray-100'
-                    }`}>
+                    <div
+                      className="p-3 rounded-lg border"
+                      style={{
+                        background: isEquipment && sourceTheme ? sourceTheme.softColor : presentation.bgColor,
+                        borderColor: isEquipment && sourceTheme ? sourceTheme.softBorderColor : presentation.borderColor,
+                      }}
+                    >
                     <div className="flex items-start justify-between gap-2">
                         <p className="text-sm text-gray-900 font-medium">{item.description}</p>
                         {showBadge && (
-                          <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${badgeClass}`}>
+                          <span
+                            className="px-1.5 py-0.5 text-[10px] font-medium rounded border"
+                            style={badgeStyle}
+                          >
                             {badgeLabel}
                           </span>
                         )}
@@ -224,7 +255,7 @@ export function EquipmentActivityTimeline({ orderNumber, orderEvents = [] }: Equ
                             <p className="text-xs text-gray-500">
                               by <span className="font-medium">{item.user}</span>
                             </p>
-                            <span className="text-gray-300">•</span>
+                            <span className="text-gray-300">|</span>
                           </>
                         )}
                         <span 

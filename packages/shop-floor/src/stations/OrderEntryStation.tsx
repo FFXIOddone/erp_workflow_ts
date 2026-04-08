@@ -20,7 +20,7 @@ import {
 import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import toast from 'react-hot-toast';
-import { filterBySearchFields } from '@erp/shared';
+import { filterBySearchFields, getStationColorTheme } from '@erp/shared';
 
 interface OrderLineItem {
   id: string;
@@ -134,6 +134,7 @@ function emptyLineItem(): LineItem {
 export function OrderEntryStation() {
   const { config } = useConfigStore();
   const { token } = useAuthStore();
+  const orderEntryTheme = getStationColorTheme('ORDER_ENTRY');
   const [view, setView] = useState<View>('list');
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -509,12 +510,13 @@ export function OrderEntryStation() {
     return (
       <div className="flex flex-col h-full">
         <div className="bg-white border-b px-4 py-3 flex items-center gap-4">
-          <ClipboardList className="w-5 h-5 text-indigo-600" />
+          <ClipboardList className="w-5 h-5" style={{ color: orderEntryTheme.baseColor }} />
           <h2 className="font-semibold text-gray-900">Order Entry</h2>
           <div className="flex-1" />
           <button
             onClick={() => setView('create')}
-            className="flex items-center gap-1 px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700"
+            className="flex items-center gap-1 px-4 py-1.5 rounded-lg text-sm"
+            style={{ backgroundColor: orderEntryTheme.solidColor, color: orderEntryTheme.solidTextColor }}
           >
             <Plus className="w-4 h-4" />
             New Order
@@ -563,7 +565,8 @@ export function OrderEntryStation() {
             <div
               key={order.id}
               onClick={() => { setSelectedOrder(order); setView('detail'); }}
-              className="bg-white rounded-lg border border-gray-200 p-4 hover:border-indigo-300 cursor-pointer transition-colors"
+              className="bg-white rounded-lg border border-gray-200 p-4 cursor-pointer transition-colors"
+              style={selectedOrder?.id === order.id ? { backgroundColor: orderEntryTheme.softColor, borderColor: orderEntryTheme.softBorderColor } : undefined}
             >
               <div className="flex items-center justify-between">
                 <div className="min-w-0 flex-1">
@@ -625,7 +628,7 @@ export function OrderEntryStation() {
           {/* Customer Pickup Section */}
           <div className="mt-4 border-t pt-4">
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <ShoppingBag className="w-4 h-4 text-indigo-600" />
+              <ShoppingBag className="w-4 h-4" style={{ color: orderEntryTheme.baseColor }} />
               Customer Pickups
             </h3>
             {pickupOrders.length === 0 ? (
@@ -633,7 +636,11 @@ export function OrderEntryStation() {
             ) : (
               <div className="space-y-2">
                 {pickupOrders.map((order) => (
-                  <div key={order.id} className="bg-indigo-50 rounded-lg border border-indigo-200 p-3 flex items-center justify-between">
+                  <div
+                    key={order.id}
+                    className="rounded-lg border p-3 flex items-center justify-between"
+                    style={{ backgroundColor: orderEntryTheme.softColor, borderColor: orderEntryTheme.softBorderColor }}
+                  >
                     <div>
                       <span className="font-bold text-gray-900">{order.orderNumber}</span>
                       <span className="text-sm text-gray-500 ml-2">{order.customerName}</span>
@@ -651,7 +658,8 @@ export function OrderEntryStation() {
                           toast.error('Failed to update');
                         }
                       }}
-                      className="flex items-center gap-1 px-3 py-1.5 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg"
+                      className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg"
+                      style={{ backgroundColor: orderEntryTheme.solidColor, color: orderEntryTheme.solidTextColor }}
                     >
                       <CheckCircle className="w-4 h-4" />
                       Customer Picked Up
@@ -672,7 +680,7 @@ export function OrderEntryStation() {
     return (
       <div className="flex flex-col h-full">
         <div className="bg-white border-b px-4 py-3 flex items-center gap-4">
-          <ClipboardList className="w-5 h-5 text-indigo-600" />
+          <ClipboardList className="w-5 h-5" style={{ color: orderEntryTheme.baseColor }} />
           <h2 className="font-semibold text-gray-900">{order.orderNumber}</h2>
           <span
             className={`text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -737,7 +745,8 @@ export function OrderEntryStation() {
               }
               setView('edit');
             }}
-            className="flex items-center gap-1 px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700"
+            className="flex items-center gap-1 px-4 py-1.5 rounded-lg text-sm"
+            style={{ backgroundColor: orderEntryTheme.solidColor, color: orderEntryTheme.solidTextColor }}
           >
             <Edit3 className="w-4 h-4" />
             Edit
@@ -893,7 +902,7 @@ export function OrderEntryStation() {
   return (
     <div className="flex flex-col h-full">
       <div className="bg-white border-b px-4 py-3 flex items-center gap-4">
-        <ClipboardList className="w-5 h-5 text-indigo-600" />
+        <ClipboardList className="w-5 h-5" style={{ color: orderEntryTheme.baseColor }} />
         <h2 className="font-semibold text-gray-900">
           {isEditing ? `Edit ${selectedOrder?.orderNumber || 'Order'}` : 'New Work Order'}
         </h2>
@@ -953,7 +962,7 @@ export function OrderEntryStation() {
                   key={c.id}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => selectCompany(c)}
-                  className="w-full text-left px-4 py-2 hover:bg-indigo-50 text-sm"
+                  className="w-full text-left px-4 py-2 hover:bg-cyan-50 text-sm"
                 >
                   <span className="font-medium">{c.name}</span>
                   {c.companyType && (
@@ -999,14 +1008,14 @@ export function OrderEntryStation() {
                           setSelectedContact(c);
                           setShowContactDropdown(false);
                         }}
-                        className="w-full text-left px-4 py-2 hover:bg-indigo-50 text-sm flex items-center justify-between"
+                        className="w-full text-left px-4 py-2 hover:bg-cyan-50 text-sm flex items-center justify-between"
                       >
                         <div>
                           <span className="font-medium">{c.firstName} {c.lastName}</span>
                           {c.title && <span className="ml-2 text-xs text-gray-400">{c.title}</span>}
                         </div>
                         {c.isPrimary && (
-                          <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Primary</span>
+                          <span className="text-xs bg-cyan-100 text-cyan-700 px-1.5 py-0.5 rounded">Primary</span>
                         )}
                       </button>
                     ))}
@@ -1104,7 +1113,7 @@ export function OrderEntryStation() {
                                 key={result.id}
                                 onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => selectItemForLineItem(item.id, result, 'name')}
-                                className="w-full text-left px-3 py-1.5 hover:bg-indigo-50 text-sm border-b border-gray-100 last:border-0"
+                                className="w-full text-left px-3 py-1.5 hover:bg-cyan-50 text-sm border-b border-gray-100 last:border-0"
                               >
                                 {result.name}
                               </button>
@@ -1145,7 +1154,7 @@ export function OrderEntryStation() {
                                 key={result.id}
                                 onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => selectItemForLineItem(item.id, result, 'desc')}
-                                className="w-full text-left px-3 py-1.5 hover:bg-indigo-50 text-sm border-b border-gray-100 last:border-0"
+                                className="w-full text-left px-3 py-1.5 hover:bg-cyan-50 text-sm border-b border-gray-100 last:border-0"
                               >
                                 {result.description || result.name}
                               </button>
@@ -1192,7 +1201,8 @@ export function OrderEntryStation() {
           </div>
           <button
             onClick={addLineItem}
-            className="mt-2 text-sm text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+            className="mt-2 text-sm flex items-center gap-1"
+            style={{ color: orderEntryTheme.baseColor }}
           >
             <Plus className="w-4 h-4" />
             Add Line Item
@@ -1220,7 +1230,11 @@ export function OrderEntryStation() {
                 };
                 input.click();
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-lg"
+              style={{
+                color: orderEntryTheme.baseColor,
+                borderColor: orderEntryTheme.softBorderColor,
+              }}
             >
               <ClipboardList className="w-4 h-4" />
               Attach Email (.eml/.msg)
@@ -1260,7 +1274,8 @@ export function OrderEntryStation() {
           <button
             onClick={isEditing ? handleUpdate : handleSubmit}
             disabled={submitting || (!isEditing && !selectedCompany)}
-            className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-50"
+            className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
+            style={{ backgroundColor: orderEntryTheme.solidColor, color: orderEntryTheme.solidTextColor }}
           >
             <Save className="w-4 h-4" />
             {submitting

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { resolveShipmentTrackingNumber } from './shipment-tracking.js';
+import { formatTrackingLocation, resolveShipmentTrackingNumber } from './shipment-tracking.js';
 
 describe('resolveShipmentTrackingNumber', () => {
-  it('prefers the shipment tracking number when it exists', () => {
+  it('prefers the shipment tracking number when it exists and strips wrapper quotes', () => {
     expect(
       resolveShipmentTrackingNumber({
-        trackingNumber: ' 1Z123 ',
+        trackingNumber: ` '1Z123' `,
         labelScans: [
-          { trackingNumber: 'SCANNED-1', scannedAt: '2026-04-01T10:00:00.000Z' },
+          { trackingNumber: '"SCANNED-1"', scannedAt: '2026-04-01T10:00:00.000Z' },
         ],
         workOrder: {
           shippingScans: [
@@ -28,6 +28,18 @@ describe('resolveShipmentTrackingNumber', () => {
         labelScans: [
           { trackingNumber: 'OLD-LABEL', scannedAt: '2026-04-01T08:00:00.000Z' },
           { trackingNumber: 'NEW-LABEL', scannedAt: '2026-04-01T09:00:00.000Z' },
+        ],
+      })
+    ).toBe('NEW-LABEL');
+  });
+
+  it('strips wrapper quotes from fallback sources too', () => {
+    expect(
+      resolveShipmentTrackingNumber({
+        trackingNumber: null,
+        labelScans: [
+          { trackingNumber: "'OLD-LABEL'", scannedAt: '2026-04-01T08:00:00.000Z' },
+          { trackingNumber: '"NEW-LABEL"', scannedAt: '2026-04-01T09:00:00.000Z' },
         ],
       })
     ).toBe('NEW-LABEL');
@@ -74,5 +86,29 @@ describe('resolveShipmentTrackingNumber', () => {
         },
       })
     ).toBeNull();
+  });
+});
+
+describe('formatTrackingLocation', () => {
+  it('formats structured location objects into a real label', () => {
+    expect(
+      formatTrackingLocation({
+        scanLocation: {
+          city: 'Grand Rapids',
+          stateOrProvinceCode: 'MI',
+          postalCode: '49503',
+        },
+      })
+    ).toBe('Grand Rapids, MI, 49503');
+  });
+
+  it('prefers explicit location labels when they are already provided', () => {
+    expect(
+      formatTrackingLocation({
+        locationLabel: 'Muskegon, MI',
+        city: 'Grand Rapids',
+        state: 'MI',
+      })
+    ).toBe('Muskegon, MI');
   });
 });

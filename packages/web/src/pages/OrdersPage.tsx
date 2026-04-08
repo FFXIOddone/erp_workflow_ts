@@ -3,7 +3,21 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Plus, Search, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Filter, X, Paperclip, User, CheckSquare, Square, MinusSquare, Clock, Link as LinkIcon, Bookmark, BookmarkPlus, Star, Trash2, Printer } from 'lucide-react';
 import { api } from '../lib/api';
-import { STATUS_DISPLAY_NAMES, STATUS_COLORS, PRIORITY_LABELS, PRIORITY_COLORS, STATION_DISPLAY_NAMES, COMPANY_BRAND_DISPLAY_NAMES, COMPANY_BRAND_COLORS, OrderStatus, PrintingMethod, UserRole, CompanyBrand } from '@erp/shared';
+import {
+  STATUS_DISPLAY_NAMES,
+  STATUS_COLORS,
+  PRIORITY_LABELS,
+  PRIORITY_COLORS,
+  STATION_DISPLAY_NAMES,
+  COMPANY_BRAND_DISPLAY_NAMES,
+  COMPANY_BRAND_COLORS,
+  OrderStatus,
+  PrintingMethod,
+  UserRole,
+  CompanyBrand,
+  getStationStateStyle,
+  type StationProgressState,
+} from '@erp/shared';
 import { useAuthStore } from '../stores/auth';
 import { BulkActionsToolbar } from '../components/BulkActionsToolbar';
 import { SmartLabelPrint } from '../components/SmartLabelPrint';
@@ -13,6 +27,12 @@ import { useSavedFilters, type OrderFilterState } from '../hooks/useSavedFilters
 
 type SortField = 'orderNumber' | 'customerName' | 'status' | 'priority' | 'dueDate' | 'createdAt';
 type SortOrder = 'asc' | 'desc';
+
+function toProgressState(status: string): StationProgressState {
+  if (status === 'COMPLETED') return 'COMPLETED';
+  if (status === 'IN_PROGRESS') return 'IN_PROGRESS';
+  return 'NOT_STARTED';
+}
 
 export function OrdersPage() {
   const user = useAuthStore((state) => state.user);
@@ -757,21 +777,23 @@ export function OrdersPage() {
                     {/* Stations */}
                     <td className="px-3 py-1.5">
                       <div className="flex flex-wrap gap-0.5">
-                        {stationBadges.map((sp) => (
-                          <span
-                            key={sp.station}
-                            title={STATION_DISPLAY_NAMES[sp.station] || sp.station}
-                            className={`px-1 py-px text-[9px] font-bold rounded leading-tight ${
-                              sp.status === 'COMPLETED'
-                                ? 'bg-green-100 text-green-700'
-                                : sp.status === 'IN_PROGRESS'
-                                ? 'bg-blue-100 text-blue-700'
-                                : 'bg-gray-100 text-gray-400'
-                            }`}
-                          >
-                            {(STATION_DISPLAY_NAMES[sp.station] || sp.station).slice(0, 3).toUpperCase()}
-                          </span>
-                        ))}
+                        {stationBadges.map((sp) => {
+                          const badgeStyle = getStationStateStyle(sp.station, toProgressState(sp.status));
+                          return (
+                            <span
+                              key={sp.station}
+                              title={STATION_DISPLAY_NAMES[sp.station] || sp.station}
+                              className="px-1 py-px text-[9px] font-bold rounded leading-tight border"
+                              style={{
+                                backgroundColor: badgeStyle.backgroundColor,
+                                borderColor: badgeStyle.borderColor,
+                                color: badgeStyle.color,
+                              }}
+                            >
+                              {(STATION_DISPLAY_NAMES[sp.station] || sp.station).slice(0, 3).toUpperCase()}
+                            </span>
+                          );
+                        })}
                       </div>
                     </td>
                   </tr>

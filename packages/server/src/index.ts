@@ -76,7 +76,9 @@ import { processEquipmentWatchRules } from './services/equipment-watch.js';
 import { runAutoLinkingCycle } from './services/file-chain.js';
 import {
   backfillFedExShipmentTrackingFromDatabase,
+  repairFedExTrackingNumberFormatting,
   syncFedExShipmentExports,
+  syncFedExShipmentHistory,
   syncFedExShipmentRecords,
   syncFedExShipmentReports,
 } from './services/fedex.js';
@@ -405,6 +407,105 @@ async function start(): Promise<void> {
     }, ALERT_RULES_INTERVAL_MS);
     console.log(`🔔 Alert rules processor started (interval: ${ALERT_RULES_INTERVAL_MS / 1000}s)`);
 
+    const runFedExSync = createSingleFlightTask(async () => {
+      try {
+        const logResult = await syncFedExShipmentRecords();
+        if (logResult.status === 'synced' && (logResult.imported > 0 || logResult.updated > 0)) {
+          console.log(
+            `📦 FedEx XML sync: ${logResult.imported} imported, ${logResult.updated} updated from ${logResult.sourceFileName}`
+          );
+        }
+        const reportResult = await syncFedExShipmentReports();
+        if (reportResult.status === 'synced' && (reportResult.imported > 0 || reportResult.updated > 0)) {
+          console.log(
+            `📦 FedEx report sync: ${reportResult.imported} imported, ${reportResult.updated} updated from ${reportResult.sourceFileName}`
+          );
+        }
+        const exportResult = await syncFedExShipmentExports();
+        if (exportResult.status === 'synced' && (exportResult.imported > 0 || exportResult.updated > 0)) {
+          console.log(
+            `📦 FedEx export sync: ${exportResult.imported} imported, ${exportResult.updated} updated from ${exportResult.sourceFileName}`
+          );
+        }
+        const databaseBackfillResult = await backfillFedExShipmentTrackingFromDatabase();
+        if (
+          databaseBackfillResult.status === 'synced' &&
+          (databaseBackfillResult.updatedRecords > 0 || databaseBackfillResult.updatedShipments > 0)
+        ) {
+          console.log(
+            `📦 FedEx database backfill: ${databaseBackfillResult.linkedRecords} linked, ${databaseBackfillResult.updatedRecords} records updated, ${databaseBackfillResult.updatedShipments} shipment rows updated`
+          );
+        }
+
+      } catch (error) {
+        if (
+          String(error).includes('ENOENT') ||
+          String(error).includes('EACCES') ||
+          String(error).includes('EPERM') ||
+          String(error).includes('ECONNREFUSED')
+        ) {
+          return;
+        }
+        console.error('❌ FedEx sync error:', error);
+      }
+    });
+    void runFedExSync();
+
+    const runFedExTrackingNormalization = createSingleFlightTask(async () => {
+      try {
+        const normalizationResult = await repairFedExTrackingNumberFormatting();
+        if (
+          normalizationResult.status === 'synced' &&
+          (normalizationResult.updatedFedExRecords > 0 || normalizationResult.updatedShipments > 0)
+        ) {
+          console.log(
+            `📦 FedEx tracking normalization: ${normalizationResult.updatedFedExRecords} FedEx record(s) normalized, ${normalizationResult.updatedShipments} shipment row(s) normalized`
+          );
+        }
+      } catch (error) {
+        if (
+          String(error).includes('ENOENT') ||
+          String(error).includes('EACCES') ||
+          String(error).includes('EPERM') ||
+          String(error).includes('ECONNREFUSED')
+        ) {
+          return;
+        }
+        console.error('❌ FedEx tracking normalization error:', error);
+      }
+    });
+    void runFedExTrackingNormalization();
+
+    setInterval(() => {
+      void runFedExSync();
+    }, FEDEX_SYNC_INTERVAL_MS);
+    console.log(`📦 FedEx sync started (interval: ${FEDEX_SYNC_INTERVAL_MS / 1000}s)`);
+
+    const runFedExHistorySync = createSingleFlightTask(async () => {
+      try {
+        const historyResult = await syncFedExShipmentHistory();
+        if (historyResult.status === 'synced' && (historyResult.imported > 0 || historyResult.updated > 0)) {
+          console.log(
+            `📦 FedEx history sync: ${historyResult.imported} imported, ${historyResult.updated} updated across ${historyResult.totalFiles} log file(s)`
+          );
+        }
+      } catch (error) {
+        if (
+          String(error).includes('ENOENT') ||
+          String(error).includes('EACCES') ||
+          String(error).includes('EPERM') ||
+          String(error).includes('ECONNREFUSED')
+        ) {
+          return;
+        }
+        console.error('❌ FedEx history sync error:', error);
+      }
+    });
+    void runFedExHistorySync();
+
+    startFedExHourlyTrackingRefresh();
+    console.log('📦 FedEx hourly tracking refresh started (on the hour)');
+
     if (enableHeavyBackgroundJobs) {
       // RIP Queue — auto-sync Thrive statuses every 60 seconds
       const runRipQueueSync = createSingleFlightTask(async () => {
@@ -457,55 +558,6 @@ async function start(): Promise<void> {
         void runEquipmentWatchRules();
       }, EQUIPMENT_WATCH_INTERVAL_MS);
       console.log(`⚡ Equipment watch rules processor started (interval: ${EQUIPMENT_WATCH_INTERVAL_MS / 1000}s)`);
-
-      const runFedExSync = createSingleFlightTask(async () => {
-        try {
-          const logResult = await syncFedExShipmentRecords();
-          if (logResult.status === 'synced' && (logResult.imported > 0 || logResult.updated > 0)) {
-            console.log(
-              `📦 FedEx XML sync: ${logResult.imported} imported, ${logResult.updated} updated from ${logResult.sourceFileName}`
-            );
-          }
-          const reportResult = await syncFedExShipmentReports();
-          if (reportResult.status === 'synced' && (reportResult.imported > 0 || reportResult.updated > 0)) {
-            console.log(
-              `📦 FedEx report sync: ${reportResult.imported} imported, ${reportResult.updated} updated from ${reportResult.sourceFileName}`
-            );
-          }
-          const exportResult = await syncFedExShipmentExports();
-          if (exportResult.status === 'synced' && (exportResult.imported > 0 || exportResult.updated > 0)) {
-            console.log(
-              `📦 FedEx export sync: ${exportResult.imported} imported, ${exportResult.updated} updated from ${exportResult.sourceFileName}`
-            );
-          }
-          const databaseBackfillResult = await backfillFedExShipmentTrackingFromDatabase();
-          if (
-            databaseBackfillResult.status === 'synced' &&
-            (databaseBackfillResult.updatedRecords > 0 || databaseBackfillResult.updatedShipments > 0)
-          ) {
-            console.log(
-              `📦 FedEx database backfill: ${databaseBackfillResult.linkedRecords} linked, ${databaseBackfillResult.updatedRecords} records updated, ${databaseBackfillResult.updatedShipments} shipment rows updated`
-            );
-          }
-        } catch (error) {
-          if (
-            String(error).includes('ENOENT') ||
-            String(error).includes('EACCES') ||
-            String(error).includes('EPERM') ||
-            String(error).includes('ECONNREFUSED')
-          ) {
-            return;
-          }
-          console.error('❌ FedEx sync error:', error);
-        }
-      });
-      setInterval(() => {
-        void runFedExSync();
-      }, FEDEX_SYNC_INTERVAL_MS);
-      console.log(`📦 FedEx sync started (interval: ${FEDEX_SYNC_INTERVAL_MS / 1000}s)`);
-
-      startFedExHourlyTrackingRefresh();
-      console.log('📦 FedEx hourly tracking refresh started (on the hour)');
 
       const startZundBackgroundServices = async () => {
         const { startZundLiveCacheWarmer } = await import('./services/zund-live.js');

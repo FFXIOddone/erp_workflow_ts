@@ -1,5 +1,25 @@
 type TrackingTimestamp = Date | string | null | undefined;
 
+const TRACKING_NUMBER_WRAPPER_QUOTES = /^['"“”‘’]+|['"“”‘’]+$/g;
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function pickString(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) {
+        return trimmed;
+      }
+    }
+  }
+
+  return null;
+}
+
 export interface ShipmentTrackingSource {
   trackingNumber: string | null;
   scannedAt?: TrackingTimestamp;
@@ -17,9 +37,59 @@ export interface ShipmentTrackingCandidate {
   } | null;
 }
 
-function normalizeTrackingNumber(value: string | null | undefined): string | null {
+export function normalizeTrackingNumber(value: string | null | undefined): string | null {
   const trackingNumber = value?.trim() ?? '';
-  return trackingNumber.length > 0 ? trackingNumber : null;
+  if (!trackingNumber) {
+    return null;
+  }
+
+  const normalized = trackingNumber
+    .replace(TRACKING_NUMBER_WRAPPER_QUOTES, '')
+    .replace(/\s+/g, '');
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+export function formatTrackingLocation(value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  const record = asRecord(value);
+  if (Object.keys(record).length === 0) {
+    return null;
+  }
+
+  const direct = pickString(record, ['locationLabel', 'location', 'cityState']);
+  if (direct) {
+    return direct;
+  }
+
+  for (const nestedSource of [
+    record.scanLocation,
+    record.location,
+    record.destination,
+    record.address,
+    record.recipient,
+  ]) {
+    const nested = formatTrackingLocation(nestedSource);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  const city = pickString(record, ['city', 'cityName', 'destinationCity', 'scanCity']);
+  const state = pickString(record, ['state', 'stateOrProvinceCode', 'destinationState', 'scanState']);
+  const zip = pickString(record, ['zip', 'postalCode', 'destinationPostalCode', 'scanZip']);
+  const country = pickString(record, ['country', 'countryCode', 'destinationCountry', 'scanCountry']);
+
+  const parts = [city, state, zip, country].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(', ') : null;
 }
 
 function sourceTimestamp(source: ShipmentTrackingSource): number {
