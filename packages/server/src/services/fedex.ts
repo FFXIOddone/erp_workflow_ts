@@ -8,6 +8,7 @@ import { prisma } from '../db/client.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import { formatTrackingLocation, normalizeTrackingNumber } from './shipment-tracking.js';
 import { resolveFedExShipmentRecordStatus } from './fedex-record-status.js';
+import { resolveFedExShipmentSourceLabel } from './fedex-source-label.js';
 
 const FEDEX_LOG_FILE_PREFIX = 'FxLogSr';
 const FEDEX_LOG_FILE_REGEX = /^FxLogSr(\d{8})\.xml$/i;
@@ -74,6 +75,7 @@ export type FedExShipmentRecordWithWorkOrder = FedExShipmentRecord & {
     customerName: string;
   } | null;
   locationLabel: string | null;
+  sourceLabel: string | null;
   latestStatus: string | null;
   latestStatusCode: string | null;
   latestDescription: string | null;
@@ -1622,6 +1624,8 @@ function mapFedExShipmentRecordRowToInput(row: FedExShipmentRecordRow): FedExShi
 }
 
 interface FedExShipmentRecordLocationSource {
+  sourceFileName?: string;
+  sourceFilePath?: string | null;
   rawData: unknown;
   destinationAddressLine1?: string | null;
   destinationCity?: string | null;
@@ -1692,6 +1696,7 @@ function normalizeFedExShipmentRecordPageItem<T extends { trackingNumber: string
   item: T
 ): T & {
   locationLabel: string | null;
+  sourceLabel: string | null;
   latestStatus: string | null;
   latestStatusCode: string | null;
   latestDescription: string | null;
@@ -1703,6 +1708,11 @@ function normalizeFedExShipmentRecordPageItem<T extends { trackingNumber: string
     trackingNumber: normalizeTrackingNumber(item.trackingNumber),
     service: normalizeFedExServiceLabel(item.service),
     locationLabel: resolveFedExShipmentRecordLocationLabel(item),
+    sourceLabel: resolveFedExShipmentSourceLabel(
+      item.rawData,
+      item.sourceFileName ?? null,
+      item.sourceFilePath ?? null
+    ),
     latestStatus: statusMeta.latestStatus,
     latestStatusCode: statusMeta.latestStatusCode,
     latestDescription: statusMeta.latestDescription,

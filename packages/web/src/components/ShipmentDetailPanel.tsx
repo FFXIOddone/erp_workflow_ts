@@ -49,6 +49,7 @@ interface FedExStatusSummary {
   eventTimestamp?: string | null;
   sourceFileName?: string | null;
   sourceFileDate?: string | null;
+  sourceLabel?: string | null;
   location?: string | null;
   trackingNumber?: string | null;
   stale?: boolean | null;
@@ -337,10 +338,10 @@ export function ShipmentDetailPanel({
                       <span className="font-medium">Issue:</span> {fedExSummary.issue}
                     </div>
                   )}
-                  {(fedExSummary.sourceFileName || fedExSummary.sourceFileDate) && (
+                  {(fedExSummary.sourceLabel || fedExSummary.sourceFileName || fedExSummary.sourceFileDate) && (
                     <div className="sm:col-span-2">
                       <span className="font-medium">Source:</span>{' '}
-                      {[fedExSummary.sourceFileName, fedExSummary.sourceFileDate]
+                      {[fedExSummary.sourceLabel, fedExSummary.sourceFileName, fedExSummary.sourceFileDate]
                         .filter(Boolean)
                         .join(' - ')}
                     </div>

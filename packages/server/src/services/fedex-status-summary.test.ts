@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { selectLatestFedExTrackingEvent } from '@erp/shared';
+import { resolveFedExShipmentSourceLabel } from './fedex-source-label.js';
 import { resolveFedExAddressIssue, resolveFedExStatusSummary } from './fedex-status-summary.js';
 import { resolveFedExShipmentRecordStatus } from './fedex-record-status.js';
 
@@ -19,6 +20,7 @@ describe('resolveFedExStatusSummary', () => {
             derivedStatus: 'DELIVERED',
             fetchedAt: '2099-04-08T11:00:00Z',
             trackingNumber: ' 495213071146 ',
+            sourceBaseUrl: 'https://apis.fedex.com',
             location: {
               locationLabel: 'Muskegon, MI, US',
             },
@@ -38,6 +40,7 @@ describe('resolveFedExStatusSummary', () => {
     expect(summary?.eventType).toBe('Delivered');
     expect(summary?.location).toBe('Muskegon, MI, US');
     expect(summary?.trackingNumber).toBe('495213071146');
+    expect(summary?.sourceLabel).toBe('FedEx API (Production)');
     expect(summary?.stale).toBe(false);
   });
 
@@ -110,5 +113,23 @@ describe('resolveFedExStatusSummary', () => {
     ]);
 
     expect(latest?.eventTime).toBe('2026-04-08T09:10:00Z');
+  });
+
+  it('labels FedEx API rows from the source base URL', () => {
+    expect(
+      resolveFedExShipmentSourceLabel(
+        { sourceBaseUrl: 'https://apis-sandbox.fedex.com' },
+        'fedex_api_track'
+      )
+    ).toBe('FedEx API (Sandbox)');
+
+    expect(
+      resolveFedExShipmentSourceLabel(
+        { sourceBaseUrl: 'https://apis.fedex.com' },
+        'fedex_api_reference_track'
+      )
+    ).toBe('FedEx API (Production)');
+
+    expect(resolveFedExShipmentSourceLabel({}, 'FxLogSr04142026.xml')).toBe('FxLogSr04142026.xml');
   });
 });

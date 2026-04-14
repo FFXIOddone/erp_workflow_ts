@@ -168,3 +168,8 @@
 - Updated `resolveFieryMediaMappingName(...)` / `getEffectiveVutekSettings(...)` so Fiery media selection prefers the table and ignores `PSA` / `Any` placeholders.
 - Updated `sendToRip(...)` so `mediaType` is no longer used as a fake RIP-side media mapping.
 - Documented the table in `docs/obsidian/fiery-media-mapping-table.md` and clarified that `Any` is a wildcard, not a literal stored value.
+
+### 2026-04-14 FedEx source labeling
+- Claimed slice: make sandbox versus production source labeling flow from one shared shipment metadata field.
+- Added a shared FedEx source-label helper and threaded it through the FedEx shipment list and shipment detail summary paths.
+- FedEx API rows now display `FedEx API (Production)` or `FedEx API (Sandbox)` instead of only the raw API source file name.

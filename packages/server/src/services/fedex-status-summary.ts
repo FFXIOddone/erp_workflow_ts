@@ -1,6 +1,7 @@
 import { ShipmentStatus } from '@prisma/client';
 import { SHIPMENT_STATUS_DISPLAY_NAMES, selectLatestFedExTrackingEvent } from '@erp/shared';
 import { resolveFedExShipmentRecordStatus } from './fedex-record-status.js';
+import { resolveFedExShipmentSourceLabel } from './fedex-source-label.js';
 import { formatTrackingLocation, normalizeTrackingNumber } from './shipment-tracking.js';
 
 type FedExTrackingEvent = {
@@ -34,6 +35,7 @@ export type FedExStatusSummary = {
   eventTimestamp: string | null;
   sourceFileName: string | null;
   sourceFileDate: string | null;
+  sourceLabel: string | null;
   location: string | null;
   trackingNumber: string | null;
   stale: boolean | null;
@@ -160,6 +162,7 @@ export function resolveFedExStatusSummary(
       eventTimestamp: eventDateIso,
       sourceFileName: 'fedex_api',
       sourceFileDate: fetchedAtIso,
+      sourceLabel: resolveFedExShipmentSourceLabel(eventRawData, 'fedex_api'),
       location:
         (formatTrackingLocation(eventRawData.location) ??
           formatTrackingLocation(eventRawData.scanEvent) ??
@@ -244,6 +247,11 @@ export function resolveFedExStatusSummary(
         : latestRecord.sourceFileDate
           ? new Date(latestRecord.sourceFileDate).toISOString()
           : null),
+    sourceLabel: resolveFedExShipmentSourceLabel(
+      rawRecord,
+      pickString(rawRecord, ['sourceFileName']) ?? latestRecord.sourceFileName ?? null,
+      pickString(rawRecord, ['sourceFilePath']) ?? null
+    ),
     location,
     trackingNumber: normalizeTrackingNumber(latestRecord.trackingNumber),
     stale: false,

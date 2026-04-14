@@ -20,6 +20,7 @@ interface FedExShipmentRecord {
   eventTimestamp: string | null;
   trackingNumber: string | null;
   service: string | null;
+  sourceLabel: string | null;
   locationLabel: string | null;
   latestScanLocation: string | null;
   latestStatusCode: string | null;
@@ -153,6 +154,12 @@ function normalizeFedExShipmentRecord(raw: unknown, index: number): FedExShipmen
     sourceFileName:
       asString(source.sourceFileName) ??
       asString(source.latestSourceFileName) ??
+      asString(latestRecord.sourceFileName),
+    sourceLabel:
+      asString(source.sourceLabel) ??
+      asString(source.latestSourceLabel) ??
+      asString(latestRecord.sourceLabel) ??
+      asString(source.sourceFileName) ??
       asString(latestRecord.sourceFileName),
     sourceFilePath: asString(source.sourceFilePath) ?? asString(latestRecord.sourceFilePath),
     sourceFileDate:
@@ -512,7 +519,9 @@ export function FedExShipmentsPanel(): JSX.Element {
                         ) : (
                           <div className="text-sm text-gray-400">Tracking not recorded</div>
                         )}
-                        <div className="text-xs text-gray-500">{record.sourceFileName ?? 'Source not recorded'}</div>
+                        <div className="text-xs text-gray-500">
+                          {record.sourceLabel ?? record.sourceFileName ?? 'Source not recorded'}
+                        </div>
                         {hasCounts ? <div className="text-xs text-gray-500">{countsLabel}</div> : null}
                       </div>
                     </td>

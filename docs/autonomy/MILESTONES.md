@@ -137,3 +137,5 @@
 ### 2026-04-14 Fiery media split and customer context
 - Fiery JDF jobs now keep the physical substrate on the JDF `<Media>` resource and the Fiery RIP media mapping on `EFI:VutekProp Media`.
 - Real Jimmy Dean blade PDF verification succeeded after the split, and the generated JDF now carries customer context in the submission comment.
+
+| 2026-04-14T15:01:30.0000000-04:00 | FEDEX-TRUTH-102 | FedEx source labels now flow from a shared shipment metadata helper | FedEx API rows now display a clear `FedEx API (Production)` or `FedEx API (Sandbox)` label in both the FedEx browser and shipment detail view instead of only the raw source file name. | `packages/server/src/services/fedex-source-label.ts`; `packages/server/src/services/fedex-status-summary.ts`; `packages/server/src/services/fedex.ts`; `packages/web/src/components/FedExShipmentsPanel.tsx`; `packages/web/src/components/ShipmentDetailPanel.tsx` |
