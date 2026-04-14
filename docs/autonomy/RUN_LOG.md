@@ -259,3 +259,8 @@
 - Claimed slice: separate physical substrate, RIP mapping, and profile fields in Fiery docs and code comments.
 - Clarified the Fiery JDF comments, Fiery media mapping comments, and the equipment/mapping docs so physical stock, RIP-side media mapping, and profile selectors are described as distinct concepts.
 - Updated the Fiery media mapping table language to call out the selector fields explicitly instead of blending them into the substrate label.
+
+### 2026-04-14 Fiery connection health stage helper
+- Claimed slice: make Fiery connection health surface the exact failing stage.
+- Added a shared Fiery connection-health helper and wired it into the Rip Queue diagnostics payload so share, queue, workflow, and latest-job stage failures can surface the exact stage label and message.
+- The diagnostics panel now shows the current health stage explicitly instead of only a generic connected / issue badge.

@@ -452,6 +452,12 @@ interface FieryDiagnosticsData {
       complete: boolean;
     }[];
   } | null;
+  health?: {
+    issue: boolean;
+    stageKey: string | null;
+    stageLabel: string;
+    message: string;
+  } | null;
 }
 
 function FieryDiagnosticsPanel() {
@@ -507,8 +513,8 @@ function FieryDiagnosticsPanel() {
     },
   });
 
-  const allGood = data && data.share.writable && data.queue.status !== 'Unreachable';
-  const hasIssue = data && (!data.share.writable || data.queue.status === 'Unreachable');
+  const allGood = data ? !data.health?.issue : false;
+  const hasIssue = data ? Boolean(data.health?.issue) : false;
 
   return (
     <div
@@ -607,6 +613,25 @@ function FieryDiagnosticsPanel() {
                   </p>
                 </div>
               </div>
+
+              {data.health && (
+                <div
+                  className={`flex items-start gap-3 p-3 rounded-lg border ${data.health.issue ? 'bg-amber-50 border-amber-100' : 'bg-sky-50 border-sky-100'}`}
+                >
+                  {data.health.issue ? (
+                    <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4 text-sky-500 mt-0.5 shrink-0" />
+                  )}
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Fiery health</p>
+                    <p className="text-xs text-gray-500">
+                      Stage: <span className="font-semibold">{data.health.stageLabel}</span>
+                    </p>
+                    <p className="text-xs text-gray-400">{data.health.message}</p>
+                  </div>
+                </div>
+              )}
 
               {data.latestJob && (
                 <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-50 border border-gray-100">

@@ -55,6 +55,7 @@ import { buildFieryJobTimelineSummary } from '../services/fiery-job-timeline.js'
 import { buildFieryJobTimelineMetrics } from '../services/fiery-job-timeline.js';
 import { resolveFieryWorkflowSelection } from '../services/fiery-workflow-selection.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
+import { buildFieryConnectionHealth } from '../services/fiery-connection-health.js';
 
 export const ripQueueRouter = Router();
 
@@ -961,6 +962,25 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
   const effective = getEffectiveVutekSettings({
     outputChannelName: resolveFieryWorkflowSelection(undefined, settings?.fieryWorkflowName),
   });
+  const latestJobTimeline = latestFieryJob ? buildFieryJobTimelineSummary(latestFieryJob) : null;
+  const health = buildFieryConnectionHealth({
+    share: {
+      accessible: shareResult.accessible,
+      writable: shareResult.writable,
+      error: shareResult.error ?? null,
+    },
+    queue: {
+      status: queueStatus.status,
+      queueSize: queueStatus.queueSize,
+      raw: queueStatus.raw ?? null,
+    },
+    workflow: {
+      outputChannelName: effective.outputChannelName ?? null,
+      discoveredWorkflows: workflowDiscovery.workflows,
+      discoveryError: workflowDiscovery.error ?? null,
+    },
+    latestJob: latestJobTimeline,
+  });
 
   res.json({
     success: true,
@@ -985,7 +1005,8 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
         queueEntryId: queueStatus.queueEntryId ?? null,
         raw: queueStatus.raw ?? null,
       },
-      latestJob: latestFieryJob ? buildFieryJobTimelineSummary(latestFieryJob) : null,
+      latestJob: latestJobTimeline,
+      health,
       workflow: {
         outputChannelName: effective.outputChannelName,
         colorMode: effective.colorMode,
