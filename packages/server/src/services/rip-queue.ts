@@ -58,6 +58,7 @@ export interface RipStatusUpdate {
 }
 
 let ripStatusSyncPromise: Promise<RipStatusUpdate[]> | null = null;
+let fieryMetadataRepairPromise: Promise<number> | null = null;
 
 function normalizeJsonObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -212,6 +213,86 @@ function getFieryImportedFileName(fierySettings: Record<string, unknown>): strin
   const destinationPath = typeof fierySettings.destinationPath === 'string' ? fierySettings.destinationPath : undefined;
 
   return jobTicketName ?? copiedFileName ?? (destinationPath ? path.basename(destinationPath) : undefined);
+}
+
+function getFieryPdfPath(fierySettings: Record<string, unknown>): string | null {
+  const stagedPdfPath = pickStringSetting(fierySettings.stagedPdfPath);
+  const destinationPath = pickStringSetting(fierySettings.destinationPath);
+  return stagedPdfPath ?? destinationPath ?? null;
+}
+
+function getFieryCopiedFileName(
+  fierySettings: Record<string, unknown>,
+  pdfPath: string | null
+): string | null {
+  const copiedFileName = pickStringSetting(fierySettings.copiedFileName);
+  if (copiedFileName) return copiedFileName;
+  if (pdfPath) return path.basename(pdfPath);
+  const destinationPath = pickStringSetting(fierySettings.destinationPath);
+  return destinationPath ? path.basename(destinationPath) : null;
+}
+
+async function repairFieryJobMetadataInternal(): Promise<number> {
+  const persistedWorkflow = await prisma.systemSettings.findFirst({
+    where: { id: 'system' },
+    select: { fieryWorkflowName: true },
+  });
+  const fallbackWorkflowName = persistedWorkflow?.fieryWorkflowName?.trim() || 'Zund G7';
+
+  const fieryJobs = await prisma.ripJob.findMany({
+    where: { ripType: 'Fiery' },
+    select: { id: true, printSettingsJson: true },
+  });
+
+  let updatedCount = 0;
+  for (const ripJob of fieryJobs) {
+    const existingPrintSettings = normalizeJsonObject(ripJob.printSettingsJson);
+    const existingFierySettings = getFierySettingsFromPrintSettings(ripJob.printSettingsJson);
+    if (existingFierySettings.importMode !== 'jmf') continue;
+
+    const normalizedPdfPath = getFieryPdfPath(existingFierySettings);
+    const normalizedCopiedFileName = getFieryCopiedFileName(existingFierySettings, normalizedPdfPath);
+    const normalizedFierySettings = {
+      ...existingFierySettings,
+      workflowName: pickStringSetting(existingFierySettings.workflowName) ?? fallbackWorkflowName,
+      stagedPdfPath: normalizedPdfPath,
+      destinationPath: normalizedPdfPath,
+      copiedFileName: normalizedCopiedFileName,
+    };
+
+    const shouldBackfill =
+      existingFierySettings.workflowName !== normalizedFierySettings.workflowName ||
+      existingFierySettings.stagedPdfPath !== normalizedFierySettings.stagedPdfPath ||
+      existingFierySettings.destinationPath !== normalizedFierySettings.destinationPath ||
+      existingFierySettings.copiedFileName !== normalizedFierySettings.copiedFileName;
+
+    if (!shouldBackfill) continue;
+
+    await prisma.ripJob.update({
+      where: { id: ripJob.id },
+      data: {
+        printSettingsJson: toJsonValue({
+          ...existingPrintSettings,
+          fiery: normalizedFierySettings,
+        }),
+      },
+    });
+    updatedCount++;
+  }
+
+  return updatedCount;
+}
+
+async function repairFieryJobMetadata(): Promise<number> {
+  if (fieryMetadataRepairPromise) {
+    return fieryMetadataRepairPromise;
+  }
+
+  fieryMetadataRepairPromise = repairFieryJobMetadataInternal().finally(() => {
+    fieryMetadataRepairPromise = null;
+  });
+
+  return fieryMetadataRepairPromise;
 }
 
 function normalizeFieryFileName(value: string): string {
@@ -614,6 +695,15 @@ function thriveStatusToRipStatus(statusCode: number): string | null {
  */
 async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
   const updates: RipStatusUpdate[] = [];
+
+  try {
+    const repairedCount = await repairFieryJobMetadata();
+    if (repairedCount > 0) {
+      console.info(`[RipQueue] Repaired ${repairedCount} Fiery job metadata row(s)`);
+    }
+  } catch (err) {
+    console.warn('[RipQueue] Fiery metadata repair failed:', err instanceof Error ? err.message : err);
+  }
 
   // Get all active (non-terminal) RipJobs
   const activeJobs = await prisma.ripJob.findMany({

@@ -124,3 +124,5 @@
 
 
 | 2026-04-14T08:02:41.0000000-04:00 | FIERY-SUBMIT-092 | Fiery JMF metadata now backfills staged PDF paths and workflow names | The active JMF Fiery job now syncs against the stored PDF destination instead of staying stuck in queued state, and the current backlog was reclassified to PROCESSING after the compatibility fix. | packages/server/src/services/rip-queue.ts; live sync run on the Fiery queue |
+
+| 2026-04-14T08:20:00.0000000-04:00 | FIERY-SUBMIT-093 | Fiery metadata repair sweep now self-heals older JMF rows | The Fiery sync path now normalizes older JMF rows to the effective workflow name and staged PDF path during sync, and the current backlog contains no stale rows. | packages/server/src/services/rip-queue.ts; live Fiery sync sweep |
