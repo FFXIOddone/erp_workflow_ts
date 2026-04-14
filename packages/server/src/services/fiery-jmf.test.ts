@@ -37,7 +37,7 @@ describe('matchFieryWorkflowName', () => {
     expect(normalizeFieryQueueEntryId(null)).toBeUndefined();
   });
 
-  it('keeps the Fiery media mapping separate from the physical substrate name', () => {
+  it('keeps an explicit Fiery RIP media name when present', () => {
     expect(
       resolveFieryMediaMappingName({
         media: 'Oppboga Wide - Fast 4',
@@ -60,10 +60,10 @@ describe('matchFieryWorkflowName', () => {
         resolution: '1000 720',
         colorMode: 'CMYK',
       }),
-    ).toBe('60 inch Web');
+    ).toBe('PSA CMYK 1000dpi Binary F4 SE1 FE');
   });
 
-  it('treats Any as a wildcard in the media mapping table', () => {
+  it('treats Any as a wildcard while still preferring the most specific live RIP row', () => {
     const mapping = findFieryMediaMapping({
       substrate: 'Oppboga Wide - Fast 4',
       inkType: 'EFI GSLX Pro',
@@ -77,8 +77,18 @@ describe('matchFieryWorkflowName', () => {
       mediaType: 'Default',
     });
 
+    expect(mapping?.ripMedia).toBe('PSA CMYK 1000dpi Binary F4 SE1 FE');
+    expect(mapping?.label).toBe('PSA CMYK 1000dpi Binary F4 SE1 FE');
+  });
+
+  it('still falls back to the broad live RIP mapping when no specific profile matches', () => {
+    const mapping = findFieryMediaMapping({
+      substrate: 'Custom Stock',
+      inkType: 'EFI GSLX Pro',
+      mediaType: 'Default',
+    });
+
     expect(mapping?.ripMedia).toBe('60 inch Web');
-    expect(mapping?.label).toBe('Oppboga Wide - Fast 4');
   });
 
   it('defaults the RIP media mapping to the known Fiery media mapping name', () => {

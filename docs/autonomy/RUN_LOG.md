@@ -228,3 +228,8 @@
 - Claimed slice: make Fiery diagnostics read the same workflow name that submission uses.
 - Updated the Rip Queue diagnostics route to resolve the workflow through the shared Fiery workflow-selection helper, so the diagnostics view and the submit path now choose the same effective workflow name.
 - This keeps the controller/default selection consistent between the UI diagnostics panel and actual Fiery submissions.
+
+### 2026-04-14 Fiery live media mapping rows
+- Claimed slice: add the live RIP box media catalog rows and stop defaulting to the broad PSA fallback.
+- Added the five live Fiery media profile rows discovered under `EFI Media Profiles` on the RIP box, then taught the shared lookup to prefer the most specific matching row instead of the broad fallback.
+- The Fiery media mapping tests now verify that explicit RIP media names still win when provided, while PSA fallbacks resolve to the live catalog row names from the RIP box.
