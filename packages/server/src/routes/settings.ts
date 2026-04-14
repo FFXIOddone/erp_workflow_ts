@@ -64,6 +64,7 @@ const UpdateSettingsSchema = z.object({
   // Production List Settings
   productionListPath: z.string().nullable().optional(),
   enableProductionListSync: z.boolean().optional(),
+  fieryWorkflowName: z.string().nullable().optional(),
 
   // Network Drive
   networkDriveBasePath: z.string().nullable().optional(),

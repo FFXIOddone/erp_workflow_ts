@@ -616,6 +616,8 @@ export function PrintingStation() {
   const [ripDashboard, setRipDashboard] = useState<RipDashboardData | null>(null);
   const [thriveStatus, setThriveStatus] = useState<ThriveConnectivityData | null>(null);
   const [fieryDiagnostics, setFieryDiagnostics] = useState<FieryDiagnostics | null>(null);
+  const [selectedFieryWorkflow, setSelectedFieryWorkflow] = useState<string | null>(null);
+  const [savingFieryWorkflow, setSavingFieryWorkflow] = useState(false);
   const [printEquipment, setPrintEquipment] = useState<EquipmentListItem[]>([]);
   const [liveEquipmentStatus, setLiveEquipmentStatus] = useState<
     Record<string, EquipmentLiveStatus>
@@ -772,6 +774,62 @@ export function PrintingStation() {
       setOperationsLoading(false);
     }
   }, [fetchJson, token]);
+
+  const currentFieryWorkflow = fieryDiagnostics?.workflow.outputChannelName?.trim() || 'Zund G7';
+
+  useEffect(() => {
+    if (selectedFieryWorkflow == null) {
+      setSelectedFieryWorkflow(currentFieryWorkflow);
+    }
+  }, [currentFieryWorkflow, selectedFieryWorkflow]);
+
+  const fieryWorkflowChoices = useMemo(() => {
+    const values = new Set<string>(['Zund G7']);
+    if (fieryDiagnostics?.workflow.outputChannelName?.trim()) {
+      values.add(fieryDiagnostics.workflow.outputChannelName.trim());
+    }
+    for (const wf of fieryDiagnostics?.workflow.discoveredWorkflows ?? []) {
+      if (wf?.trim()) values.add(wf.trim());
+    }
+    if (selectedFieryWorkflow?.trim()) values.add(selectedFieryWorkflow.trim());
+    return Array.from(values);
+  }, [fieryDiagnostics?.workflow.discoveredWorkflows, fieryDiagnostics?.workflow.outputChannelName, selectedFieryWorkflow]);
+
+  const fieryWorkflowValue = (selectedFieryWorkflow ?? currentFieryWorkflow).trim() || 'Zund G7';
+  const hasWorkflowSelectionChanged =
+    fieryWorkflowValue !==
+    ((fieryDiagnostics?.workflow.outputChannelName?.trim() || 'Zund G7').trim() || 'Zund G7');
+
+  const saveFieryWorkflow = useCallback(async () => {
+    setSavingFieryWorkflow(true);
+    try {
+      await fetchJson('/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ fieryWorkflowName: fieryWorkflowValue }),
+      });
+      setFieryDiagnostics((prev) =>
+        prev
+          ? {
+              ...prev,
+              workflow: {
+                ...prev.workflow,
+                outputChannelName: fieryWorkflowValue,
+              },
+            }
+          : prev
+      );
+      toast.success(`Saved Fiery workflow: ${fieryWorkflowValue}`);
+    } catch (err: any) {
+      const message = String(err?.message || 'Failed to save Fiery workflow');
+      if (message.toLowerCase().includes('forbidden') || message.includes('403')) {
+        toast.error('Only admin users can save the Fiery workflow default.');
+      } else {
+        toast.error(`Failed to save Fiery workflow: ${message}`);
+      }
+    } finally {
+      setSavingFieryWorkflow(false);
+    }
+  }, [fetchJson, fieryWorkflowValue]);
 
   fetchRef.current = fetchOrders;
   operationsFetchRef.current = fetchPrintingOperations;
@@ -2266,8 +2324,8 @@ export function PrintingStation() {
                         Fiery import readiness
                       </div>
                       <p className="text-xs text-gray-500">
-                        Files are copied into the Fiery hotfolder and imported with the
-                        controller defaults. The diagnostics below are informational only.
+                        Files are copied into the Fiery hotfolder. The workflow selector controls the
+                        Fiery controller default used by JMF/controller submissions.
                       </p>
 
                       {!fieryDiagnostics ? (
@@ -2320,11 +2378,34 @@ export function PrintingStation() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                             <div>
                               <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                                Controller defaults
+                                Workflow
                               </p>
-                              <p className="mt-1 font-medium text-gray-900">
-                                {fieryDiagnostics.workflow.outputChannelName || 'Using Fiery defaults'}
-                              </p>
+                              <div className="mt-2 space-y-2">
+                                <select
+                                  value={fieryWorkflowValue}
+                                  onChange={(e) => setSelectedFieryWorkflow(e.target.value)}
+                                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-violet-500 focus:ring-violet-500"
+                                >
+                                  {fieryWorkflowChoices.map((wf) => (
+                                    <option key={wf} value={wf}>
+                                      {wf}
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <button
+                                      type="button"
+                                      onClick={saveFieryWorkflow}
+                                      disabled={savingFieryWorkflow || !hasWorkflowSelectionChanged}
+                                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                    {savingFieryWorkflow ? 'Saving…' : 'Save Default'}
+                                  </button>
+                                  <p className="text-xs text-gray-500">
+                                    Used for Fiery controller/JMF submissions. Media stays unchanged.
+                                  </p>
+                                </div>
+                              </div>
                               <p className="text-xs text-gray-500 mt-1">
                                 {fieryDiagnostics.workflow.colorMode || 'Unknown'} ·{' '}
                                 {fieryDiagnostics.workflow.inkType || 'Unknown'}

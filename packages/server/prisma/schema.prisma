@@ -1381,6 +1381,9 @@ model SystemSettings {
   christinaTallyPath          String?  // Override path to Christina's Daily List folder
   pamTallyPath                String?  // Override path to Pam's Daily List (Shipping Tally) folder
 
+  // Fiery / VUTEk Settings
+  fieryWorkflowName          String?  // Default Fiery workflow/output channel shown in the ERP
+
   // Network Drive Settings for linking work orders to file storage
   networkDriveBasePath     String? // e.g., "\\\\SERVER\\Share\\Orders" or "S:\\"
   networkDriveSafariPath   String? // Base path for Safari/Port City Signs 4-digit WOs, e.g. "S:\\Safari"

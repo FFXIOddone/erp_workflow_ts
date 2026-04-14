@@ -943,14 +943,20 @@ ripQueueRouter.post('/batches/hh-global', async (req: AuthRequest, res: Response
  * Returns share accessibility, JMF endpoint discovery, and queue status.
  */
 ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response) => {
-  const [shareResult, discovery, queueStatus, workflowDiscovery, capabilities] = await Promise.all([
+  const [shareResult, discovery, queueStatus, workflowDiscovery, capabilities, settings] = await Promise.all([
     testVutekShareAccess(),
     discoverVutekJmfUrl(),
     getVutekQueueStatus(),
     discoverFieryWorkflows(),
     discoverFieryCapabilities(),
+    prisma.systemSettings.findFirst({
+      where: { id: 'system' },
+      select: { fieryWorkflowName: true },
+    }),
   ]);
-  const effective = getEffectiveVutekSettings();
+  const effective = getEffectiveVutekSettings({
+    outputChannelName: settings?.fieryWorkflowName ?? undefined,
+  });
 
   res.json({
     success: true,
@@ -985,8 +991,8 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
         discoveryError: workflowDiscovery.error ?? null,
         hint:
           workflowDiscovery.workflows.length > 0
-            ? `Found ${workflowDiscovery.workflows.length} workflow(s). Set VUTEK_OUTPUT_CHANNEL only if you want a specific workflow hint: ${workflowDiscovery.workflows.join(', ')}`
-            : 'Plain hotfolder imports still work with controller defaults. VUTEK_OUTPUT_CHANNEL is only needed if you want a specific workflow hint.',
+            ? `Found ${workflowDiscovery.workflows.length} workflow(s). Use the Workflow dropdown to choose the controller default: ${workflowDiscovery.workflows.join(', ')}`
+            : 'Plain hotfolder imports still work with controller defaults. The Workflow dropdown only affects Fiery controller/JMF submissions.',
       },
       media: {
         media: effective.media,
@@ -1032,15 +1038,26 @@ ripQueueRouter.get('/fiery/workflows', async (_req: AuthRequest, res: Response) 
  * Body: { pdfFilename: string } — filename of an existing PDF in the VUTEk Jobs share
  */
 ripQueueRouter.post('/fiery/test-submit', async (req: AuthRequest, res: Response) => {
-  const { pdfFilename } = req.body as { pdfFilename?: string };
+  const { pdfFilename, outputChannelName } = req.body as {
+    pdfFilename?: string;
+    outputChannelName?: string;
+  };
   if (!pdfFilename) {
     throw BadRequestError('pdfFilename is required');
   }
   const shareRoot = '\\\\192.168.254.57\\Users\\Public\\Documents\\VUTEk Jobs';
   const sourcePath = path.join(shareRoot, pdfFilename);
+  const persistedWorkflow = await prisma.systemSettings.findFirst({
+    where: { id: 'system' },
+    select: { fieryWorkflowName: true },
+  });
   const result = await submitVutekJob({
     jobId: `TEST-${Date.now()}`,
     sourceFilePath: sourcePath,
+    settings: {
+      outputChannelName:
+        outputChannelName?.trim() || persistedWorkflow?.fieryWorkflowName || undefined,
+    },
   });
   res.json({ success: result.success, data: result });
 });

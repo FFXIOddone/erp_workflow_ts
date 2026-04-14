@@ -34,11 +34,8 @@ const VUTEK_PROGRAM_DATA_SHARE = `\\\\${VUTEK_HOST}\\ProgramData`;
 const VUTEK_JMF_URL_FALLBACK = `http://${VUTEK_HOST}:${VUTEK_JMF_PORT}/50aeb1ff-652b-4cd2-96b7-2eefda8925f8`;
 
 // Fiery XF output channel / workflow name — must match a workflow in Fiery XF System Manager.
-// "Zund COFFEE BEANERY" (WRK_0038) is used because it has MediaPresetId=22 (96×48 in, 1000×720 dpi),
-// which matches the RIP-side wide-flatbed substrate. The default "ZUND G7" workflow uses
-// MediaPresetId=21 (100×50 in) which mismatches the substrate and causes GetValidPaperProfile
-// to fail with INT_MAX.
-const VUTEK_OUTPUT_CHANNEL = process.env.VUTEK_OUTPUT_CHANNEL ?? 'Zund COFFEE BEANERY';
+// The ERP default is Zund G7 unless overridden in env or by a persisted controller setting.
+const VUTEK_OUTPUT_CHANNEL = process.env.VUTEK_OUTPUT_CHANNEL ?? 'Zund G7';
 
 // Substrate/media name as configured in Fiery XF System Manager → Output → Substrates.
 // Must match the RIP-side substrate, not the printer-side print-media label.

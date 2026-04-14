@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 import {
   Monitor,
@@ -431,6 +432,8 @@ interface FieryDiagnosticsData {
 function FieryDiagnosticsPanel() {
   const [expanded, setExpanded] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
+  const [selectedWorkflow, setSelectedWorkflow] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const { data, isLoading, isFetching, refetch } = useQuery<FieryDiagnosticsData>({
     queryKey: ['rip-queue', 'fiery-diagnostics'],
@@ -438,6 +441,45 @@ function FieryDiagnosticsPanel() {
     enabled: expanded,
     refetchInterval: expanded ? 30_000 : false,
     staleTime: 15_000,
+  });
+
+  const currentWorkflow = data?.workflow?.outputChannelName?.trim() || 'Zund G7';
+
+  useEffect(() => {
+    if (selectedWorkflow == null) {
+      setSelectedWorkflow(currentWorkflow);
+    }
+  }, [currentWorkflow, selectedWorkflow]);
+
+  const workflowChoices = useMemo(() => {
+    const values = new Set<string>(['Zund G7']);
+    if (data?.workflow?.outputChannelName?.trim()) {
+      values.add(data.workflow.outputChannelName.trim());
+    }
+    for (const wf of data?.workflow?.discoveredWorkflows ?? []) {
+      if (wf?.trim()) values.add(wf.trim());
+    }
+    if (selectedWorkflow?.trim()) values.add(selectedWorkflow.trim());
+    return Array.from(values);
+  }, [data?.workflow?.discoveredWorkflows, data?.workflow?.outputChannelName, selectedWorkflow]);
+
+  const workflowValue = (selectedWorkflow ?? currentWorkflow).trim() || 'Zund G7';
+
+  const saveWorkflowMutation = useMutation({
+    mutationFn: async (workflow: string) => api.patch('/settings', { fieryWorkflowName: workflow }),
+    onSuccess: async (_response, workflow) => {
+      setSelectedWorkflow(workflow);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['rip-queue', 'fiery-diagnostics'] }),
+        queryClient.invalidateQueries({ queryKey: ['settings'] }),
+      ]);
+      toast.success(`Saved Fiery workflow: ${workflow}`);
+    },
+    onError: (error: any) => {
+      const message =
+        error?.response?.data?.error || error?.message || 'Failed to save Fiery workflow';
+      toast.error(message);
+    },
   });
 
   const allGood = data && data.share.writable && data.queue.status !== 'Unreachable';
@@ -551,19 +593,35 @@ function FieryDiagnosticsPanel() {
                   <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-800">Fiery defaults</p>
-                  {data.workflow?.outputChannelName ? (
-                    <p className="text-xs text-green-700">
-                      Optional workflow hint:{' '}
-                      <span className="font-mono font-semibold">
-                        {data.workflow.outputChannelName}
-                      </span>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-sm font-medium text-gray-800">Workflow</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => saveWorkflowMutation.mutate(workflowValue)}
+                        disabled={saveWorkflowMutation.isPending || workflowValue === currentWorkflow}
+                        className="px-2.5 py-1 text-xs font-medium rounded-md bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {saveWorkflowMutation.isPending ? 'Saving…' : 'Save Default'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 grid gap-2">
+                    <label className="text-xs font-medium text-gray-500">Controller workflow</label>
+                    <select
+                      value={workflowValue}
+                      onChange={(e) => setSelectedWorkflow(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-violet-500 focus:ring-violet-500"
+                    >
+                      {workflowChoices.map((wf) => (
+                        <option key={wf} value={wf}>
+                          {wf}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500">
+                      This default is used for Fiery controller/JMF submissions. Media stays unchanged.
                     </p>
-                  ) : (
-                    <p className="text-xs text-yellow-700">
-                      Plain hotfolder imports still work with controller defaults.
-                    </p>
-                  )}
+                  </div>
                   {/* Auto-discovered workflows from ProgramData share */}
                   {data.workflow?.discoveredWorkflows &&
                     data.workflow.discoveredWorkflows.length > 0 && (
@@ -583,7 +641,7 @@ function FieryDiagnosticsPanel() {
                         </div>
                         <p className="text-xs text-gray-500 mt-1">
                           Add <span className="font-mono">VUTEK_OUTPUT_CHANNEL=&lt;name&gt;</span>{' '}
-                          only if you want the server to surface a specific workflow hint.
+                          only if you want the server-side fallback to change.
                         </p>
                       </div>
                     )}
