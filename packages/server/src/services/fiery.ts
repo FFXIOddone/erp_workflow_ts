@@ -153,7 +153,7 @@ export async function parseJdfFile(filePath: string): Promise<FieryJob | null> {
         jdfMediaType = mediaEl.MediaType || null;
       }
 
-      // MachineProperties > VutekProp — actual VUTEk media setting
+      // MachineProperties > VutekProp — RIP-side media mapping selected on the Fiery workflow
       // (EFI: namespace prefix is stripped by removeNSPrefix: true)
       const machineProps = pool.MachineProperties || pool['EFI:MachineProperties'];
       if (machineProps) {
@@ -201,8 +201,8 @@ export async function parseJdfFile(filePath: string): Promise<FieryJob | null> {
     const dir = path.dirname(filePath);
     const zccFiles = await findMatchingZccFiles(dir, baseName);
     
-    // Build media info: VutekProp Media is a static default ("60 inch Web"),
-    // JDF Media is also a static default ("3CB 3-Part Carbonless").
+    // Build media info: the JDF Media resource holds the physical substrate/profile,
+    // while VutekProp Media carries the Fiery RIP-side media mapping.
     // Real per-job media comes from Thrive cross-reference (applied later).
     const media: FieryJob['media'] = {
       vutekMedia: vutekMedia || null,

@@ -93,6 +93,7 @@ Zund cutters receive cut files from Thrive via the `Thrive22Cutter_xxx\Zund Cut 
 - **Fiery IP**: `192.168.254.57`
 - **Ports**: 445 (SMB only)
 - **Credentials**: `admin` / (blank password) ✅
+- **Remote Desktop target**: `mstsc /v:192.168.254.57`
 
 ### How It Works
 The VUTEk printer is controlled by Fiery DFE (Digital Front End). Fiery exports job data to a network share.
@@ -112,6 +113,10 @@ The VUTEk printer is controlled by Fiery DFE (Digital Front End). Fiery exports 
 <ColorantOrder>Cyan, Magenta, Yellow, Black, WHITE_INK</ColorantOrder>
 <EFI:VutekProp Media="60 inch Web" Resolution="" PrintMode="" />
 ```
+
+Note:
+- The `<Media ...>` resource is the physical stock/profile.
+- The `EFI:VutekProp Media` value is the Fiery RIP-side media mapping, which should not be replaced with the workflow name.
 
 ### Integration Status ✅ Ready
 

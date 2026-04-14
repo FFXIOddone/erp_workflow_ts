@@ -497,7 +497,7 @@ export async function sendToRip(params: {
   if (hotfolderTarget.ripType === 'Fiery') {
     const fieryWorkOrder = await prisma.workOrder.findUnique({
       where: { id: workOrderId },
-      select: { orderNumber: true, customerName: true, description: true },
+      select: { orderNumber: true, customerName: true, description: true, companyId: true, customerId: true },
     });
     const persistedWorkflow = await prisma.systemSettings.findFirst({
       where: { id: 'system' },
@@ -517,6 +517,7 @@ export async function sendToRip(params: {
       jobInfo: {
         workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
         customerName: fieryWorkOrder?.customerName ?? null,
+        customerId: fieryWorkOrder?.companyId ?? fieryWorkOrder?.customerId ?? null,
         sourceFileName: path.basename(sourceFilePath),
         jobDescription: fieryWorkOrder?.description ?? notes ?? null,
       },

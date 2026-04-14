@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getEffectiveVutekSettings,
   matchFieryWorkflowName,
   normalizeFieryQueueEntryId,
   resolveFieryMediaMappingName,
@@ -23,11 +24,15 @@ describe('matchFieryWorkflowName', () => {
     expect(normalizeFieryQueueEntryId(null)).toBeUndefined();
   });
 
-  it('keeps the Fiery media mapping on the workflow name instead of the substrate name', () => {
+  it('keeps the Fiery media mapping separate from the physical substrate name', () => {
     expect(
       resolveFieryMediaMappingName({
-        outputChannelName: 'ZUND G7',
+        ripMedia: '60 inch Web',
       }),
-    ).toBe('ZUND G7');
+    ).toBe('60 inch Web');
+  });
+
+  it('defaults the RIP media mapping to the known Fiery media mapping name', () => {
+    expect(getEffectiveVutekSettings().ripMedia).toBe('60 inch Web');
   });
 });

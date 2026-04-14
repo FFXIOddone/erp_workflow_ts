@@ -40,6 +40,7 @@ const VUTEK_OUTPUT_CHANNEL = process.env.VUTEK_OUTPUT_CHANNEL ?? 'Zund G7';
 // Substrate/media name as configured in Fiery XF System Manager → Output → Substrates.
 // Must match the RIP-side substrate, not the printer-side print-media label.
 const VUTEK_MEDIA = process.env.VUTEK_MEDIA ?? 'Oppboga Wide - Fast 4';
+const VUTEK_RIP_MEDIA = process.env.VUTEK_RIP_MEDIA ?? '60 inch Web';
 
 // Physical media dimensions in JDF points (1 pt = 1/72 inch): "Width Height".
 // Required so XF can match the substrate to a paper profile (resolution, color mode, ink type).
@@ -143,6 +144,7 @@ export interface VutekPrintSettings {
   media?: string; // e.g. "60 inch Web"
   mediaType?: string; // JDF MediaType, e.g. "Paper"
   mediaUnit?: string; // JDF MediaUnit, e.g. "Sheet"
+  ripMedia?: string; // Fiery RIP-side media mapping name
   printDirection?: string; // "Bidirectional" | "Unidirectional"
   interlaceMode?: string; // "Multipass Standard" | "Multipass Quality" | "Single Pass"
   curing?: string; // "High" | "Normal" | "Low"
@@ -173,6 +175,7 @@ export interface ResolvedVutekPrintSettings extends VutekPrintSettings {
   media: string;
   mediaType: string;
   mediaUnit: string;
+  ripMedia: string;
   printDirection: string;
   interlaceMode: string;
   curing: string;
@@ -216,6 +219,7 @@ export const BLADE_SIGN_DEFAULTS: VutekPrintSettings = {
   media: VUTEK_MEDIA,
   mediaType: VUTEK_MEDIA_TYPE,
   mediaUnit: VUTEK_MEDIA_UNIT,
+  ripMedia: VUTEK_RIP_MEDIA,
   mediaDimension: VUTEK_MEDIA_DIMENSION,
   printDirection: 'Bidirectional',
   interlaceMode: 'Multipass Standard',
@@ -351,9 +355,9 @@ export function matchFieryWorkflowName(
 }
 
 export function resolveFieryMediaMappingName(
-  settings: Pick<ResolvedVutekPrintSettings, 'outputChannelName'>,
+  settings: Pick<ResolvedVutekPrintSettings, 'ripMedia'>,
 ): string {
-  return normalizeWhitespace(settings.outputChannelName || VUTEK_OUTPUT_CHANNEL);
+  return normalizeWhitespace(settings.ripMedia || VUTEK_RIP_MEDIA);
 }
 
 function extractStringStateValues(blobText: string, stateName: string): string[] {
@@ -458,6 +462,7 @@ export function getEffectiveVutekSettings(
     media: merged.media || VUTEK_MEDIA,
     mediaType: merged.mediaType || VUTEK_MEDIA_TYPE,
     mediaUnit: merged.mediaUnit || VUTEK_MEDIA_UNIT,
+    ripMedia: merged.ripMedia || VUTEK_RIP_MEDIA,
     printDirection: merged.printDirection || 'Bidirectional',
     interlaceMode: merged.interlaceMode || 'Multipass Standard',
     curing: merged.curing || 'High',
@@ -522,7 +527,8 @@ function buildJdf(params: {
   const artIntentId = `ADI_${uniqueId}`;
   const componentDimensions = buildComponentDimensions(s.mediaDimension);
   const [aspectX = '1000', aspectY = '720'] = s.resolution.split(' ');
-  const mediaMappingName = resolveFieryMediaMappingName(s);
+  const ripMediaName = resolveFieryMediaMappingName(s);
+  const substrateName = normalizeWhitespace(s.media);
   const nodeFeatures = [
     ['FieryVirtualPrinter', s.outputChannelName],
     ['ColorMode', s.colorMode],
@@ -589,7 +595,7 @@ ${nodeInfoXml}
       </LayoutElement>
     </RunList>
     <Component Class="Quantity" ComponentType="FinalProduct"${componentDimensions ? ` Dimensions="${componentDimensions}"` : ''} EFI:AspectX="${aspectX}" EFI:AspectY="${aspectY}" ID="COMP_${uniqueId}" Status="Available"/>
-    <Media Class="Consumable" DescriptiveName="${escapeXmlAttr(mediaMappingName)}" ProductID="${escapeXmlAttr(mediaMappingName)}" Dimension="${escapeXmlAttr(s.mediaDimension)}" ID="MEDIA_${uniqueId}" MediaType="${escapeXmlAttr(s.mediaType)}" MediaUnit="${escapeXmlAttr(s.mediaUnit)}" Status="Available"/>
+    <Media Class="Consumable" Brand="${escapeXmlAttr(substrateName)}" DescriptiveName="${escapeXmlAttr(substrateName)}" ProductID="${escapeXmlAttr(substrateName)}" Dimension="${escapeXmlAttr(s.mediaDimension)}" ID="MEDIA_${uniqueId}" MediaType="${escapeXmlAttr(s.mediaType)}" MediaUnit="${escapeXmlAttr(s.mediaUnit)}" Status="Available"/>
     <RenderingParams Class="Parameter" ID="REND_${uniqueId}" Status="Available">
       <ObjectResolution Resolution="${escapeXmlAttr(s.resolution)}"/>
     </RenderingParams>
@@ -605,7 +611,7 @@ ${nodeInfoXml}
         FullBleed="false"
         InterlaceMode="${escapeXmlAttr(s.interlaceMode)}"
         LampMode="${escapeXmlAttr(s.lampMode)}"
-        Media="${escapeXmlAttr(mediaMappingName)}"
+        Media="${escapeXmlAttr(ripMediaName)}"
         Mirror="${s.mirror ? 'true' : 'false'}"
         PrintDirection="${escapeXmlAttr(s.printDirection)}"
         PrintMode="${escapeXmlAttr(s.colorMode)}"
@@ -651,6 +657,7 @@ export async function submitVutekJob(params: {
   jobInfo?: {
     workOrderNumber?: string | null;
     customerName?: string | null;
+    customerId?: string | null;
     sourceFileName?: string | null;
     jobDescription?: string | null;
   };
@@ -665,6 +672,10 @@ export async function submitVutekJob(params: {
     sourceFileName: jobInfo?.sourceFileName ?? path.basename(sourceFilePath),
     jobDescription: jobInfo?.jobDescription ?? null,
   });
+  const jobCommentParts: string[] = [];
+  if (jobInfo?.sourceFileName) jobCommentParts.push(`Source: ${jobInfo.sourceFileName}`);
+  if (jobInfo?.customerName) jobCommentParts.push(`Customer: ${jobInfo.customerName}`);
+  if (jobInfo?.customerId) jobCommentParts.push(`CustomerID: ${jobInfo.customerId}`);
 
   // Files are staged locally on the ERP server and served via HTTP.
   // The JDF Connector downloads both JDF and PDF over HTTP, placing the PDF in
@@ -701,7 +712,7 @@ export async function submitVutekJob(params: {
     jobTicketName,
     pdfLocalPath: pdfHttpUrl, // passed to buildJdf as "pdfLocalPath" but it's an HTTP URL
     settings: resolvedSettings,
-    jobComment: jobInfo?.sourceFileName ? `Source: ${jobInfo.sourceFileName}` : undefined,
+    jobComment: jobCommentParts.length > 0 ? jobCommentParts.join(' | ') : undefined,
   });
 
   try {

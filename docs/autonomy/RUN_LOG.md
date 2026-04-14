@@ -147,3 +147,9 @@
 - Verified `packages/server/src/services/fiery-jmf.ts` now resolves Fiery media mapping names from the workflow/output channel only.
 - Submitted a real Jimmy Dean blade PDF (`WO64392`) through the Fiery JDF Connector.
 - Confirmed the staged JDF used `Media="ZUND G7"` and the Fiery queue-status response reported the job as `Completed`.
+
+### 2026-04-14 Fiery media split and customer context
+- Claimed slice: split Fiery ticket media into physical substrate vs RIP-side media mapping, and include customer context in the submitted job comment.
+- Verified `packages/server/src/services/fiery-jmf.ts` now writes the physical substrate to `<Media>` and the Fiery mapping name to `EFI:VutekProp Media`.
+- Added customer name / customer ID context to the Fiery submission comment when available from the order.
+- Submitted a real Jimmy Dean blades PDF again after the fix; the JDF now contains `Brand="Oppboga Wide - Fast 4"` and `EFI:VutekProp Media="60 inch Web"`, and the connector accepted the job without error.
