@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { matchFieryWorkflowName, normalizeFieryQueueEntryId } from './fiery-jmf.js';
+import {
+  matchFieryWorkflowName,
+  normalizeFieryQueueEntryId,
+  resolveFieryMediaMappingName,
+} from './fiery-jmf.js';
 
 describe('matchFieryWorkflowName', () => {
   it('resolves an exact case-insensitive workflow match from the discovered names', () => {
@@ -17,5 +21,13 @@ describe('matchFieryWorkflowName', () => {
     expect(normalizeFieryQueueEntryId(' 0 ')).toBe('0');
     expect(normalizeFieryQueueEntryId('')).toBeUndefined();
     expect(normalizeFieryQueueEntryId(null)).toBeUndefined();
+  });
+
+  it('keeps the Fiery media mapping on the workflow name instead of the substrate name', () => {
+    expect(
+      resolveFieryMediaMappingName({
+        outputChannelName: 'ZUND G7',
+      }),
+    ).toBe('ZUND G7');
   });
 });

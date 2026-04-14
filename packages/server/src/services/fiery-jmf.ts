@@ -350,6 +350,12 @@ export function matchFieryWorkflowName(
   return caseInsensitive || normalizedPreferred;
 }
 
+export function resolveFieryMediaMappingName(
+  settings: Pick<ResolvedVutekPrintSettings, 'outputChannelName'>,
+): string {
+  return normalizeWhitespace(settings.outputChannelName || VUTEK_OUTPUT_CHANNEL);
+}
+
 function extractStringStateValues(blobText: string, stateName: string): string[] {
   const blockPattern = new RegExp(
     `<StringState[^>]*Name="${stateName}"[^>]*>([\\s\\S]*?)</StringState>`,
@@ -516,6 +522,7 @@ function buildJdf(params: {
   const artIntentId = `ADI_${uniqueId}`;
   const componentDimensions = buildComponentDimensions(s.mediaDimension);
   const [aspectX = '1000', aspectY = '720'] = s.resolution.split(' ');
+  const mediaMappingName = resolveFieryMediaMappingName(s);
   const nodeFeatures = [
     ['FieryVirtualPrinter', s.outputChannelName],
     ['ColorMode', s.colorMode],
@@ -582,7 +589,7 @@ ${nodeInfoXml}
       </LayoutElement>
     </RunList>
     <Component Class="Quantity" ComponentType="FinalProduct"${componentDimensions ? ` Dimensions="${componentDimensions}"` : ''} EFI:AspectX="${aspectX}" EFI:AspectY="${aspectY}" ID="COMP_${uniqueId}" Status="Available"/>
-    <Media Class="Consumable" DescriptiveName="${escapeXmlAttr(s.media)}" ProductID="${escapeXmlAttr(s.media)}" Dimension="${escapeXmlAttr(s.mediaDimension)}" ID="MEDIA_${uniqueId}" MediaType="${escapeXmlAttr(s.mediaType)}" MediaUnit="${escapeXmlAttr(s.mediaUnit)}" Status="Available"/>
+    <Media Class="Consumable" DescriptiveName="${escapeXmlAttr(mediaMappingName)}" ProductID="${escapeXmlAttr(mediaMappingName)}" Dimension="${escapeXmlAttr(s.mediaDimension)}" ID="MEDIA_${uniqueId}" MediaType="${escapeXmlAttr(s.mediaType)}" MediaUnit="${escapeXmlAttr(s.mediaUnit)}" Status="Available"/>
     <RenderingParams Class="Parameter" ID="REND_${uniqueId}" Status="Available">
       <ObjectResolution Resolution="${escapeXmlAttr(s.resolution)}"/>
     </RenderingParams>
@@ -598,7 +605,7 @@ ${nodeInfoXml}
         FullBleed="false"
         InterlaceMode="${escapeXmlAttr(s.interlaceMode)}"
         LampMode="${escapeXmlAttr(s.lampMode)}"
-        Media="${escapeXmlAttr(s.media)}"
+        Media="${escapeXmlAttr(mediaMappingName)}"
         Mirror="${s.mirror ? 'true' : 'false'}"
         PrintDirection="${escapeXmlAttr(s.printDirection)}"
         PrintMode="${escapeXmlAttr(s.colorMode)}"
