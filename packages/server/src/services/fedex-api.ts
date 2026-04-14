@@ -146,6 +146,24 @@ const trackingRequestInFlight = new Map<string, Promise<FedExTrackingSnapshot>>(
 const shipmentSyncInFlight = new Map<string, Promise<FedExShipmentStatusSyncResult>>();
 const backgroundRefreshByShipment = new Map<string, number>();
 
+function buildFedExTrackingSnapshotCacheKey(trackingNumber: string): string {
+  return `tracking:${normalizeTrackingNumber(trackingNumber) ?? trackingNumber.trim()}`;
+}
+
+function buildFedExReferenceSnapshotCacheKey(candidate: FedExReferenceLookup): string {
+  return `reference:${candidate.type}:${candidate.value}:${candidate.shipDateBegin}:${candidate.shipDateEnd}:${candidate.destinationCountryCode ?? ''}:${candidate.destinationPostalCode ?? ''}`;
+}
+
+function clearFedExTrackingSnapshotCache(
+  trackingNumber: string,
+  referenceCandidate: FedExReferenceLookup | null
+): void {
+  snapshotCache.delete(buildFedExTrackingSnapshotCacheKey(trackingNumber));
+  if (referenceCandidate) {
+    snapshotCache.delete(buildFedExReferenceSnapshotCacheKey(referenceCandidate));
+  }
+}
+
 export function isFedExShipmentCarrierEligible(carrier: Carrier | null | undefined): boolean {
   return carrier === Carrier.FEDEX || carrier === Carrier.OTHER;
 }
@@ -701,7 +719,7 @@ export async function fetchFedExTrackingSnapshot(
   }
 
   return fetchFedExTrackingSnapshotFromRequest(
-    `tracking:${normalizedTrackingNumber}`,
+    buildFedExTrackingSnapshotCacheKey(normalizedTrackingNumber),
     '/track/v1/trackingnumbers',
     {
       includeDetailedScans: true,
@@ -746,7 +764,7 @@ export async function fetchFedExTrackingSnapshotByReference(
   };
 
   return fetchFedExTrackingSnapshotFromRequest(
-    `reference:${candidate.type}:${normalizedReferenceValue}:${candidate.shipDateBegin}:${candidate.shipDateEnd}:${candidate.destinationCountryCode ?? ''}:${candidate.destinationPostalCode ?? ''}`,
+    buildFedExReferenceSnapshotCacheKey(candidate),
     '/track/v1/referencenumbers',
     requestBody,
     normalizedReferenceValue,
@@ -1051,6 +1069,8 @@ export async function syncFedExTrackingForShipment(
         },
       });
     });
+
+    clearFedExTrackingSnapshotCache(resolvedTrackingNumber, lookupMode === 'reference' ? referenceCandidate : null);
 
     return {
       shipmentId,

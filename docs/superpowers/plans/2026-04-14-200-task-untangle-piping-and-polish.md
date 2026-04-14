@@ -27,7 +27,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Extract a shared FedEx location formatter and use it across shipping cards.
 - [x] Consolidate ambiguous-tracking reconciliation into one repair job.
 - [x] Ensure hourly tracking refresh skips shipments with no real FedEx identifier.
-- [ ] Audit shipment caches so stale values cannot outlive a fresh API result.
+- [x] Audit shipment caches so stale values cannot outlive a fresh API result.
 
 ### Fiery / RIP
 - [ ] Create one Fiery media mapping resolver used by JDF builder, queue repair, and diagnostics.
