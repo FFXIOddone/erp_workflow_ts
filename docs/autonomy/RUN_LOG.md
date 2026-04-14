@@ -244,3 +244,8 @@
 - Added `fiery-job-identity.ts` with shared Fiery job-name normalization, work-order normalization, Thrive path extraction, and search-term building.
 - Rewired `fiery.ts` and `rip-queue.ts` to use the shared helper so matching and path parsing no longer live in separate inline branches.
 - Added focused tests for normalization, work-order extraction, and search-term derivation.
+
+### 2026-04-14 Fiery description resolution helper
+- Claimed slice: collapse duplicate Fiery hotfolder versus JMF description copy into one source.
+- Added `fiery-job-description.ts` so the RIP send path resolves the Fiery job description once before handing it to the JMF submission and stored hotfolder metadata.
+- The Fiery submission flow now uses the same resolved description for the ticket name, JMF job info, and persisted Fiery print settings.

@@ -21,6 +21,7 @@ import { THRIVE_CONFIG, parseQueueFile, type ThriveJob } from './thrive.js';
 import { extractCutId } from './zund-match.js';
 import { broadcast } from '../ws/server.js';
 import { resolveFieryCustomerMetadata } from './fiery-customer-metadata.js';
+import { resolveFieryJobDescription } from './fiery-job-description.js';
 import { findMatchingFieryDownloadFile } from './fiery-download-matching.js';
 import {
   normalizeFieryJobName,
@@ -457,11 +458,15 @@ export async function sendToRip(params: {
       sourceFileName: path.basename(sourceFilePath),
     });
     const { customerName, customerId } = customerMetadata;
+    const jobDescription = resolveFieryJobDescription({
+      workOrderDescription: fieryWorkOrder?.description ?? null,
+      notes,
+    });
     const jobTicketName = buildFieryJobTicketName({
       workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
       customerName,
       sourceFileName: path.basename(sourceFilePath),
-      jobDescription: fieryWorkOrder?.description ?? notes ?? null,
+      jobDescription,
     });
 
     const fierySubmit = await submitVutekJob({
@@ -472,7 +477,7 @@ export async function sendToRip(params: {
         customerName,
         customerId,
         sourceFileName: path.basename(sourceFilePath),
-        jobDescription: fieryWorkOrder?.description ?? notes ?? null,
+        jobDescription,
       },
       settings: {
         ...additionalSettings,
@@ -497,7 +502,7 @@ export async function sendToRip(params: {
         workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
         customerName,
         customerId,
-        jobDescription: fieryWorkOrder?.description ?? notes ?? null,
+        jobDescription,
         jobTicketName,
         sourceFileName: path.basename(sourceFilePath),
         copiedFileName: path.basename(fierySubmit.pdfDestPath ?? sourceFilePath),
