@@ -52,6 +52,7 @@ import {
   VUTEK_JOB_DIR,
 } from '../services/fiery-jmf.js';
 import { buildFieryJobTimelineSummary } from '../services/fiery-job-timeline.js';
+import { buildFieryJobTimelineMetrics } from '../services/fiery-job-timeline.js';
 import { resolveFieryWorkflowSelection } from '../services/fiery-workflow-selection.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
@@ -383,28 +384,7 @@ ripQueueRouter.get('/jobs/:id', async (req: AuthRequest, res: Response) => {
 
   if (!job) throw NotFoundError('RIP job not found');
 
-  // Calculate timing KPIs for this job
-  const timing: Record<string, number | null> = {};
-  if (job.rippedAt && job.queuedAt) {
-    timing.queueToRipMinutes = Math.round(
-      (new Date(job.rippedAt).getTime() - new Date(job.queuedAt).getTime()) / 60000
-    );
-  }
-  if (job.printStartedAt && job.rippedAt) {
-    timing.ripToPrintMinutes = Math.round(
-      (new Date(job.printStartedAt).getTime() - new Date(job.rippedAt).getTime()) / 60000
-    );
-  }
-  if (job.printCompletedAt && job.printStartedAt) {
-    timing.printMinutes = Math.round(
-      (new Date(job.printCompletedAt).getTime() - new Date(job.printStartedAt).getTime()) / 60000
-    );
-  }
-  if (job.printCompletedAt && job.queuedAt) {
-    timing.totalMinutes = Math.round(
-      (new Date(job.printCompletedAt).getTime() - new Date(job.queuedAt).getTime()) / 60000
-    );
-  }
+  const timing = buildFieryJobTimelineMetrics(job);
 
   res.json({ success: true, data: { ...job, timing } });
 });

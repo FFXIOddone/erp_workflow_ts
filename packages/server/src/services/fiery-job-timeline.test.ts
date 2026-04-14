@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFieryJobTimelineSummary } from './fiery-job-timeline.js';
+import { buildFieryJobTimelineMetrics, buildFieryJobTimelineSummary } from './fiery-job-timeline.js';
 
 describe('buildFieryJobTimelineSummary', () => {
   it('builds the four Fiery stage timestamps and durations from job metadata', () => {
@@ -105,5 +105,34 @@ describe('buildFieryJobTimelineSummary', () => {
         complete: false,
       })
     );
+  });
+
+  it('reuses the same parsed timestamps for timing metrics', () => {
+    const timing = buildFieryJobTimelineMetrics({
+      id: 'job-3',
+      workOrderId: 'wo-3',
+      sourceFileName: 'metrics.pdf',
+      status: 'PRINTED',
+      queuedAt: new Date('2026-04-14T12:00:00.000Z'),
+      rippedAt: new Date('2026-04-14T12:08:00.000Z'),
+      printStartedAt: new Date('2026-04-14T12:10:00.000Z'),
+      printCompletedAt: new Date('2026-04-14T12:18:00.000Z'),
+      printSettingsJson: {
+        fiery: {
+          downloadedAt: '2026-04-14T12:03:00.000Z',
+        },
+      },
+      workOrder: {
+        orderNumber: '64526',
+        customerName: 'Timing Customer',
+      },
+    });
+
+    expect(timing).toEqual({
+      queueToRipMinutes: 8,
+      ripToPrintMinutes: 2,
+      printMinutes: 8,
+      totalMinutes: 18,
+    });
   });
 });

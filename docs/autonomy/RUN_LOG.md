@@ -198,3 +198,8 @@
 - Claimed slice: move Fiery workflow selection fallback logic out of routes into one service.
 - Added `resolveFieryWorkflowSelection(...)` and wired it into the Fiery diagnostics test-submit route plus the Fiery metadata repair path.
 - The route now delegates persisted/default fallback selection to one helper, and the shared Fiery workflow name test covers explicit, persisted, and default precedence.
+
+### 2026-04-14 Fiery timeline state helper
+- Claimed slice: consolidate Fiery queued, processing, and completed state parsing into one timeline helper.
+- Added `buildFieryJobTimelineMetrics(...)` alongside the existing Fiery timeline summary helper so the route no longer re-parses queue/rip/print timing inline.
+- The Fiery job-detail route now reuses the same parsed timestamps as the diagnostics timeline helper, keeping queue/rip/print timing semantics in one place.

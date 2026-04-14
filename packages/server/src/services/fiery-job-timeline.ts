@@ -25,12 +25,20 @@ export interface FieryJobTimelineSource {
   status: string;
   queuedAt: Date | string;
   rippedAt?: Date | string | null;
+  printStartedAt?: Date | string | null;
   printCompletedAt?: Date | string | null;
   printSettingsJson?: unknown;
   workOrder: {
     orderNumber: string;
     customerName: string;
   };
+}
+
+export interface FieryJobTimelineMetrics {
+  queueToRipMinutes: number | null;
+  ripToPrintMinutes: number | null;
+  printMinutes: number | null;
+  totalMinutes: number | null;
 }
 
 function normalizeIsoTimestamp(value: Date | string | null | undefined): string | null {
@@ -62,19 +70,56 @@ function diffMinutes(laterMs: number | null, earlierMs: number | null): number |
   return Math.max(0, Math.round((laterMs - earlierMs) / 60000));
 }
 
-export function buildFieryJobTimelineSummary(job: FieryJobTimelineSource): FieryJobTimelineSummary {
+function buildFieryJobTimelineState(job: FieryJobTimelineSource): {
+  submittedAt: string | null;
+  downloadedAt: string | null;
+  processedAt: string | null;
+  printStartedAt: string | null;
+  printedAt: string | null;
+  submittedMs: number | null;
+  downloadedMs: number | null;
+  processedMs: number | null;
+  printStartedMs: number | null;
+  printedMs: number | null;
+} {
   const submittedAt = normalizeIsoTimestamp(job.queuedAt);
   const downloadedAt = extractFieryDownloadedAt(job.printSettingsJson);
   const processedAt = normalizeIsoTimestamp(job.rippedAt);
+  const printStartedAt = normalizeIsoTimestamp(job.printStartedAt);
   const printedAt = normalizeIsoTimestamp(job.printCompletedAt);
 
-  const submittedMs = parseTimestampMs(submittedAt);
-  const downloadedMs = parseTimestampMs(downloadedAt);
-  const processedMs = parseTimestampMs(processedAt);
-  const printedMs = parseTimestampMs(printedAt);
+  return {
+    submittedAt,
+    downloadedAt,
+    processedAt,
+    printStartedAt,
+    printedAt,
+    submittedMs: parseTimestampMs(submittedAt),
+    downloadedMs: parseTimestampMs(downloadedAt),
+    processedMs: parseTimestampMs(processedAt),
+    printStartedMs: parseTimestampMs(printStartedAt),
+    printedMs: parseTimestampMs(printedAt),
+  };
+}
 
-  const processedAnchor = downloadedMs ?? submittedMs;
-  const printedAnchor = processedMs ?? downloadedMs ?? submittedMs;
+export function buildFieryJobTimelineMetrics(job: FieryJobTimelineSource): FieryJobTimelineMetrics {
+  const state = buildFieryJobTimelineState(job);
+  const processedAnchor = state.downloadedMs ?? state.submittedMs;
+  const printStartAnchor = state.processedMs ?? processedAnchor;
+  const printedAnchor = state.printStartedMs ?? printStartAnchor;
+
+  return {
+    queueToRipMinutes: diffMinutes(state.processedMs, state.submittedMs),
+    ripToPrintMinutes: diffMinutes(state.printStartedMs, printStartAnchor),
+    printMinutes: diffMinutes(state.printedMs, printedAnchor),
+    totalMinutes: diffMinutes(state.printedMs, state.submittedMs),
+  };
+}
+
+export function buildFieryJobTimelineSummary(job: FieryJobTimelineSource): FieryJobTimelineSummary {
+  const state = buildFieryJobTimelineState(job);
+  const processedAnchor = state.downloadedMs ?? state.submittedMs;
+  const printedAnchor = state.processedMs ?? state.downloadedMs ?? state.submittedMs;
 
   return {
     jobId: job.id,
@@ -87,30 +132,30 @@ export function buildFieryJobTimelineSummary(job: FieryJobTimelineSource): Fiery
       {
         key: 'submitted',
         label: 'Submitted',
-        time: submittedAt,
+        time: state.submittedAt,
         durationMinutes: null,
-        complete: submittedAt !== null,
+        complete: state.submittedAt !== null,
       },
       {
         key: 'downloaded',
         label: 'Downloaded',
-        time: downloadedAt,
-        durationMinutes: diffMinutes(downloadedMs, submittedMs),
-        complete: downloadedAt !== null,
+        time: state.downloadedAt,
+        durationMinutes: diffMinutes(state.downloadedMs, state.submittedMs),
+        complete: state.downloadedAt !== null,
       },
       {
         key: 'processed',
         label: 'Processed',
-        time: processedAt,
-        durationMinutes: diffMinutes(processedMs, processedAnchor),
-        complete: processedAt !== null,
+        time: state.processedAt,
+        durationMinutes: diffMinutes(state.processedMs, processedAnchor),
+        complete: state.processedAt !== null,
       },
       {
         key: 'printed',
         label: 'Printed',
-        time: printedAt,
-        durationMinutes: diffMinutes(printedMs, printedAnchor),
-        complete: printedAt !== null,
+        time: state.printedAt,
+        durationMinutes: diffMinutes(state.printedMs, printedAnchor),
+        complete: state.printedAt !== null,
       },
     ],
   };
