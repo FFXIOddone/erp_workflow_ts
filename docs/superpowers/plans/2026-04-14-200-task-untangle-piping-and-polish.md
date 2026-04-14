@@ -38,7 +38,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Unify Fiery submission job ID parsing so `0` and missing values are handled once.
 - [x] Audit Fiery JDF creation for any remaining hardcoded PSA-style defaults.
 - [ ] Add more known Fiery media mapping rows from the live RIP box.
-- [ ] Make Fiery diagnostics read the same workflow name that submission uses.
+- [x] Make Fiery diagnostics read the same workflow name that submission uses.
 - [ ] Extract Fiery download-file matching into one helper.
 - [ ] Normalize Fiery job naming and work-order extraction in one place.
 - [ ] Collapse duplicate Fiery hotfolder versus JMF description copy into one source.

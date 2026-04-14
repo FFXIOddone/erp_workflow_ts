@@ -223,3 +223,8 @@
 - Claimed slice: audit Fiery JDF creation for any remaining hardcoded PSA-style defaults.
 - Audited the Fiery JDF builder and confirmed there is no PSA default being written into the job ticket; the only remaining `PSA` check is the legacy placeholder guard in the media-mapping resolver.
 - No code changes were needed for this slice because the remaining PSA reference is intentionally defensive, not a hardcoded default path.
+
+### 2026-04-14 Fiery diagnostics workflow alignment
+- Claimed slice: make Fiery diagnostics read the same workflow name that submission uses.
+- Updated the Rip Queue diagnostics route to resolve the workflow through the shared Fiery workflow-selection helper, so the diagnostics view and the submit path now choose the same effective workflow name.
+- This keeps the controller/default selection consistent between the UI diagnostics panel and actual Fiery submissions.

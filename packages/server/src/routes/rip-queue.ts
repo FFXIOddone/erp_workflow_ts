@@ -959,7 +959,7 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
     }),
   ]);
   const effective = getEffectiveVutekSettings({
-    outputChannelName: settings?.fieryWorkflowName ?? undefined,
+    outputChannelName: resolveFieryWorkflowSelection(undefined, settings?.fieryWorkflowName),
   });
 
   res.json({
