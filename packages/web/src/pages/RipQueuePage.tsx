@@ -23,6 +23,7 @@ import {
   ArrowRight,
   Search,
   Filter,
+  Package,
 } from 'lucide-react';
 import {
   RIP_JOB_STATUS_DISPLAY_NAMES,
@@ -427,6 +428,15 @@ interface FieryDiagnosticsData {
     hint: string;
   };
   queue: { status: string; queueSize: number; raw: string | null };
+  media?: {
+    media: string | null;
+    mediaType: string | null;
+    mapping: string | null;
+    mediaUnit: string | null;
+    mediaDimension: string | null;
+    resolution: string | null;
+    whiteInkEnabled: boolean;
+  };
   latestJob?: {
     jobId: string;
     workOrderId: string;
@@ -717,6 +727,30 @@ function FieryDiagnosticsPanel() {
                   )}
                 </div>
               </div>
+
+              {/* Media Status */}
+              {data.media && (
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-sky-50 border border-sky-100">
+                  <Package className="w-4 h-4 text-sky-500 mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-sm font-medium text-gray-800">Media Mapping</p>
+                      <span className="text-xs text-sky-700 font-medium">
+                        {data.media.mapping ?? 'Not mapped'}
+                      </span>
+                    </div>
+                    <div className="mt-2 grid gap-1 text-xs text-gray-600 sm:grid-cols-2">
+                      <DetailField label="Media" value={data.media.media} />
+                      <DetailField label="Media Type" value={data.media.mediaType} />
+                      <DetailField label="Media Unit" value={data.media.mediaUnit} />
+                      <DetailField label="Resolution" value={data.media.resolution} />
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500">
+                      This is the RIP-side mapping used for Fiery JMF submissions.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center gap-3">
                 <button

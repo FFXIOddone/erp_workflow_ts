@@ -30,7 +30,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Audit shipment caches so stale values cannot outlive a fresh API result.
 
 ### Fiery / RIP
-- [ ] Create one Fiery media mapping resolver used by JDF builder, queue repair, and diagnostics.
+- [x] Create one Fiery media mapping resolver used by JDF builder, queue repair, and diagnostics.
 - [ ] Move Fiery workflow selection fallback logic out of routes into one service.
 - [ ] Consolidate Fiery queued, processing, and completed state parsing into one timeline helper.
 - [ ] Add one helper for Fiery customer metadata resolution.

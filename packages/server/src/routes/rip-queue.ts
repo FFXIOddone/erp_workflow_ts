@@ -47,6 +47,7 @@ import {
   testVutekShareAccess,
   getVutekQueueStatus,
   discoverFieryWorkflows,
+  resolveFieryMediaMappingName,
   submitVutekJob,
   VUTEK_JOB_DIR,
 } from '../services/fiery-jmf.js';
@@ -1020,6 +1021,7 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
       media: {
         media: effective.media,
         mediaType: effective.mediaType,
+        mapping: resolveFieryMediaMappingName(effective),
         mediaUnit: effective.mediaUnit,
         mediaDimension: effective.mediaDimension,
         resolution: effective.resolution,

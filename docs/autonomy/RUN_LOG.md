@@ -188,3 +188,8 @@
 - Claimed slice: audit shipment caches so stale values cannot outlive a fresh API result.
 - Added explicit FedEx snapshot cache key builders plus invalidation after successful syncs so the in-memory tracking snapshot cannot linger after a fresh write.
 - The FedEx API test suite still passes after the cache invalidation path was added.
+
+### 2026-04-14 Fiery media resolver diagnostics
+- Claimed slice: surface the Fiery media mapping resolver in diagnostics so the JDF builder, repair path, and UI all point at the same mapping logic.
+- Added the resolved Fiery media mapping to the Rip Queue diagnostics payload and rendered it on the Fiery diagnostics panel.
+- The diagnostics panel now shows the active RIP-side mapping separately from the physical media/substrate values.

@@ -145,3 +145,5 @@
 | 2026-04-14T15:12:00.0000000-04:00 | FEDEX-TRUTH-105 | Ambiguous FedEx tracking now has its own repair lane | PO/reference-style rows are now repaired through a dedicated ambiguous-tracking batch and route, while the hourly lane stays focused on real FedEx tracking numbers. | `packages/server/src/services/fedex-tracking-refresh.ts`; `packages/server/src/routes/fedex.ts`; `packages/server/src/services/fedex-tracking-refresh.test.ts` |
 
 | 2026-04-14T15:16:00.0000000-04:00 | FEDEX-TRUTH-106 | FedEx snapshot caches now invalidate after a fresh sync | Successful FedEx syncs now clear the exact in-memory snapshot cache entries they used, so stale tracking snapshots cannot outlive the latest database write. | `packages/server/src/services/fedex-api.ts` |
+
+| 2026-04-14T15:20:00.0000000-04:00 | FIERY-MEDIA-107 | Fiery diagnostics now show the resolved media mapping | Rip Queue diagnostics now surface the same resolved RIP-side media mapping the JDF builder uses, so operators can confirm the selected mapping without opening the Fiery box. | `packages/server/src/routes/rip-queue.ts`; `packages/web/src/pages/RipQueuePage.tsx` |
