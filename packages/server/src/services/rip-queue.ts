@@ -26,7 +26,7 @@ import {
   type FieryDownloadFile,
   type FieryJob,
 } from './fiery.js';
-import { buildFieryJobTicketName } from './fiery-jmf.js';
+import { buildFieryJobTicketName, submitVutekJob } from './fiery-jmf.js';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -413,34 +413,54 @@ export async function sendToRip(params: {
       where: { id: workOrderId },
       select: { orderNumber: true, customerName: true, description: true },
     });
+    const persistedWorkflow = await prisma.systemSettings.findFirst({
+      where: { id: 'system' },
+      select: { fieryWorkflowName: true },
+    });
     const jobTicketName = buildFieryJobTicketName({
       workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
       customerName: fieryWorkOrder?.customerName ?? null,
       sourceFileName: path.basename(sourceFilePath),
       jobDescription: fieryWorkOrder?.description ?? notes ?? null,
     });
-    const targetFileName = `${jobTicketName}${path.extname(sourceFilePath)}`;
 
-    // Fiery now uses the same plain import flow as Thrive:
-    // copy the PDF into the watched hotfolder with a Thrive-style ticket name
-    // so the operator sees real job context without needing a JDF ticket.
-    const copyResult = await copyToHotfolder(sourceFilePath, hotfolderTarget.path, targetFileName);
-    if (!copyResult.success) {
-      return { success: false, error: copyResult.error };
+    const fierySubmit = await submitVutekJob({
+      jobId: workOrderId,
+      sourceFilePath,
+      jobInfo: {
+        workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
+        customerName: fieryWorkOrder?.customerName ?? null,
+        sourceFileName: path.basename(sourceFilePath),
+        jobDescription: fieryWorkOrder?.description ?? notes ?? null,
+      },
+      settings: {
+        ...additionalSettings,
+        outputChannelName: persistedWorkflow?.fieryWorkflowName?.trim() || undefined,
+      },
+    });
+
+    if (!fierySubmit.success) {
+      return { success: false, error: fierySubmit.error ?? 'Failed to submit Fiery job' };
     }
-    destinationPath = copyResult.destinationPath;
+
+    destinationPath = fierySubmit.pdfDestPath;
+    queueEntryId = fierySubmit.queueEntryId;
+    submissionJobId = fierySubmit.submissionJobId;
     printSettingsJson = {
       ...additionalSettings,
       fiery: {
-        importMode: 'hotfolder',
-        hotfolderPath: hotfolderTarget.path,
+        importMode: 'jmf',
+        workflowName: persistedWorkflow?.fieryWorkflowName ?? null,
         workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
         customerName: fieryWorkOrder?.customerName ?? null,
         jobDescription: fieryWorkOrder?.description ?? notes ?? null,
         jobTicketName,
         sourceFileName: path.basename(sourceFilePath),
-        copiedFileName: path.basename(destinationPath ?? sourceFilePath),
-        destinationPath,
+        copiedFileName: path.basename(fierySubmit.pdfDestPath ?? sourceFilePath),
+        destinationPath: fierySubmit.pdfDestPath ?? null,
+        jdfPath: fierySubmit.jdfPath ?? null,
+        queueEntryId: fierySubmit.queueEntryId ?? null,
+        submissionJobId: fierySubmit.submissionJobId ?? null,
         importedAt: new Date().toISOString(),
       },
     };
