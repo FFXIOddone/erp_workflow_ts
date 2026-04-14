@@ -518,7 +518,7 @@ export function getEffectiveVutekSettings(
  * Build a JDF job ticket for submission to Fiery XF via JMF SubmitQueueEntry.
  * References the PDF at the VUTEk-local path so the Fiery can read it directly.
  */
-function buildJdf(params: {
+export function buildJdf(params: {
   workOrderId: string;
   submissionJobId: string;
   jobTicketName: string;

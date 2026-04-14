@@ -249,3 +249,8 @@
 - Claimed slice: collapse duplicate Fiery hotfolder versus JMF description copy into one source.
 - Added `fiery-job-description.ts` so the RIP send path resolves the Fiery job description once before handing it to the JMF submission and stored hotfolder metadata.
 - The Fiery submission flow now uses the same resolved description for the ticket name, JMF job info, and persisted Fiery print settings.
+
+### 2026-04-14 Fiery JDF assertion helper
+- Claimed slice: add a shared JDF assertion test for media, comment, and customer fields.
+- Exported the pure Fiery JDF builder, added a shared JDF field parser, and covered the generated media, audit comment, and customer metadata in one focused test.
+- This keeps the JDF assertions reusable instead of repeating XML parsing logic in multiple test files.
