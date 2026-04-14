@@ -35,6 +35,7 @@ import { pollVUTEk, isVUTEkIP } from '../services/vutek.js';
 import { pollVUTEkInk, forceRefreshVUTEkInk } from '../services/vutek-ink.js';
 import {
   getAllFieryJobs,
+  buildFieryCutJobRows,
   linkFieryJobsToOrders,
   type FieryJob,
   type FieryJobLinked,
@@ -1621,14 +1622,14 @@ router.get('/thrive/machine/:ip', async (req: AuthRequest, res) => {
         : undefined,
     }));
 
-    // Get cut jobs if this machine has a cutter path
+    // Build cut rows from Fiery jobs with real ZCC files.
+    // These are the only cut records we want to surface on the machine page.
     let cutJobs: any[] = [];
-    if (machine.cutterPath) {
-      try {
-        cutJobs = await thriveService.scanCutFolder(machine.cutterPath);
-      } catch {
-        /* ignore */
-      }
+    try {
+      const fieryJobs = await getAllFieryJobs(allJobs);
+      cutJobs = buildFieryCutJobRows(fieryJobs);
+    } catch {
+      /* ignore */
     }
 
     res.json({

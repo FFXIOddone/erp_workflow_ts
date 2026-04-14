@@ -75,6 +75,20 @@ export interface FieryJobLinked extends FieryJob {
   linkReasons: string[];
 }
 
+export interface FieryCutJobRow {
+  jobName: string;
+  fileName: string;
+  workOrderNumber?: string;
+  device: string;
+  printer: string;
+  media: string;
+  width: number;
+  height: number;
+  guid: string;
+  customerName?: string;
+  companyBrand?: string;
+}
+
 /**
  * Parse a JDF file to extract job metadata
  */
@@ -738,6 +752,34 @@ export async function linkFieryJobsToOrders(jobs: FieryJob[]): Promise<FieryJobL
 }
 
 /**
+ * Convert Fiery jobs into the cut-job row shape used by the equipment detail panel.
+ * Only Fiery jobs with an actual cut file and a usable Thrive/work-order match are included.
+ */
+export function buildFieryCutJobRows(jobs: FieryJob[]): FieryCutJobRow[] {
+  return jobs
+    .filter((job) => job.hasZccCutFile && (job.thriveJobMatch || Boolean(job.workOrderNumber)))
+    .map((job) => {
+      const widthMm = job.dimensions?.widthIn ? Math.round(job.dimensions.widthIn * 25.4) : 0;
+      const heightMm = job.dimensions?.heightIn ? Math.round(job.dimensions.heightIn * 25.4) : 0;
+      const displayMedia = job.media?.description || job.media?.vutekMedia || '—';
+
+      return {
+        jobName: job.jobName,
+        fileName: job.zccFileName || job.fileName,
+        workOrderNumber: job.workOrderNumber ?? undefined,
+        device: 'Fiery ZCC',
+        printer: job.media?.vutekMedia || job.media?.description || 'Fiery',
+        media: displayMedia,
+        width: widthMm,
+        height: heightMm,
+        guid: job.jobId,
+        customerName: job.customerName ?? undefined,
+        companyBrand: undefined,
+      };
+    });
+}
+
+/**
  * Get Fiery job summary statistics
  */
 export async function getFierySummary(): Promise<{
@@ -811,6 +853,7 @@ export const fieryService = {
   getAllJdfFiles,
   getAllFieryJobs,
   linkFieryJobsToOrders,
+  buildFieryCutJobRows,
   getFierySummary,
   enrichFieryJobFromFileServer,
   config: FIERY_CONFIG,

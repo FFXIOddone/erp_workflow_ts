@@ -231,7 +231,7 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
             </span>
             {summary.totalCutJobs > 0 && (
               <span className="px-2 py-1 bg-orange-50 text-orange-700 rounded-full font-medium">
-                {summary.totalCutJobs} cut jobs
+                {summary.totalCutJobs} Fiery cut files
               </span>
             )}
             <span className="px-2 py-1 bg-green-50 text-green-700 rounded-full font-medium">
@@ -266,7 +266,7 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
               tab === 'cut' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            <Scissors className="h-4 w-4 inline mr-1" /> Cut Jobs ({cutJobs.length})
+            <Scissors className="h-4 w-4 inline mr-1" /> Fiery Cut Files ({cutJobs.length})
           </button>
         </div>
       )}
@@ -409,7 +409,7 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
           {cutJobs.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
               <Scissors className="h-8 w-8 mx-auto mb-2 text-gray-300" />
-              <p>No cut jobs pending</p>
+              <p>No Fiery cut files linked</p>
             </div>
           ) : (
             <table className="w-full text-sm">
@@ -456,7 +456,8 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
       <div className="px-4 py-2 border-t border-gray-100 text-xs text-gray-400 flex items-center justify-between">
         <span>
           Showing {tab === 'print' ? filteredPrintJobs.length : cutJobs.length} of{' '}
-          {tab === 'print' ? printJobs.length : cutJobs.length} {tab} jobs
+          {tab === 'print' ? printJobs.length : cutJobs.length}{' '}
+          {tab === 'print' ? 'print jobs' : 'Fiery cut files'}
         </span>
         <span>Auto-refreshes every 30s</span>
       </div>
