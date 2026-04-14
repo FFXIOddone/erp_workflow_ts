@@ -22,6 +22,11 @@ import path from 'path';
 import { XMLParser } from 'fast-xml-parser';
 import { prisma } from '../db/client.js';
 import { thriveService } from './thrive.js';
+import {
+  buildFierySearchTerms,
+  extractFieryWorkOrderContext,
+  normalizeFieryJobName,
+} from './fiery-job-identity.js';
 
 export const FIERY_CONFIG = {
   exportPath: '\\\\192.168.254.57\\EFI Export Folder',
@@ -325,43 +330,6 @@ export async function getAllJdfFiles(): Promise<string[]> {
   }
 }
 
-/**
- * Normalize a job name for matching (remove suffixes, special chars)
- */
-function normalizeJobName(name: string): string {
-  return name
-    .replace(/\.rtl(_\d+)?$/, '')
-    .replace(/_P\d+_T\d+_\d+_\d+$/, '') // Remove Thrive tile suffix
-    .replace(/~\d+(_p\d+)?(_r\d+)?(_c\d+)?$/, '') // Remove page/row/col
-    .replace(/[&()\[\]]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
-/**
- * Extract WO number and customer name from Thrive file path
- * Paths like: S:\CustomerName\WO#####_description\PRINT\file.pdf
- *         or: S:\Safari\CustomerName\WO####_description\PRINT\file.pdf
- */
-function parseThrivePath(filePath: string): {
-  workOrderNumber: string | null;
-  customerName: string | null;
-} {
-  // Extract WO number
-  const woMatch = filePath.match(/WO(\d{4,5})/i);
-  const workOrderNumber = woMatch ? `WO${woMatch[1]}` : null;
-  
-  // Extract customer name (folder before WO folder)
-  // UNC: \\wildesigns-fs1\Company Files\Safari\CustomerName\WO...
-  // UNC: \\wildesigns-fs1\Company Files\CustomerName\YEAR\WO...
-  // Drive: S:\Safari\CustomerName\WO... or S:\CustomerName\WO...
-  const custMatch = filePath.match(/(?:Company Files|[A-Z]:)\\(?:Safari\\)?([^\\]+)\\(?:\d{4}\\)?WO\d/i);
-  const customerName = custMatch ? custMatch[1] : null;
-  
-  return { workOrderNumber, customerName };
-}
-
 interface ThriveLookupEntry {
   fileName: string;
   jobName: string;
@@ -386,12 +354,12 @@ async function buildThriveJobLookup(): Promise<Map<string, ThriveLookupEntry>> {
       };
 
       // Create normalized key from job name
-      const normalizedName = normalizeJobName(job.jobName);
+      const normalizedName = normalizeFieryJobName(job.jobName);
       lookup.set(normalizedName, entry);
 
       // Also index by base file name (without path)
       const baseFileName = path.basename(job.fileName, '.pdf');
-      const normalizedBaseName = normalizeJobName(baseFileName);
+      const normalizedBaseName = normalizeFieryJobName(baseFileName);
       if (!lookup.has(normalizedBaseName)) {
         lookup.set(normalizedBaseName, entry);
       }
@@ -409,13 +377,7 @@ async function buildThriveJobLookup(): Promise<Map<string, ThriveLookupEntry>> {
  */
 async function searchFileServerForSource(jobName: string): Promise<string | null> {
   // Extract key search terms from job name (first meaningful part)
-  const searchTerms = jobName
-    .replace(/\.rtl.*$/, '')
-    .replace(/_P\d+_T\d+_\d+_\d+$/, '') // Remove Thrive suffix
-    .replace(/[-_]/g, ' ')
-    .split(' ')
-    .filter(s => s.length > 4)
-    .slice(0, 2);
+  const searchTerms = buildFierySearchTerms(jobName);
   
   if (searchTerms.length === 0) return null;
 
@@ -483,10 +445,10 @@ function buildThriveJobLookupFromData(printJobs: Array<{ fileName: string; jobNa
   const lookup = new Map<string, ThriveLookupEntry>();
   for (const job of printJobs) {
     const entry: ThriveLookupEntry = { fileName: job.fileName, jobName: job.jobName, printMedia: job.printMedia };
-    const normalizedName = normalizeJobName(job.jobName);
+    const normalizedName = normalizeFieryJobName(job.jobName);
     lookup.set(normalizedName, entry);
     const baseFileName = path.basename(job.fileName, '.pdf');
-    const normalizedBaseName = normalizeJobName(baseFileName);
+    const normalizedBaseName = normalizeFieryJobName(baseFileName);
     if (!lookup.has(normalizedBaseName)) {
       lookup.set(normalizedBaseName, entry);
     }
@@ -518,10 +480,10 @@ async function enrichFieryJobs(
   const jobs = baseJobs.map(cloneFieryJob);
 
   for (const job of jobs) {
-    const normalizedFieryName = normalizeJobName(job.jobName);
+    const normalizedFieryName = normalizeFieryJobName(job.jobName);
     const thriveMatch = thriveLookup.get(normalizedFieryName);
     if (thriveMatch) {
-      const pathInfo = parseThrivePath(thriveMatch.fileName);
+      const pathInfo = extractFieryWorkOrderContext(thriveMatch.fileName);
       job.workOrderNumber = pathInfo.workOrderNumber;
       job.customerName = pathInfo.customerName;
       job.thriveFilePath = thriveMatch.fileName;
@@ -552,7 +514,7 @@ async function enrichFieryJobs(
         try {
           const sourcePath = await searchFileServerForSource(job.jobName);
           if (sourcePath) {
-            const pathInfo = parseThrivePath(sourcePath);
+            const pathInfo = extractFieryWorkOrderContext(sourcePath);
             job.workOrderNumber = pathInfo.workOrderNumber;
             job.customerName = pathInfo.customerName;
             job.thriveFilePath = sourcePath;
@@ -659,7 +621,7 @@ export async function enrichFieryJobFromFileServer(job: FieryJob): Promise<Fiery
   
   const sourcePath = await searchFileServerForSource(job.jobName);
   if (sourcePath) {
-    const pathInfo = parseThrivePath(sourcePath);
+    const pathInfo = extractFieryWorkOrderContext(sourcePath);
     job.workOrderNumber = pathInfo.workOrderNumber;
     job.customerName = pathInfo.customerName;
     job.thriveFilePath = sourcePath;

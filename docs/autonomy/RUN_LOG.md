@@ -238,3 +238,9 @@
 - Claimed slice: extract Fiery download-file matching into one helper.
 - Added `findMatchingFieryDownloadFile(...)` and used it in the Fiery queue repair/sync path so download-file basename matching no longer lives inline in `rip-queue.ts`.
 - The new helper is covered by a focused unit test and keeps the staged/download file lookup in one place for future Fiery repairs.
+
+### 2026-04-14 Fiery identity normalization helper
+- Claimed slice: normalize Fiery job naming and work-order extraction in one place.
+- Added `fiery-job-identity.ts` with shared Fiery job-name normalization, work-order normalization, Thrive path extraction, and search-term building.
+- Rewired `fiery.ts` and `rip-queue.ts` to use the shared helper so matching and path parsing no longer live in separate inline branches.
+- Added focused tests for normalization, work-order extraction, and search-term derivation.

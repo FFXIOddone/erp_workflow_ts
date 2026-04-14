@@ -22,6 +22,10 @@ import { extractCutId } from './zund-match.js';
 import { broadcast } from '../ws/server.js';
 import { resolveFieryCustomerMetadata } from './fiery-customer-metadata.js';
 import { findMatchingFieryDownloadFile } from './fiery-download-matching.js';
+import {
+  normalizeFieryJobName,
+  normalizeFieryWorkOrderNumber,
+} from './fiery-job-identity.js';
 import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
 import { resolveFieryStagedMetadata } from './fiery-staged-metadata.js';
 import { normalizeFieryJobId } from './fiery-jmf.js';
@@ -78,25 +82,6 @@ function deriveMediaDimensionFromSize(width?: number | null, height?: number | n
   return `${Math.round(width * 72)} ${Math.round(height * 72)}`;
 }
 
-function normalizeRipMatchName(value: string | null | undefined): string {
-  return (value ?? '')
-    .replace(/\.[^.]+$/g, '')
-    .replace(/\.rtl(_\d+)?$/i, '')
-    .replace(/_P\d+_T\d+_\d+_\d+$/i, '')
-    .replace(/~\d+(_p\d+)?(_r\d+)?(_c\d+)?$/i, '')
-    .replace(/[&()[\]]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
-function normalizeWorkOrderNumber(value: string | null | undefined): string {
-  return (value ?? '')
-    .toLowerCase()
-    .replace(/^wo/i, '')
-    .replace(/[^0-9]/g, '');
-}
-
 function namesLooselyMatch(left: string, right: string): boolean {
   if (!left || !right) return false;
   return left === right || left.includes(right) || right.includes(left);
@@ -116,12 +101,12 @@ function findMatchingFieryJob(
   fieryJobs: FieryJob[],
   fierySettings?: Record<string, unknown>
 ): FieryJob | undefined {
-  const ripWorkOrder = normalizeWorkOrderNumber(ripJob.workOrder?.orderNumber);
+  const ripWorkOrder = normalizeFieryWorkOrderNumber(ripJob.workOrder?.orderNumber);
   const ripSubmissionId = normalizeFieryJobId(ripJob.ripJobGuid);
   const ripNames = uniqueStrings([
-    normalizeRipMatchName(ripJob.sourceFileName),
-    normalizeRipMatchName(path.basename(ripJob.sourceFilePath || '')),
-    normalizeRipMatchName(getFieryImportedFileName(fierySettings ?? {})),
+    normalizeFieryJobName(ripJob.sourceFileName),
+    normalizeFieryJobName(path.basename(ripJob.sourceFilePath || '')),
+    normalizeFieryJobName(getFieryImportedFileName(fierySettings ?? {})),
   ]);
 
   return fieryJobs
@@ -131,15 +116,15 @@ function findMatchingFieryJob(
         return Boolean(fierySubmissionId && ripSubmissionId === fierySubmissionId);
       }
 
-      const fieryWorkOrder = normalizeWorkOrderNumber(fieryJob.workOrderNumber);
+      const fieryWorkOrder = normalizeFieryWorkOrderNumber(fieryJob.workOrderNumber);
       if (ripWorkOrder && fieryWorkOrder && ripWorkOrder !== fieryWorkOrder) {
         return false;
       }
 
       const fieryNames = uniqueStrings([
-        normalizeRipMatchName(fieryJob.jobName),
-        normalizeRipMatchName(fieryJob.fileName),
-        normalizeRipMatchName(fieryJob.thriveFilePath ? path.basename(fieryJob.thriveFilePath) : ''),
+        normalizeFieryJobName(fieryJob.jobName),
+        normalizeFieryJobName(fieryJob.fileName),
+        normalizeFieryJobName(fieryJob.thriveFilePath ? path.basename(fieryJob.thriveFilePath) : ''),
       ]);
 
       return ripNames.some((ripName) =>
