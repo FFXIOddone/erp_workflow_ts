@@ -208,10 +208,14 @@ export interface VutekJobResult {
   error?: string;
 }
 
-export function normalizeFieryQueueEntryId(queueEntryId?: string | null): string | undefined {
-  if (typeof queueEntryId !== 'string') return undefined;
-  const trimmed = queueEntryId.trim();
+export function normalizeFieryJobId(jobId?: unknown): string | undefined {
+  if (typeof jobId !== 'string') return undefined;
+  const trimmed = jobId.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function normalizeFieryQueueEntryId(queueEntryId?: unknown): string | undefined {
+  return normalizeFieryJobId(queueEntryId);
 }
 
 /**

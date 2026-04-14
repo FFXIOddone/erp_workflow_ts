@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getEffectiveVutekSettings,
   matchFieryWorkflowName,
+  normalizeFieryJobId,
   normalizeFieryQueueEntryId,
   resolveFieryMediaMappingName,
 } from './fiery-jmf.js';
@@ -29,6 +30,7 @@ describe('matchFieryWorkflowName', () => {
   });
 
   it('preserves queue entry id zero from Fiery', () => {
+    expect(normalizeFieryJobId('0')).toBe('0');
     expect(normalizeFieryQueueEntryId('0')).toBe('0');
     expect(normalizeFieryQueueEntryId(' 0 ')).toBe('0');
     expect(normalizeFieryQueueEntryId('')).toBeUndefined();

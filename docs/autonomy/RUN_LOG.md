@@ -213,3 +213,8 @@
 - Claimed slice: remove duplicate Fiery staged-path repair branches from the sync path.
 - Added `resolveFieryStagedMetadata(...)` and wired it into both the Fiery metadata repair pass and the live sync path so staged PDF, destination path, copied file name, and workflow backfill all come from one helper.
 - The sync path no longer carries two separate staged-path normalization branches.
+
+### 2026-04-14 Fiery submission job-id parser
+- Claimed slice: unify Fiery submission job ID parsing so `0` and missing values are handled once.
+- Added `normalizeFieryJobId(...)` as the shared parser for queue entry IDs and JDF job IDs, then pointed the Fiery sync path at the same parser instead of the old `pickMeaningfulId` branch.
+- The Fiery job-id tests now cover the shared parser and the queue-entry compatibility path.

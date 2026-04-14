@@ -23,6 +23,7 @@ import { broadcast } from '../ws/server.js';
 import { resolveFieryCustomerMetadata } from './fiery-customer-metadata.js';
 import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
 import { resolveFieryStagedMetadata } from './fiery-staged-metadata.js';
+import { normalizeFieryJobId } from './fiery-jmf.js';
 import {
   getAllFieryDownloadFiles,
   getAllFieryJobs,
@@ -71,18 +72,6 @@ function normalizeJsonObject(value: unknown): Record<string, unknown> {
   return { ...(value as Record<string, unknown>) };
 }
 
-function pickMeaningfulId(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    if (typeof value !== 'string') continue;
-    const trimmed = value.trim();
-    if (trimmed && trimmed !== '0') {
-      return trimmed;
-    }
-  }
-
-  return undefined;
-}
-
 function deriveMediaDimensionFromSize(width?: number | null, height?: number | null): string | undefined {
   if (!width || !height || width <= 0 || height <= 0) return undefined;
   return `${Math.round(width * 72)} ${Math.round(height * 72)}`;
@@ -127,7 +116,7 @@ function findMatchingFieryJob(
   fierySettings?: Record<string, unknown>
 ): FieryJob | undefined {
   const ripWorkOrder = normalizeWorkOrderNumber(ripJob.workOrder?.orderNumber);
-  const ripSubmissionId = pickMeaningfulId(ripJob.ripJobGuid);
+  const ripSubmissionId = normalizeFieryJobId(ripJob.ripJobGuid);
   const ripNames = uniqueStrings([
     normalizeRipMatchName(ripJob.sourceFileName),
     normalizeRipMatchName(path.basename(ripJob.sourceFilePath || '')),
@@ -136,7 +125,7 @@ function findMatchingFieryJob(
 
   return fieryJobs
     .filter((fieryJob) => {
-      const fierySubmissionId = pickMeaningfulId(fieryJob.jobId);
+      const fierySubmissionId = normalizeFieryJobId(fieryJob.jobId);
       if (ripSubmissionId) {
         return Boolean(fierySubmissionId && ripSubmissionId === fierySubmissionId);
       }
@@ -173,7 +162,7 @@ function getFierySettingsFromPrintSettings(printSettingsJson: unknown): Record<s
 }
 
 function getFierySubmissionJobId(fierySettings: Record<string, unknown>, ripJobGuid?: string | null): string | undefined {
-  return pickMeaningfulId(fierySettings.submissionJobId, ripJobGuid);
+  return normalizeFieryJobId(fierySettings.submissionJobId) ?? normalizeFieryJobId(ripJobGuid);
 }
 
 async function readFierySubmissionJobIdFromJdfPath(
@@ -184,7 +173,7 @@ async function readFierySubmissionJobIdFromJdfPath(
   try {
     const jdfContent = await fs.readFile(jdfPath, 'utf-8');
     const match = jdfContent.match(/JobID="([^"]+)"/i);
-    return pickMeaningfulId(match?.[1]);
+    return normalizeFieryJobId(match?.[1]);
   } catch {
     return undefined;
   }
