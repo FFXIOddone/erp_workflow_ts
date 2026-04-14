@@ -20,6 +20,7 @@ import { prisma } from '../db/client.js';
 import { THRIVE_CONFIG, parseQueueFile, type ThriveJob } from './thrive.js';
 import { extractCutId } from './zund-match.js';
 import { broadcast } from '../ws/server.js';
+import { resolveFieryCustomerMetadata } from './fiery-customer-metadata.js';
 import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
 import {
   getAllFieryDownloadFiles,
@@ -518,16 +519,16 @@ export async function sendToRip(params: {
       undefined,
       persistedWorkflow?.fieryWorkflowName,
     );
-    const customerName =
-      fieryWorkOrder?.customerName?.trim() ||
-      fieryWorkOrder?.company?.name?.trim() ||
-      `Work Order ${fieryWorkOrder?.orderNumber ?? workOrderId}`;
-    const customerId =
-      fieryWorkOrder?.companyId?.trim() ||
-      fieryWorkOrder?.customerId?.trim() ||
-      fieryWorkOrder?.company?.id?.trim() ||
-      fieryWorkOrder?.orderNumber?.trim() ||
-      workOrderId;
+    const customerMetadata = resolveFieryCustomerMetadata({
+      workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
+      workOrderId,
+      customerName: fieryWorkOrder?.customerName ?? null,
+      customerId: fieryWorkOrder?.customerId ?? null,
+      companyName: fieryWorkOrder?.company?.name ?? null,
+      companyId: fieryWorkOrder?.companyId ?? fieryWorkOrder?.company?.id ?? null,
+      sourceFileName: path.basename(sourceFilePath),
+    });
+    const { customerName, customerId } = customerMetadata;
     const jobTicketName = buildFieryJobTicketName({
       workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
       customerName,

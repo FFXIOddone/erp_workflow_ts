@@ -203,3 +203,8 @@
 - Claimed slice: consolidate Fiery queued, processing, and completed state parsing into one timeline helper.
 - Added `buildFieryJobTimelineMetrics(...)` alongside the existing Fiery timeline summary helper so the route no longer re-parses queue/rip/print timing inline.
 - The Fiery job-detail route now reuses the same parsed timestamps as the diagnostics timeline helper, keeping queue/rip/print timing semantics in one place.
+
+### 2026-04-14 Fiery customer metadata helper
+- Claimed slice: add one helper for Fiery customer metadata resolution.
+- Added `resolveFieryCustomerMetadata(...)` and wired it into both the Fiery submission service and the RIP queue Fiery send path so customer name, customer ID, and comment parts are resolved the same way everywhere.
+- The Fiery submission tests now cover explicit, company, work-order, and unknown fallback metadata paths.

@@ -25,6 +25,7 @@
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
+import { resolveFieryCustomerMetadata } from './fiery-customer-metadata.js';
 import { findFieryMediaMapping, normalizeFieryMediaName } from './fiery-media-map.js';
 import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
 
@@ -691,20 +692,22 @@ export async function submitVutekJob(params: {
   const ts = Date.now();
   const submissionJobId = `ERP-${jobId}-${ts}`;
   const ext = path.extname(sourceFilePath);
-  const resolvedCustomerName =
-    normalizeWhitespace(jobInfo?.customerName ?? '') || 'Unknown Customer';
-  const resolvedCustomerId =
-    normalizeWhitespace(jobInfo?.customerId ?? '') || 'Unknown Customer ID';
+  const customerMetadata = resolveFieryCustomerMetadata({
+    workOrderNumber: jobInfo?.workOrderNumber ?? null,
+    customerName: jobInfo?.customerName ?? null,
+    customerId: jobInfo?.customerId ?? null,
+    sourceFileName: jobInfo?.sourceFileName ?? null,
+    jobDescription: jobInfo?.jobDescription ?? null,
+  });
+  const resolvedCustomerName = customerMetadata.customerName;
+  const resolvedCustomerId = customerMetadata.customerId;
   const jobTicketName = buildFieryJobTicketName({
     workOrderNumber: jobInfo?.workOrderNumber ?? null,
     customerName: resolvedCustomerName,
     sourceFileName: jobInfo?.sourceFileName ?? path.basename(sourceFilePath),
     jobDescription: jobInfo?.jobDescription ?? null,
   });
-  const jobCommentParts: string[] = [];
-  if (jobInfo?.sourceFileName) jobCommentParts.push(`Source: ${jobInfo.sourceFileName}`);
-  jobCommentParts.push(`Customer: ${resolvedCustomerName}`);
-  jobCommentParts.push(`CustomerID: ${resolvedCustomerId}`);
+  const jobCommentParts = customerMetadata.commentParts;
 
   // Files are staged locally on the ERP server and served via HTTP.
   // The JDF Connector downloads both JDF and PDF over HTTP, placing the PDF in
