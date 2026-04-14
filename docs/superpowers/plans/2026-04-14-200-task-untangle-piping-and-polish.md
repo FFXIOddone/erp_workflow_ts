@@ -36,7 +36,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Add one helper for Fiery customer metadata resolution.
 - [x] Remove duplicate Fiery staged-path repair branches from the sync path.
 - [x] Unify Fiery submission job ID parsing so `0` and missing values are handled once.
-- [ ] Audit Fiery JDF creation for any remaining hardcoded PSA-style defaults.
+- [x] Audit Fiery JDF creation for any remaining hardcoded PSA-style defaults.
 - [ ] Add more known Fiery media mapping rows from the live RIP box.
 - [ ] Make Fiery diagnostics read the same workflow name that submission uses.
 - [ ] Extract Fiery download-file matching into one helper.

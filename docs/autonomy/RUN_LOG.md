@@ -218,3 +218,8 @@
 - Claimed slice: unify Fiery submission job ID parsing so `0` and missing values are handled once.
 - Added `normalizeFieryJobId(...)` as the shared parser for queue entry IDs and JDF job IDs, then pointed the Fiery sync path at the same parser instead of the old `pickMeaningfulId` branch.
 - The Fiery job-id tests now cover the shared parser and the queue-entry compatibility path.
+
+### 2026-04-14 Fiery JDF PSA audit
+- Claimed slice: audit Fiery JDF creation for any remaining hardcoded PSA-style defaults.
+- Audited the Fiery JDF builder and confirmed there is no PSA default being written into the job ticket; the only remaining `PSA` check is the legacy placeholder guard in the media-mapping resolver.
+- No code changes were needed for this slice because the remaining PSA reference is intentionally defensive, not a hardcoded default path.
