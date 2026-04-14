@@ -7,6 +7,7 @@ import type { FedExShipmentRecord, Prisma } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import { formatTrackingLocation, normalizeTrackingNumber } from './shipment-tracking.js';
+import { resolveFedExShipmentRecordStatus } from './fedex-record-status.js';
 
 const FEDEX_LOG_FILE_PREFIX = 'FxLogSr';
 const FEDEX_LOG_FILE_REGEX = /^FxLogSr(\d{8})\.xml$/i;
@@ -1646,36 +1647,6 @@ function pickString(record: Record<string, unknown>, keys: string[]): string | n
   }
 
   return null;
-}
-
-function resolveFedExShipmentRecordStatus(rawData: unknown): {
-  latestStatus: string | null;
-  latestStatusCode: string | null;
-  latestDescription: string | null;
-} {
-  const root = asRecord(rawData);
-  const row = asRecord(root.row);
-
-  const latestStatus =
-    pickString(root, ['status', 'shipmentStatus', 'trackingStatus', 'deliveryStatus']) ??
-    pickString(row, ['status', 'shipment status', 'tracking status', 'delivery status']) ??
-    null;
-
-  const latestStatusCode =
-    pickString(root, ['code', 'statusCode']) ??
-    pickString(row, ['eventType', 'event type', 'code']) ??
-    null;
-
-  const latestDescription =
-    pickString(root, ['description', 'message']) ??
-    pickString(row, ['description', 'status description', 'event description']) ??
-    null;
-
-  return {
-    latestStatus,
-    latestStatusCode,
-    latestDescription,
-  };
 }
 
 function resolveFedExShipmentRecordIssue(rawData: unknown): string | null {

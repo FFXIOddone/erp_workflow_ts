@@ -19,5 +19,8 @@ export * from './routing-inference.js';
 // Search helpers
 export * from './search.js';
 
+// FedEx tracking helpers
+export * from './fedex-tracking.js';
+
 // Station color theme
 export * from './station-theme.js';

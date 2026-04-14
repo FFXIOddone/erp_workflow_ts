@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { selectLatestFedExTrackingEvent } from '@erp/shared';
 import { resolveFedExAddressIssue, resolveFedExStatusSummary } from './fedex-status-summary.js';
+import { resolveFedExShipmentRecordStatus } from './fedex-record-status.js';
 
 describe('resolveFedExStatusSummary', () => {
   it('prefers live FedEx API events and marks them fresh', () => {
@@ -77,5 +79,36 @@ describe('resolveFedExStatusSummary', () => {
   it('falls back to No Address Found when no location or lookup issue exists', () => {
     expect(resolveFedExAddressIssue(null, null)).toBe('No Address Found');
     expect(resolveFedExAddressIssue('Muskegon, MI, US', null)).toBeNull();
+  });
+
+  it('reuses the shared record-status parser for latest status fields', () => {
+    expect(
+      resolveFedExShipmentRecordStatus({
+        row: {
+          status: 'delivered',
+          eventType: 'DL',
+          description: 'Delivered successfully',
+        },
+      })
+    ).toEqual({
+      latestStatus: 'delivered',
+      latestStatusCode: 'DL',
+      latestDescription: 'Delivered successfully',
+    });
+  });
+
+  it('selects the newest FedEx tracking event using shared ordering rules', () => {
+    const latest = selectLatestFedExTrackingEvent([
+      {
+        eventDate: '2026-04-08T09:00:00Z',
+        eventTime: '2026-04-08T09:05:00Z',
+      },
+      {
+        eventDate: '2026-04-08T09:00:00Z',
+        eventTime: '2026-04-08T09:10:00Z',
+      },
+    ]);
+
+    expect(latest?.eventTime).toBe('2026-04-08T09:10:00Z');
   });
 });

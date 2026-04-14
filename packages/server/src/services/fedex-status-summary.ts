@@ -1,5 +1,6 @@
 import { ShipmentStatus } from '@prisma/client';
-import { SHIPMENT_STATUS_DISPLAY_NAMES } from '@erp/shared';
+import { SHIPMENT_STATUS_DISPLAY_NAMES, selectLatestFedExTrackingEvent } from '@erp/shared';
+import { resolveFedExShipmentRecordStatus } from './fedex-record-status.js';
 import { formatTrackingLocation, normalizeTrackingNumber } from './shipment-tracking.js';
 
 type FedExTrackingEvent = {
@@ -134,8 +135,8 @@ export function resolveFedExAddressIssue(
 export function resolveFedExStatusSummary(
   shipment: FedExStatusSummarySource
 ): FedExStatusSummary | null {
-  const latestFedExApiEvent = shipment.trackingEvents?.find(
-    (event) => event.sourceSystem?.toLowerCase() === 'fedex_api'
+  const latestFedExApiEvent = selectLatestFedExTrackingEvent(
+    shipment.trackingEvents?.filter((event) => event.sourceSystem?.toLowerCase() === 'fedex_api') ?? []
   );
 
   if (latestFedExApiEvent) {
@@ -182,19 +183,8 @@ export function resolveFedExStatusSummary(
   const rawRecord = asRecord(latestRecord.rawData);
   const rawRow = asRecord(rawRecord.row);
   const lookupIssue = extractFedExLookupIssue(rawRecord);
-  const status = formatFedExStatusLabel(
-    pickString(rawRow, [
-      'status',
-      'shipment status',
-      'current status',
-      'tracking status',
-      'delivery status',
-      'package status',
-      'shipmentStatus',
-    ]) ??
-      pickString(rawRecord, ['status', 'shipmentStatus', 'trackingStatus', 'deliveryStatus']) ??
-      null
-  );
+  const statusMeta = resolveFedExShipmentRecordStatus(rawRecord);
+  const status = formatFedExStatusLabel(statusMeta.latestStatus);
 
   const eventTimestamp =
     pickDateIso(rawRow, [
@@ -236,14 +226,11 @@ export function resolveFedExStatusSummary(
       pickString(rawRow, ['eventType', 'event type', 'type', 'scan type']) ?? null
     ),
     description:
+      statusMeta.latestDescription ??
       pickString(rawRow, [
-        'description',
-        'message',
-        'status description',
         'tracking message',
         'event description',
       ]) ??
-      pickString(rawRecord, ['description', 'message']) ??
       null,
     eventTimestamp,
     sourceFileName:

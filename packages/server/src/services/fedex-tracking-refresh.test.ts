@@ -6,13 +6,13 @@ import {
 } from './fedex-tracking-refresh.js';
 
 describe('isHourlyFedExRefreshCandidate', () => {
-  it('keeps the hourly batch focused on FedEx shipments and already-tracked orders', () => {
+  it('keeps the hourly batch focused on real FedEx tracking numbers only', () => {
     expect(
       isHourlyFedExRefreshCandidate({
         carrier: Carrier.FEDEX,
         trackingNumber: null,
       })
-    ).toBe(true);
+    ).toBe(false);
 
     expect(
       isHourlyFedExRefreshCandidate({
@@ -20,6 +20,13 @@ describe('isHourlyFedExRefreshCandidate', () => {
         trackingNumber: '495213068323',
       })
     ).toBe(true);
+
+    expect(
+      isHourlyFedExRefreshCandidate({
+        carrier: Carrier.OTHER,
+        trackingNumber: 'PO421',
+      })
+    ).toBe(false);
 
     expect(
       isHourlyFedExRefreshCandidate({

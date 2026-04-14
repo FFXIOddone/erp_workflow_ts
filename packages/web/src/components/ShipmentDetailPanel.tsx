@@ -16,6 +16,7 @@ import {
   CARRIER_DISPLAY_NAMES,
   SHIPMENT_STATUS_COLORS,
   SHIPMENT_STATUS_DISPLAY_NAMES,
+  sortFedExTrackingEventsNewestFirst,
 } from '@erp/shared';
 import { api } from '../lib/api';
 import { formatDate, formatDateTime } from '../lib/date';
@@ -214,10 +215,7 @@ export function ShipmentDetailPanel({
       : fedExSummary?.status ?? fedExSummary?.eventType ?? 'Available';
   const fedExLocationText = fedExSummary?.location ?? 'No Address Found';
   const trackingEvents = useMemo(
-    () =>
-      [...(shipment?.trackingEvents ?? [])].sort((a, b) =>
-        normalizeEventTimestamp(b).localeCompare(normalizeEventTimestamp(a)),
-      ),
+    () => sortFedExTrackingEventsNewestFirst(shipment?.trackingEvents ?? []),
     [shipment?.trackingEvents],
   );
 

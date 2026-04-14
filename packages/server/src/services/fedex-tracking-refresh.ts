@@ -5,7 +5,11 @@ import {
   applyShipmentTrackingNumber,
   type ShipmentTrackingCandidate,
 } from './shipment-tracking.js';
-import { isFedExApiConfigured, syncFedExTrackingForShipment } from './fedex-api.js';
+import {
+  isFedExApiConfigured,
+  isLikelyFedExTrackingNumber,
+  syncFedExTrackingForShipment,
+} from './fedex-api.js';
 
 export interface FedExTrackingRefreshCycleResult {
   status: 'synced' | 'skipped' | 'not_configured';
@@ -29,7 +33,7 @@ export function isHourlyFedExRefreshCandidate(shipment: {
   carrier: Carrier;
   trackingNumber: string | null;
 }): boolean {
-  return shipment.carrier === Carrier.FEDEX || Boolean(shipment.trackingNumber);
+  return Boolean(shipment.trackingNumber && isLikelyFedExTrackingNumber(shipment.trackingNumber));
 }
 
 export function isFullFedExRefreshCandidate(shipment: {

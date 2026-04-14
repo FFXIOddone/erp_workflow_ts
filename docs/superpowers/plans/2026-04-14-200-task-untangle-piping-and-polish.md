@@ -10,23 +10,23 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 ### FedEx / Shipments
 - [x] Create a single FedEx shipment truth builder consumed by `routes/shipments.ts` and `routes/fedex.ts`.
 - [x] Move carrier inference into one shared helper for shipment read and repair paths.
-- [ ] Unify tracking-number normalization across the FedEx list, shipment detail, and hourly sync.
+- [x] Unify tracking-number normalization across the FedEx list, shipment detail, and hourly sync.
 - [x] Consolidate FedEx lookup issue parsing so the same unresolved message appears everywhere.
 - [x] Replace destination fallbacks with one explicit `No Address Found` helper.
-- [ ] Make `routes/shipments.ts` and `fedex.ts` agree on the latest-status source.
-- [ ] Centralize `trackingEvents` selection so summary and detail views pick the same latest scan.
+- [x] Make `routes/shipments.ts` and `fedex.ts` agree on the latest-status source.
+- [x] Centralize `trackingEvents` selection so summary and detail views pick the same latest scan.
+- [x] Add one helper for PO / reference candidate generation.
+- [x] Normalize FedEx service labels before storing and before rendering.
+- [x] Move FedEx record grouping by tracking number into one shared summarizer.
+- [x] Surface the exact failed lookup key in both shipment list and shipment drawer.
+- [x] Prevent mixed-source tracking numbers from collapsing into one false row.
+- [x] Make the shipment detail drawer derive its top-line state from the same summary builder as the list.
+- [x] Keep shipment fallback copy actionable when lookup fails.
 - [ ] Unify `linkedWorkOrderCount` calculation for the FedEx page and order details page.
 - [ ] Make sandbox vs production source labeling flow from one shared shipment metadata field.
-- [ ] Extract a shared FedEx location formatter and use it across shipping cards.
+- [x] Extract a shared FedEx location formatter and use it across shipping cards.
 - [ ] Consolidate ambiguous-tracking reconciliation into one repair job.
-- [ ] Ensure hourly tracking refresh skips shipments with no real FedEx identifier.
-- [ ] Add one helper for PO / reference candidate generation.
-- [ ] Normalize FedEx service labels before storing and before rendering.
-- [ ] Move FedEx record grouping by tracking number into one shared summarizer.
-- [ ] Surface the exact failed lookup key in both shipment list and shipment drawer.
-- [ ] Prevent mixed-source tracking numbers from collapsing into one false row.
-- [ ] Make the shipment detail drawer derive its top-line state from the same summary builder as the list.
-- [ ] Keep shipment fallback copy actionable when lookup fails.
+- [x] Ensure hourly tracking refresh skips shipments with no real FedEx identifier.
 - [ ] Audit shipment caches so stale values cannot outlive a fresh API result.
 
 ### Fiery / RIP
