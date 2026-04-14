@@ -50,6 +50,7 @@ import {
   submitVutekJob,
   VUTEK_JOB_DIR,
 } from '../services/fiery-jmf.js';
+import { buildFieryJobTimelineSummary } from '../services/fiery-job-timeline.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 export const ripQueueRouter = Router();
@@ -943,7 +944,8 @@ ripQueueRouter.post('/batches/hh-global', async (req: AuthRequest, res: Response
  * Returns share accessibility, JMF endpoint discovery, and queue status.
  */
 ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response) => {
-  const [shareResult, discovery, queueStatus, workflowDiscovery, capabilities, settings] = await Promise.all([
+  const [shareResult, discovery, queueStatus, workflowDiscovery, capabilities, settings, latestFieryJob] =
+    await Promise.all([
     testVutekShareAccess(),
     discoverVutekJmfUrl(),
     getVutekQueueStatus(),
@@ -952,6 +954,26 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
     prisma.systemSettings.findFirst({
       where: { id: 'system' },
       select: { fieryWorkflowName: true },
+    }),
+    prisma.ripJob.findFirst({
+      where: { ripType: 'Fiery' },
+      orderBy: [{ queuedAt: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        workOrderId: true,
+        sourceFileName: true,
+        status: true,
+        queuedAt: true,
+        rippedAt: true,
+        printCompletedAt: true,
+        printSettingsJson: true,
+        workOrder: {
+          select: {
+            orderNumber: true,
+            customerName: true,
+          },
+        },
+      },
     }),
   ]);
   const effective = getEffectiveVutekSettings({
@@ -981,6 +1003,7 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
         queueEntryId: queueStatus.queueEntryId ?? null,
         raw: queueStatus.raw ?? null,
       },
+      latestJob: latestFieryJob ? buildFieryJobTimelineSummary(latestFieryJob) : null,
       workflow: {
         outputChannelName: effective.outputChannelName,
         colorMode: effective.colorMode,

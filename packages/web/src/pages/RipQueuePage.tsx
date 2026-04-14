@@ -427,6 +427,21 @@ interface FieryDiagnosticsData {
     hint: string;
   };
   queue: { status: string; queueSize: number; raw: string | null };
+  latestJob?: {
+    jobId: string;
+    workOrderId: string;
+    orderNumber: string;
+    customerName: string;
+    sourceFileName: string;
+    status: string;
+    stages: {
+      key: string;
+      label: string;
+      time: string | null;
+      durationMinutes: number | null;
+      complete: boolean;
+    }[];
+  } | null;
 }
 
 function FieryDiagnosticsPanel() {
@@ -582,6 +597,58 @@ function FieryDiagnosticsPanel() {
                   </p>
                 </div>
               </div>
+
+              {data.latestJob && (
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-50 border border-gray-100">
+                  <Timer className="w-4 h-4 text-violet-500 mt-0.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-sm font-medium text-gray-800">Latest Fiery job timeline</p>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">
+                        {data.latestJob.status}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      WO #{data.latestJob.orderNumber} · {data.latestJob.customerName} ·{' '}
+                      {data.latestJob.sourceFileName}
+                    </p>
+                    <div className="mt-3 grid gap-2 md:grid-cols-4">
+                      {data.latestJob.stages.map((stage) => (
+                        <div
+                          key={stage.key}
+                          className={`rounded-md border p-3 text-xs ${
+                            stage.complete
+                              ? 'bg-white border-gray-200'
+                              : 'bg-gray-100 border-dashed border-gray-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-semibold text-gray-700 uppercase tracking-wide">
+                              {stage.label}
+                            </p>
+                            {stage.complete ? (
+                              <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                            ) : (
+                              <Clock className="w-3.5 h-3.5 text-gray-400" />
+                            )}
+                          </div>
+                          <p className={`mt-1 ${stage.complete ? 'text-gray-900' : 'text-gray-500'}`}>
+                            {stage.time ? timeAgo(stage.time) : 'Pending'}
+                          </p>
+                          <p className="text-[11px] text-gray-400">
+                            {stage.time ? new Date(stage.time).toLocaleString() : 'Waiting for stage'}
+                          </p>
+                          {stage.durationMinutes != null && (
+                            <p className="text-[11px] text-violet-600 mt-1">
+                              Stage time: {formatDuration(stage.durationMinutes)}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Workflow Status */}
               <div
