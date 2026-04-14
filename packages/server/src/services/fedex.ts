@@ -9,6 +9,7 @@ import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import { formatTrackingLocation, normalizeTrackingNumber } from './shipment-tracking.js';
 import { resolveFedExShipmentRecordStatus } from './fedex-record-status.js';
 import { resolveFedExShipmentSourceLabel } from './fedex-source-label.js';
+import { resolveFedExShipmentCounts } from './fedex-link-count.js';
 
 const FEDEX_LOG_FILE_PREFIX = 'FxLogSr';
 const FEDEX_LOG_FILE_REGEX = /^FxLogSr(\d{8})\.xml$/i;
@@ -2566,8 +2567,9 @@ export function summarizeFedExShipmentRecords(
       if (normalizedRecord.workOrder?.id) {
         existingGroup.workOrderIds.add(normalizedRecord.workOrder.id);
       }
-      existingGroup.summary.workOrderCount = existingGroup.workOrderIds.size;
-      existingGroup.summary.linkedWorkOrderCount = existingGroup.workOrderIds.size;
+      const counts = resolveFedExShipmentCounts(existingGroup.workOrderIds);
+      existingGroup.summary.workOrderCount = counts.workOrderCount;
+      existingGroup.summary.linkedWorkOrderCount = counts.linkedWorkOrderCount;
       if (
         compareFedExShipmentSummaryCandidates(
           existingGroup.summary,
@@ -2577,8 +2579,7 @@ export function summarizeFedExShipmentRecords(
         existingGroup.summary = {
           ...normalizedRecord,
           recordCount: existingGroup.summary.recordCount,
-          workOrderCount: existingGroup.workOrderIds.size,
-          linkedWorkOrderCount: existingGroup.workOrderIds.size,
+          ...resolveFedExShipmentCounts(existingGroup.workOrderIds),
         };
       }
       continue;
@@ -2594,8 +2595,7 @@ export function summarizeFedExShipmentRecords(
         ...normalizedRecord,
         trackingNumber,
         recordCount: 1,
-        workOrderCount: workOrderIds.size,
-        linkedWorkOrderCount: workOrderIds.size,
+        ...resolveFedExShipmentCounts(workOrderIds),
       },
       workOrderIds,
     });

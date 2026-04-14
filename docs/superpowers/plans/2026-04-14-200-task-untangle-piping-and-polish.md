@@ -22,7 +22,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Prevent mixed-source tracking numbers from collapsing into one false row.
 - [x] Make the shipment detail drawer derive its top-line state from the same summary builder as the list.
 - [x] Keep shipment fallback copy actionable when lookup fails.
-- [ ] Unify `linkedWorkOrderCount` calculation for the FedEx page and order details page.
+- [x] Unify `linkedWorkOrderCount` calculation for the FedEx page and order details page.
 - [x] Make sandbox vs production source labeling flow from one shared shipment metadata field.
 - [x] Extract a shared FedEx location formatter and use it across shipping cards.
 - [ ] Consolidate ambiguous-tracking reconciliation into one repair job.

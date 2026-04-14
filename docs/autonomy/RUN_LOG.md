@@ -173,3 +173,8 @@
 - Claimed slice: make sandbox versus production source labeling flow from one shared shipment metadata field.
 - Added a shared FedEx source-label helper and threaded it through the FedEx shipment list and shipment detail summary paths.
 - FedEx API rows now display `FedEx API (Production)` or `FedEx API (Sandbox)` instead of only the raw API source file name.
+
+### 2026-04-14 FedEx linked-work-order counts
+- Claimed slice: unify the linked work-order count calculation used by the FedEx browser and its downstream consumers.
+- Added a shared FedEx work-order count helper so the summary builder no longer repeats the same `Set.size` logic in multiple branches.
+- Added a focused regression test for the shared count helper.
