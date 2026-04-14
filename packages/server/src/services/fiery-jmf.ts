@@ -202,6 +202,12 @@ export interface VutekJobResult {
   error?: string;
 }
 
+export function normalizeFieryQueueEntryId(queueEntryId?: string | null): string | undefined {
+  if (typeof queueEntryId !== 'string') return undefined;
+  const trimmed = queueEntryId.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 /**
  * Default print settings for blade sign / HH Global flatbed jobs.
  * Derived from analysis of existing JDFs in EFI Export Folder.
@@ -326,6 +332,22 @@ function uniqueSorted(values: Iterable<string>): string[] {
         .filter(Boolean)
     )
   ).sort((left, right) => left.localeCompare(right));
+}
+
+export function matchFieryWorkflowName(
+  preferred: string | null | undefined,
+  available: string[],
+): string | null {
+  const normalizedPreferred = normalizeWhitespace(preferred ?? '');
+  if (!normalizedPreferred) return null;
+
+  const exact = available.find((name) => name === normalizedPreferred);
+  if (exact) return exact;
+
+  const caseInsensitive = available.find(
+    (name) => name.toLowerCase() === normalizedPreferred.toLowerCase(),
+  );
+  return caseInsensitive || normalizedPreferred;
 }
 
 function extractStringStateValues(blobText: string, stateName: string): string[] {
@@ -518,8 +540,9 @@ ${nodeFeatures
     </NodeInfo>`;
 
   // DescriptiveName on the root <JDF> element — EFI JDF Connector may use this for workflow routing
-  // (in addition to NodeInfo/@DescriptiveName). Without it, the connector sets "IDS_DEFAULT_JDF_DESC_NAME".
-  const rootDescriptiveName = '';
+  // (in addition to NodeInfo/@DescriptiveName). Use the exact workflow/output channel name so the
+  // connector does not have to infer the route from a placeholder.
+  const rootDescriptiveName = s.outputChannelName;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <JDF xmlns="http://www.CIP4.org/JDFSchema_1_1"
@@ -658,13 +681,19 @@ export async function submitVutekJob(params: {
     return { success: false, error: `Failed to stage PDF for VUTEk: ${err.message}` };
   }
 
+  const resolvedWorkflowName = await resolveFieryWorkflowName(settings.outputChannelName ?? undefined);
+  const resolvedSettings = {
+    ...settings,
+    outputChannelName: resolvedWorkflowName,
+  };
+
   // 3. Build and write JDF (references PDF via HTTP URL)
   const jdfContent = buildJdf({
     workOrderId: jobId,
     submissionJobId,
     jobTicketName,
     pdfLocalPath: pdfHttpUrl, // passed to buildJdf as "pdfLocalPath" but it's an HTTP URL
-    settings,
+    settings: resolvedSettings,
     jobComment: jobInfo?.sourceFileName ? `Source: ${jobInfo.sourceFileName}` : undefined,
   });
 
@@ -702,8 +731,7 @@ export async function submitVutekJob(params: {
     const queueEntryMatch = body.match(/QueueEntryID="([^"]+)"/);
     const returnCodeMatch = body.match(/ReturnCode="(\d+)"/);
     const returnCode = returnCodeMatch ? parseInt(returnCodeMatch[1], 10) : -1;
-    const queueEntryId = queueEntryMatch?.[1]?.trim() || undefined;
-    const normalizedQueueEntryId = queueEntryId && queueEntryId !== '0' ? queueEntryId : undefined;
+    const normalizedQueueEntryId = normalizeFieryQueueEntryId(queueEntryMatch?.[1]);
 
     if (returnCode !== 0) {
       const errorMatch = body.match(
@@ -809,6 +837,17 @@ export async function discoverFieryWorkflows(): Promise<{
   };
 }
 
+export async function resolveFieryWorkflowName(
+  preferred: string | null | undefined,
+): Promise<string> {
+  const discovery = await discoverFieryWorkflows();
+  return (
+    matchFieryWorkflowName(preferred, discovery.workflows) ||
+    matchFieryWorkflowName(VUTEK_OUTPUT_CHANNEL, discovery.workflows) ||
+    normalizeWhitespace(preferred ?? VUTEK_OUTPUT_CHANNEL)
+  );
+}
+
 /** Recursively scan a directory for XML files containing workflow names (max depth 4). */
 async function scanDirForWorkflows(dir: string, depth: number): Promise<string[]> {
   if (depth > 4) return [];
@@ -890,7 +929,7 @@ export async function getVutekQueueStatus(): Promise<{
       status: statusMatch?.[1] ?? 'Unknown',
       queueSize: sizeMatch ? parseInt(sizeMatch[1], 10) : 0,
       jobId: jobIdMatch?.[1] ?? null,
-      queueEntryId: queueEntryMatch?.[1] ?? null,
+      queueEntryId: normalizeFieryQueueEntryId(queueEntryMatch?.[1]) ?? null,
       raw: body,
     };
   } catch (err: any) {
