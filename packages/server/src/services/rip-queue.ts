@@ -198,7 +198,12 @@ async function readFierySubmissionJobIdFromJdfPath(
 
 function getFieryStagedPdfName(fierySettings: Record<string, unknown>): string | undefined {
   const stagedPdfPath = typeof fierySettings.stagedPdfPath === 'string' ? fierySettings.stagedPdfPath : undefined;
-  return stagedPdfPath ? path.basename(stagedPdfPath) : undefined;
+  const destinationPath = typeof fierySettings.destinationPath === 'string' ? fierySettings.destinationPath : undefined;
+  const copiedFileName = typeof fierySettings.copiedFileName === 'string' ? fierySettings.copiedFileName : undefined;
+
+  if (stagedPdfPath) return path.basename(stagedPdfPath);
+  if (destinationPath) return path.basename(destinationPath);
+  return copiedFileName ?? undefined;
 }
 
 function getFieryImportedFileName(fierySettings: Record<string, unknown>): string | undefined {
@@ -417,6 +422,7 @@ export async function sendToRip(params: {
       where: { id: 'system' },
       select: { fieryWorkflowName: true },
     });
+    const effectiveWorkflowName = persistedWorkflow?.fieryWorkflowName?.trim() || 'Zund G7';
     const jobTicketName = buildFieryJobTicketName({
       workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
       customerName: fieryWorkOrder?.customerName ?? null,
@@ -435,7 +441,7 @@ export async function sendToRip(params: {
       },
       settings: {
         ...additionalSettings,
-        outputChannelName: persistedWorkflow?.fieryWorkflowName?.trim() || undefined,
+        outputChannelName: effectiveWorkflowName,
       },
     });
 
@@ -450,7 +456,7 @@ export async function sendToRip(params: {
       ...additionalSettings,
       fiery: {
         importMode: 'jmf',
-        workflowName: persistedWorkflow?.fieryWorkflowName ?? null,
+        workflowName: effectiveWorkflowName,
         workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
         customerName: fieryWorkOrder?.customerName ?? null,
         jobDescription: fieryWorkOrder?.description ?? notes ?? null,
@@ -458,6 +464,7 @@ export async function sendToRip(params: {
         sourceFileName: path.basename(sourceFilePath),
         copiedFileName: path.basename(fierySubmit.pdfDestPath ?? sourceFilePath),
         destinationPath: fierySubmit.pdfDestPath ?? null,
+        stagedPdfPath: fierySubmit.pdfDestPath ?? null,
         jdfPath: fierySubmit.jdfPath ?? null,
         queueEntryId: fierySubmit.queueEntryId ?? null,
         submissionJobId: fierySubmit.submissionJobId ?? null,
@@ -661,14 +668,49 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
     if (ripJob.ripType === 'Fiery') {
       const existingPrintSettings = normalizeJsonObject(ripJob.printSettingsJson);
       const existingFierySettings = getFierySettingsFromPrintSettings(ripJob.printSettingsJson);
+      const normalizedWorkflowName =
+        typeof existingFierySettings.workflowName === 'string' && existingFierySettings.workflowName.trim()
+          ? existingFierySettings.workflowName.trim()
+          : 'Zund G7';
+      const normalizedStagedPdfPath =
+        typeof existingFierySettings.stagedPdfPath === 'string' && existingFierySettings.stagedPdfPath.trim()
+          ? existingFierySettings.stagedPdfPath.trim()
+          : typeof existingFierySettings.destinationPath === 'string' && existingFierySettings.destinationPath.trim()
+            ? existingFierySettings.destinationPath.trim()
+            : null;
+      const shouldBackfillFierySettings =
+        existingFierySettings.workflowName !== normalizedWorkflowName ||
+        existingFierySettings.stagedPdfPath !== normalizedStagedPdfPath;
+      const normalizedFierySettings = shouldBackfillFierySettings
+        ? {
+            ...existingFierySettings,
+            workflowName: normalizedWorkflowName,
+            stagedPdfPath: normalizedStagedPdfPath,
+          }
+        : existingFierySettings;
+
+      if (shouldBackfillFierySettings) {
+        const backfilledPrintSettings = {
+          ...existingPrintSettings,
+          fiery: normalizedFierySettings,
+        };
+
+        await prisma.ripJob.update({
+          where: { id: ripJob.id },
+          data: {
+            printSettingsJson: toJsonValue(backfilledPrintSettings),
+          },
+        });
+      }
+
       const jdfSubmissionJobId = await readFierySubmissionJobIdFromJdfPath(
-        existingFierySettings.jdfPath
+        normalizedFierySettings.jdfPath
       );
       const submissionJobId = getFierySubmissionJobId(
-        existingFierySettings,
+        normalizedFierySettings,
         ripJob.ripJobGuid
       ) ?? jdfSubmissionJobId;
-      const stagedPdfName = getFieryStagedPdfName(existingFierySettings);
+      const stagedPdfName = getFieryStagedPdfName(normalizedFierySettings);
       const downloadMatch = stagedPdfName
         ? allFieryDownloads.find(
             (file) =>
@@ -680,7 +722,7 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
         const backfilledPrintSettings = {
           ...existingPrintSettings,
           fiery: {
-            ...existingFierySettings,
+            ...normalizedFierySettings,
             submissionJobId,
           },
         };
@@ -696,14 +738,14 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
         ripJob.ripJobGuid = submissionJobId;
       }
 
-      const fieryJob = findMatchingFieryJob(ripJob, allFieryJobs, existingFierySettings);
+      const fieryJob = findMatchingFieryJob(ripJob, allFieryJobs, normalizedFierySettings);
       if (fieryJob) {
         const matchedAt = fieryJob.timestamp ? new Date(fieryJob.timestamp) : new Date();
         const updatedPrintSettings = {
           ...existingPrintSettings,
           fiery: {
-            ...existingFierySettings,
-            submissionJobId: submissionJobId ?? existingFierySettings.submissionJobId ?? null,
+            ...normalizedFierySettings,
+            submissionJobId: submissionJobId ?? normalizedFierySettings.submissionJobId ?? null,
             exportedJobId: fieryJob.jobId,
             exportedJobName: fieryJob.jobName,
             exportedFileName: fieryJob.fileName,
@@ -740,8 +782,8 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
       const updatedPrintSettings = {
         ...existingPrintSettings,
         fiery: {
-          ...existingFierySettings,
-          submissionJobId: submissionJobId ?? existingFierySettings.submissionJobId ?? null,
+          ...normalizedFierySettings,
+          submissionJobId: submissionJobId ?? normalizedFierySettings.submissionJobId ?? null,
           downloadedFileName: downloadMatch.fileName,
           downloadedFilePath: downloadMatch.filePath,
           downloadedAt: matchedAt.toISOString(),
@@ -750,8 +792,8 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
 
       if (
         ripJob.status !== 'PROCESSING' ||
-        existingFierySettings.downloadedFileName !== downloadMatch.fileName ||
-        existingFierySettings.downloadedAt == null
+        normalizedFierySettings.downloadedFileName !== downloadMatch.fileName ||
+        normalizedFierySettings.downloadedAt == null
       ) {
         await prisma.ripJob.update({
           where: { id: ripJob.id },

@@ -121,3 +121,6 @@
 - FedEx tracking now has a general reference-lookup path for normal orders, not just the URC shipment example.
 - Hourly refresh remains fast by limiting the batch to FedEx-carrier or already-tracked shipments.
 - Order-detail shipment views can now trigger a background FedEx refresh even when the shipment starts as `OTHER` with no tracking number.
+
+
+| 2026-04-14T08:02:41.0000000-04:00 | FIERY-SUBMIT-092 | Fiery JMF metadata now backfills staged PDF paths and workflow names | The active JMF Fiery job now syncs against the stored PDF destination instead of staying stuck in queued state, and the current backlog was reclassified to PROCESSING after the compatibility fix. | packages/server/src/services/rip-queue.ts; live sync run on the Fiery queue |

@@ -134,3 +134,6 @@
 - Broadened the FedEx sync path from URC-only to normal order references by adding reference lookup candidates from PO, QB order number, and customer/order text.
 - Kept the hourly batch focused on FedEx-carrier or already-tracked shipments so the refresh stays fast.
 - Allowed shipment-detail views to self-heal ambiguous `OTHER` shipments when FedEx reference data exists.
+
+
+| 2026-04-14T08:02:41.0000000-04:00 | FIERY-SUBMIT-092 | user-request | Fixed the Fiery JMF metadata shape so queued submissions backfill stagedPdfPath from the stored PDF destination and carry the effective workflow name, which lets the status sync match the live download file instead of leaving jobs stuck in a bad state. | npx.cmd tsc --noEmit -p packages/server/tsconfig.json; git diff --check | local sync run refreshed 1 queued Fiery job to PROCESSING | complete | The live Fiery backlog now reclassifies the active JMF submission as PROCESSING, and there are no remaining queued Fiery JMF rows with the stale metadata shape. |
