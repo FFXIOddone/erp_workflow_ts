@@ -6,6 +6,7 @@ import {
   resolveShipmentTrackingNumber,
   type ShipmentTrackingCandidate,
 } from './shipment-tracking.js';
+import { resolveFedExCarrier } from './fedex-carrier.js';
 
 const FEDEX_API_BASE_URL_PRODUCTION = 'https://apis.fedex.com';
 const FEDEX_API_BASE_URL_SANDBOX = 'https://apis-sandbox.fedex.com';
@@ -958,7 +959,7 @@ export async function syncFedExTrackingForShipment(
       await tx.shipment.update({
         where: { id: shipmentId },
         data: {
-          carrier: shipment.carrier === Carrier.OTHER ? Carrier.FEDEX : shipment.carrier,
+          carrier: resolveFedExCarrier(shipment.carrier, true),
           trackingNumber: resolvedTrackingNumber,
           status: nextShipmentStatus,
           actualDelivery: nextDeliveryDate,
@@ -1058,7 +1059,7 @@ export async function syncFedExTrackingForShipment(
       reason: null,
       shipmentStatus: nextShipmentStatus,
       actualDelivery: nextDeliveryDate,
-      carrier: shipment.carrier === Carrier.OTHER ? Carrier.FEDEX : shipment.carrier,
+      carrier: resolveFedExCarrier(shipment.carrier, true),
       eventCount: eventInputs.length,
       lastEventAt: snapshot.latestEventTimestamp,
       fedExStatus: snapshot.latestStatus ?? snapshot.latestDescription,
