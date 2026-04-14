@@ -193,3 +193,8 @@
 - Claimed slice: surface the Fiery media mapping resolver in diagnostics so the JDF builder, repair path, and UI all point at the same mapping logic.
 - Added the resolved Fiery media mapping to the Rip Queue diagnostics payload and rendered it on the Fiery diagnostics panel.
 - The diagnostics panel now shows the active RIP-side mapping separately from the physical media/substrate values.
+
+### 2026-04-14 Fiery workflow selection fallback
+- Claimed slice: move Fiery workflow selection fallback logic out of routes into one service.
+- Added `resolveFieryWorkflowSelection(...)` and wired it into the Fiery diagnostics test-submit route plus the Fiery metadata repair path.
+- The route now delegates persisted/default fallback selection to one helper, and the shared Fiery workflow name test covers explicit, persisted, and default precedence.

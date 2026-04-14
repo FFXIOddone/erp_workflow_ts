@@ -6,6 +6,10 @@ import {
   resolveFieryMediaMappingName,
 } from './fiery-jmf.js';
 import { findFieryMediaMapping } from './fiery-media-map.js';
+import {
+  getDefaultFieryWorkflowName,
+  resolveFieryWorkflowSelection,
+} from './fiery-workflow-selection.js';
 
 describe('matchFieryWorkflowName', () => {
   it('resolves an exact case-insensitive workflow match from the discovered names', () => {
@@ -16,6 +20,12 @@ describe('matchFieryWorkflowName', () => {
   it('keeps the preferred workflow when no discovered match exists', () => {
     const resolved = matchFieryWorkflowName('Custom Workflow', ['ZUND G7', 'Zund COFFEE BEANERY']);
     expect(resolved).toBe('Custom Workflow');
+  });
+
+  it('prefers the explicit workflow, then persisted workflow, then default', () => {
+    expect(resolveFieryWorkflowSelection('Workflow A', 'Workflow B')).toBe('Workflow A');
+    expect(resolveFieryWorkflowSelection(undefined, 'Workflow B')).toBe('Workflow B');
+    expect(resolveFieryWorkflowSelection(undefined, undefined)).toBe(getDefaultFieryWorkflowName());
   });
 
   it('preserves queue entry id zero from Fiery', () => {

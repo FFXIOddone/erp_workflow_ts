@@ -52,6 +52,7 @@ import {
   VUTEK_JOB_DIR,
 } from '../services/fiery-jmf.js';
 import { buildFieryJobTimelineSummary } from '../services/fiery-job-timeline.js';
+import { resolveFieryWorkflowSelection } from '../services/fiery-workflow-selection.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 export const ripQueueRouter = Router();
@@ -1076,12 +1077,15 @@ ripQueueRouter.post('/fiery/test-submit', async (req: AuthRequest, res: Response
     where: { id: 'system' },
     select: { fieryWorkflowName: true },
   });
+  const resolvedWorkflowName = resolveFieryWorkflowSelection(
+    outputChannelName,
+    persistedWorkflow?.fieryWorkflowName,
+  );
   const result = await submitVutekJob({
     jobId: `TEST-${Date.now()}`,
     sourceFilePath: sourcePath,
     settings: {
-      outputChannelName:
-        outputChannelName?.trim() || persistedWorkflow?.fieryWorkflowName || undefined,
+      outputChannelName: resolvedWorkflowName,
     },
   });
   res.json({ success: result.success, data: result });

@@ -20,6 +20,7 @@ import { prisma } from '../db/client.js';
 import { THRIVE_CONFIG, parseQueueFile, type ThriveJob } from './thrive.js';
 import { extractCutId } from './zund-match.js';
 import { broadcast } from '../ws/server.js';
+import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
 import {
   getAllFieryDownloadFiles,
   getAllFieryJobs,
@@ -237,7 +238,10 @@ async function repairFieryJobMetadataInternal(): Promise<number> {
     where: { id: 'system' },
     select: { fieryWorkflowName: true },
   });
-  const fallbackWorkflowName = persistedWorkflow?.fieryWorkflowName?.trim() || 'Zund G7';
+  const fallbackWorkflowName = resolveFieryWorkflowSelection(
+    undefined,
+    persistedWorkflow?.fieryWorkflowName,
+  );
 
   const fieryJobs = await prisma.ripJob.findMany({
     where: { ripType: 'Fiery' },
@@ -510,7 +514,10 @@ export async function sendToRip(params: {
       where: { id: 'system' },
       select: { fieryWorkflowName: true },
     });
-    const effectiveWorkflowName = persistedWorkflow?.fieryWorkflowName?.trim() || 'Zund G7';
+    const effectiveWorkflowName = resolveFieryWorkflowSelection(
+      undefined,
+      persistedWorkflow?.fieryWorkflowName,
+    );
     const customerName =
       fieryWorkOrder?.customerName?.trim() ||
       fieryWorkOrder?.company?.name?.trim() ||

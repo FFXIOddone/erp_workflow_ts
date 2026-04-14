@@ -26,6 +26,7 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 import { findFieryMediaMapping, normalizeFieryMediaName } from './fiery-media-map.js';
+import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
 
 const VUTEK_HOST = '192.168.254.57';
 const VUTEK_JMF_PORT = 8010;
@@ -890,7 +891,7 @@ export async function resolveFieryWorkflowName(
   return (
     matchFieryWorkflowName(preferred, discovery.workflows) ||
     matchFieryWorkflowName(VUTEK_OUTPUT_CHANNEL, discovery.workflows) ||
-    normalizeWhitespace(preferred ?? VUTEK_OUTPUT_CHANNEL)
+    resolveFieryWorkflowSelection(preferred)
   );
 }
 
