@@ -497,16 +497,33 @@ export async function sendToRip(params: {
   if (hotfolderTarget.ripType === 'Fiery') {
     const fieryWorkOrder = await prisma.workOrder.findUnique({
       where: { id: workOrderId },
-      select: { orderNumber: true, customerName: true, description: true, companyId: true, customerId: true },
+      select: {
+        orderNumber: true,
+        customerName: true,
+        description: true,
+        companyId: true,
+        customerId: true,
+        company: { select: { id: true, name: true } },
+      },
     });
     const persistedWorkflow = await prisma.systemSettings.findFirst({
       where: { id: 'system' },
       select: { fieryWorkflowName: true },
     });
     const effectiveWorkflowName = persistedWorkflow?.fieryWorkflowName?.trim() || 'Zund G7';
+    const customerName =
+      fieryWorkOrder?.customerName?.trim() ||
+      fieryWorkOrder?.company?.name?.trim() ||
+      `Work Order ${fieryWorkOrder?.orderNumber ?? workOrderId}`;
+    const customerId =
+      fieryWorkOrder?.companyId?.trim() ||
+      fieryWorkOrder?.customerId?.trim() ||
+      fieryWorkOrder?.company?.id?.trim() ||
+      fieryWorkOrder?.orderNumber?.trim() ||
+      workOrderId;
     const jobTicketName = buildFieryJobTicketName({
       workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
-      customerName: fieryWorkOrder?.customerName ?? null,
+      customerName,
       sourceFileName: path.basename(sourceFilePath),
       jobDescription: fieryWorkOrder?.description ?? notes ?? null,
     });
@@ -516,14 +533,16 @@ export async function sendToRip(params: {
       sourceFilePath,
       jobInfo: {
         workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
-        customerName: fieryWorkOrder?.customerName ?? null,
-        customerId: fieryWorkOrder?.companyId ?? fieryWorkOrder?.customerId ?? null,
+        customerName,
+        customerId,
         sourceFileName: path.basename(sourceFilePath),
         jobDescription: fieryWorkOrder?.description ?? notes ?? null,
       },
       settings: {
         ...additionalSettings,
         outputChannelName: effectiveWorkflowName,
+        media: printSettings?.mediaType ?? undefined,
+        ripMedia: printSettings?.mediaProfile ?? printSettings?.mediaType ?? undefined,
       },
     });
 
@@ -540,7 +559,8 @@ export async function sendToRip(params: {
         importMode: 'jmf',
         workflowName: effectiveWorkflowName,
         workOrderNumber: fieryWorkOrder?.orderNumber ?? null,
-        customerName: fieryWorkOrder?.customerName ?? null,
+        customerName,
+        customerId,
         jobDescription: fieryWorkOrder?.description ?? notes ?? null,
         jobTicketName,
         sourceFileName: path.basename(sourceFilePath),

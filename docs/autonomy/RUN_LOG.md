@@ -153,3 +153,9 @@
 - Verified `packages/server/src/services/fiery-jmf.ts` now writes the physical substrate to `<Media>` and the Fiery mapping name to `EFI:VutekProp Media`.
 - Added customer name / customer ID context to the Fiery submission comment when available from the order.
 - Submitted a real Jimmy Dean blades PDF again after the fix; the JDF now contains `Brand="Oppboga Wide - Fast 4"` and `EFI:VutekProp Media="60 inch Web"`, and the connector accepted the job without error.
+
+### 2026-04-14 Fiery job media fallback cleanup
+- Claimed slice: stop Fiery submissions from falling back to a generic media mapping when the RIP job already has media data, and ensure customer fields never serialize as null.
+- Verified `sendToRip(...)` now passes job-level `mediaType` / `mediaProfile` through to the Fiery JDF builder.
+- Verified the staged JDF for a real smoke submit now carries `Brand="3M 8518"`, `EFI:VutekProp Media="3M 8518"`, and explicit customer values in the submission comment.
+- The live Fiery connector accepted the smoke job successfully with the updated JDF content.

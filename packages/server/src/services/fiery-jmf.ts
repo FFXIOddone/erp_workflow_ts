@@ -666,16 +666,20 @@ export async function submitVutekJob(params: {
   const ts = Date.now();
   const submissionJobId = `ERP-${jobId}-${ts}`;
   const ext = path.extname(sourceFilePath);
+  const resolvedCustomerName =
+    normalizeWhitespace(jobInfo?.customerName ?? '') || 'Unknown Customer';
+  const resolvedCustomerId =
+    normalizeWhitespace(jobInfo?.customerId ?? '') || 'Unknown Customer ID';
   const jobTicketName = buildFieryJobTicketName({
     workOrderNumber: jobInfo?.workOrderNumber ?? null,
-    customerName: jobInfo?.customerName ?? null,
+    customerName: resolvedCustomerName,
     sourceFileName: jobInfo?.sourceFileName ?? path.basename(sourceFilePath),
     jobDescription: jobInfo?.jobDescription ?? null,
   });
   const jobCommentParts: string[] = [];
   if (jobInfo?.sourceFileName) jobCommentParts.push(`Source: ${jobInfo.sourceFileName}`);
-  if (jobInfo?.customerName) jobCommentParts.push(`Customer: ${jobInfo.customerName}`);
-  if (jobInfo?.customerId) jobCommentParts.push(`CustomerID: ${jobInfo.customerId}`);
+  jobCommentParts.push(`Customer: ${resolvedCustomerName}`);
+  jobCommentParts.push(`CustomerID: ${resolvedCustomerId}`);
 
   // Files are staged locally on the ERP server and served via HTTP.
   // The JDF Connector downloads both JDF and PDF over HTTP, placing the PDF in
