@@ -34,7 +34,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Move Fiery workflow selection fallback logic out of routes into one service.
 - [x] Consolidate Fiery queued, processing, and completed state parsing into one timeline helper.
 - [x] Add one helper for Fiery customer metadata resolution.
-- [ ] Remove duplicate Fiery staged-path repair branches from the sync path.
+- [x] Remove duplicate Fiery staged-path repair branches from the sync path.
 - [ ] Unify Fiery submission job ID parsing so `0` and missing values are handled once.
 - [ ] Audit Fiery JDF creation for any remaining hardcoded PSA-style defaults.
 - [ ] Add more known Fiery media mapping rows from the live RIP box.

@@ -208,3 +208,8 @@
 - Claimed slice: add one helper for Fiery customer metadata resolution.
 - Added `resolveFieryCustomerMetadata(...)` and wired it into both the Fiery submission service and the RIP queue Fiery send path so customer name, customer ID, and comment parts are resolved the same way everywhere.
 - The Fiery submission tests now cover explicit, company, work-order, and unknown fallback metadata paths.
+
+### 2026-04-14 Fiery staged-path normalization helper
+- Claimed slice: remove duplicate Fiery staged-path repair branches from the sync path.
+- Added `resolveFieryStagedMetadata(...)` and wired it into both the Fiery metadata repair pass and the live sync path so staged PDF, destination path, copied file name, and workflow backfill all come from one helper.
+- The sync path no longer carries two separate staged-path normalization branches.

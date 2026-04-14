@@ -22,6 +22,7 @@ import { extractCutId } from './zund-match.js';
 import { broadcast } from '../ws/server.js';
 import { resolveFieryCustomerMetadata } from './fiery-customer-metadata.js';
 import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
+import { resolveFieryStagedMetadata } from './fiery-staged-metadata.js';
 import {
   getAllFieryDownloadFiles,
   getAllFieryJobs,
@@ -68,16 +69,6 @@ function normalizeJsonObject(value: unknown): Record<string, unknown> {
   }
 
   return { ...(value as Record<string, unknown>) };
-}
-
-function pickStringSetting(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  return undefined;
 }
 
 function pickMeaningfulId(...values: unknown[]): string | undefined {
@@ -217,23 +208,6 @@ function getFieryImportedFileName(fierySettings: Record<string, unknown>): strin
   return jobTicketName ?? copiedFileName ?? (destinationPath ? path.basename(destinationPath) : undefined);
 }
 
-function getFieryPdfPath(fierySettings: Record<string, unknown>): string | null {
-  const stagedPdfPath = pickStringSetting(fierySettings.stagedPdfPath);
-  const destinationPath = pickStringSetting(fierySettings.destinationPath);
-  return stagedPdfPath ?? destinationPath ?? null;
-}
-
-function getFieryCopiedFileName(
-  fierySettings: Record<string, unknown>,
-  pdfPath: string | null
-): string | null {
-  const copiedFileName = pickStringSetting(fierySettings.copiedFileName);
-  if (copiedFileName) return copiedFileName;
-  if (pdfPath) return path.basename(pdfPath);
-  const destinationPath = pickStringSetting(fierySettings.destinationPath);
-  return destinationPath ? path.basename(destinationPath) : null;
-}
-
 async function repairFieryJobMetadataInternal(): Promise<number> {
   const persistedWorkflow = await prisma.systemSettings.findFirst({
     where: { id: 'system' },
@@ -255,23 +229,16 @@ async function repairFieryJobMetadataInternal(): Promise<number> {
     const existingFierySettings = getFierySettingsFromPrintSettings(ripJob.printSettingsJson);
     if (existingFierySettings.importMode !== 'jmf') continue;
 
-    const normalizedPdfPath = getFieryPdfPath(existingFierySettings);
-    const normalizedCopiedFileName = getFieryCopiedFileName(existingFierySettings, normalizedPdfPath);
+    const normalized = resolveFieryStagedMetadata(existingFierySettings, fallbackWorkflowName);
     const normalizedFierySettings = {
       ...existingFierySettings,
-      workflowName: pickStringSetting(existingFierySettings.workflowName) ?? fallbackWorkflowName,
-      stagedPdfPath: normalizedPdfPath,
-      destinationPath: normalizedPdfPath,
-      copiedFileName: normalizedCopiedFileName,
+      workflowName: normalized.normalizedWorkflowName,
+      stagedPdfPath: normalized.normalizedPdfPath,
+      destinationPath: normalized.normalizedPdfPath,
+      copiedFileName: normalized.normalizedCopiedFileName,
     };
 
-    const shouldBackfill =
-      existingFierySettings.workflowName !== normalizedFierySettings.workflowName ||
-      existingFierySettings.stagedPdfPath !== normalizedFierySettings.stagedPdfPath ||
-      existingFierySettings.destinationPath !== normalizedFierySettings.destinationPath ||
-      existingFierySettings.copiedFileName !== normalizedFierySettings.copiedFileName;
-
-    if (!shouldBackfill) continue;
+    if (!normalized.shouldBackfill) continue;
 
     await prisma.ripJob.update({
       where: { id: ripJob.id },
@@ -787,28 +754,23 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
     if (ripJob.ripType === 'Fiery') {
       const existingPrintSettings = normalizeJsonObject(ripJob.printSettingsJson);
       const existingFierySettings = getFierySettingsFromPrintSettings(ripJob.printSettingsJson);
-      const normalizedWorkflowName =
+      const normalized = resolveFieryStagedMetadata(
+        existingFierySettings,
         typeof existingFierySettings.workflowName === 'string' && existingFierySettings.workflowName.trim()
           ? existingFierySettings.workflowName.trim()
-          : 'Zund G7';
-      const normalizedStagedPdfPath =
-        typeof existingFierySettings.stagedPdfPath === 'string' && existingFierySettings.stagedPdfPath.trim()
-          ? existingFierySettings.stagedPdfPath.trim()
-          : typeof existingFierySettings.destinationPath === 'string' && existingFierySettings.destinationPath.trim()
-            ? existingFierySettings.destinationPath.trim()
-            : null;
-      const shouldBackfillFierySettings =
-        existingFierySettings.workflowName !== normalizedWorkflowName ||
-        existingFierySettings.stagedPdfPath !== normalizedStagedPdfPath;
-      const normalizedFierySettings = shouldBackfillFierySettings
+          : 'Zund G7',
+      );
+      const normalizedFierySettings = normalized.shouldBackfill
         ? {
             ...existingFierySettings,
-            workflowName: normalizedWorkflowName,
-            stagedPdfPath: normalizedStagedPdfPath,
+            workflowName: normalized.normalizedWorkflowName,
+            stagedPdfPath: normalized.normalizedPdfPath,
+            destinationPath: normalized.normalizedPdfPath,
+            copiedFileName: normalized.normalizedCopiedFileName,
           }
         : existingFierySettings;
 
-      if (shouldBackfillFierySettings) {
+      if (normalized.shouldBackfill) {
         const backfilledPrintSettings = {
           ...existingPrintSettings,
           fiery: normalizedFierySettings,
