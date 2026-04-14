@@ -39,7 +39,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Audit Fiery JDF creation for any remaining hardcoded PSA-style defaults.
 - [x] Add more known Fiery media mapping rows from the live RIP box.
 - [x] Make Fiery diagnostics read the same workflow name that submission uses.
-- [ ] Extract Fiery download-file matching into one helper.
+- [x] Extract Fiery download-file matching into one helper.
 - [ ] Normalize Fiery job naming and work-order extraction in one place.
 - [ ] Collapse duplicate Fiery hotfolder versus JMF description copy into one source.
 - [ ] Add a shared JDF assertion test for media, comment, and customer fields.

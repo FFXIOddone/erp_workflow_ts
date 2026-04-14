@@ -233,3 +233,8 @@
 - Claimed slice: add the live RIP box media catalog rows and stop defaulting to the broad PSA fallback.
 - Added the five live Fiery media profile rows discovered under `EFI Media Profiles` on the RIP box, then taught the shared lookup to prefer the most specific matching row instead of the broad fallback.
 - The Fiery media mapping tests now verify that explicit RIP media names still win when provided, while PSA fallbacks resolve to the live catalog row names from the RIP box.
+
+### 2026-04-14 Fiery download-file match helper
+- Claimed slice: extract Fiery download-file matching into one helper.
+- Added `findMatchingFieryDownloadFile(...)` and used it in the Fiery queue repair/sync path so download-file basename matching no longer lives inline in `rip-queue.ts`.
+- The new helper is covered by a focused unit test and keeps the staged/download file lookup in one place for future Fiery repairs.

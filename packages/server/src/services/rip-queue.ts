@@ -21,6 +21,7 @@ import { THRIVE_CONFIG, parseQueueFile, type ThriveJob } from './thrive.js';
 import { extractCutId } from './zund-match.js';
 import { broadcast } from '../ws/server.js';
 import { resolveFieryCustomerMetadata } from './fiery-customer-metadata.js';
+import { findMatchingFieryDownloadFile } from './fiery-download-matching.js';
 import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
 import { resolveFieryStagedMetadata } from './fiery-staged-metadata.js';
 import { normalizeFieryJobId } from './fiery-jmf.js';
@@ -179,16 +180,6 @@ async function readFierySubmissionJobIdFromJdfPath(
   }
 }
 
-function getFieryStagedPdfName(fierySettings: Record<string, unknown>): string | undefined {
-  const stagedPdfPath = typeof fierySettings.stagedPdfPath === 'string' ? fierySettings.stagedPdfPath : undefined;
-  const destinationPath = typeof fierySettings.destinationPath === 'string' ? fierySettings.destinationPath : undefined;
-  const copiedFileName = typeof fierySettings.copiedFileName === 'string' ? fierySettings.copiedFileName : undefined;
-
-  if (stagedPdfPath) return path.basename(stagedPdfPath);
-  if (destinationPath) return path.basename(destinationPath);
-  return copiedFileName ?? undefined;
-}
-
 function getFieryImportedFileName(fierySettings: Record<string, unknown>): string | undefined {
   const jobTicketName = typeof fierySettings.jobTicketName === 'string' ? fierySettings.jobTicketName : undefined;
   const copiedFileName = typeof fierySettings.copiedFileName === 'string' ? fierySettings.copiedFileName : undefined;
@@ -254,10 +245,6 @@ async function repairFieryJobMetadata(): Promise<number> {
   });
 
   return fieryMetadataRepairPromise;
-}
-
-function normalizeFieryFileName(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 // ─── Hotfolder Discovery ──────────────────────────────────────
@@ -780,13 +767,12 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
         normalizedFierySettings,
         ripJob.ripJobGuid
       ) ?? jdfSubmissionJobId;
-      const stagedPdfName = getFieryStagedPdfName(normalizedFierySettings);
-      const downloadMatch = stagedPdfName
-        ? allFieryDownloads.find(
-            (file) =>
-              normalizeFieryFileName(file.fileName) === normalizeFieryFileName(stagedPdfName)
-          )
-        : undefined;
+      const downloadMatch = findMatchingFieryDownloadFile(allFieryDownloads, [
+        typeof normalizedFierySettings.stagedPdfPath === 'string' ? normalizedFierySettings.stagedPdfPath : undefined,
+        typeof normalizedFierySettings.destinationPath === 'string' ? normalizedFierySettings.destinationPath : undefined,
+        typeof normalizedFierySettings.copiedFileName === 'string' ? normalizedFierySettings.copiedFileName : undefined,
+        typeof normalizedFierySettings.jobTicketName === 'string' ? normalizedFierySettings.jobTicketName : undefined,
+      ]);
 
       if (submissionJobId && ripJob.ripJobGuid !== submissionJobId) {
         const backfilledPrintSettings = {
