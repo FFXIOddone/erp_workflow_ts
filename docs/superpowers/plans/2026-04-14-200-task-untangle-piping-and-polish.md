@@ -43,7 +43,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Normalize Fiery job naming and work-order extraction in one place.
 - [x] Collapse duplicate Fiery hotfolder versus JMF description copy into one source.
 - [x] Add a shared JDF assertion test for media, comment, and customer fields.
-- [ ] Separate physical substrate, RIP mapping, and profile fields in Fiery docs and code comments.
+- [x] Separate physical substrate, RIP mapping, and profile fields in Fiery docs and code comments.
 - [ ] Make Fiery connection health surface the exact failing stage.
 - [ ] Reconcile Fiery print-mode values against the RIP-side catalog entries.
 - [ ] Ensure held Fiery jobs can be inspected without re-running submit logic.

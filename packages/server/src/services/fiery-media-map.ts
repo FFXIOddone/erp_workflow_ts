@@ -1,3 +1,11 @@
+/**
+ * Fiery media mappings are split into three separate concepts:
+ * - physical substrate / stock name
+ * - RIP-side media mapping name
+ * - profile selector fields (ink, resolution, color mode, print mode, etc.)
+ *
+ * Keeping those distinct prevents the ERP from collapsing everything into one default.
+ */
 export interface FieryMediaMappingEntry {
   label: string;
   substrate?: string;

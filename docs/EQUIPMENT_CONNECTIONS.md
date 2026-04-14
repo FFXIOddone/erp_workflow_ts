@@ -117,6 +117,7 @@ The VUTEk printer is controlled by Fiery DFE (Digital Front End). Fiery exports 
 Note:
 - The `<Media ...>` resource is the physical stock/profile.
 - The `EFI:VutekProp Media` value is the Fiery RIP-side media mapping, which should not be replaced with the workflow name.
+- The remaining Fiery media fields are profile selectors, not stock labels. See [fiery-media-mapping-table.md](obsidian/fiery-media-mapping-table.md).
 - The Fiery media configuration fields that show `Any` are wildcards, not literal values. See [fiery-media-mapping-table.md](obsidian/fiery-media-mapping-table.md).
 
 ### Integration Status ✅ Ready

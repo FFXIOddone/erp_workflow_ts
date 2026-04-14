@@ -5,14 +5,15 @@ It is intentionally small and explicit so the ERP stops guessing and stops falli
 generic placeholders like `PSA`.
 
 Important:
+- The physical substrate / stock label belongs in the JDF `<Media>` resource.
+- The RIP-side media mapping name is what belongs in `EFI:VutekProp Media`.
+- The remaining Fiery profile fields (`Ink type`, `Resolution`, `Dot size`, `Color mode`, `Print mode`, `Halftone mode`, `Profile type`, and `Media type`) are match selectors, not stock labels.
 - `Any` is a wildcard, not a literal value to store in ERP.
 - If a Fiery media configuration field is `Any`, the ERP should treat it as "match anything".
-- The RIP-side media mapping name is what belongs in `EFI:VutekProp Media`.
-- The physical substrate / stock label belongs in the JDF `<Media>` resource.
 - Live catalog rows from the RIP box should be listed most-specific first so the ERP does not
   fall back to the broad `PSA` placeholders.
 
-| ERP substrate / stock | Ink type | Media name | Resolution | Dot size | Color mode | Print mode | Halftone mode | Profile type | Resulting calibration | ICC | Media type | RIP media mapping | Notes |
+| Physical substrate / stock | Ink type | Media selector | Resolution | Dot size | Color mode | Print mode | Halftone mode | Profile type | Resulting calibration | ICC | Media type | RIP media mapping | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Oppboga Wide - Fast 4 | EFI GSLX Pro | PSA | 1000 720 | Binary | CMYK | F4 | SE1 | FE | VUTEk_32h_1000_F4_GSLX-ink_default_081619.epl | VUTEk_32h_1000_F4_GSLX-ink_default_081619.icc | Default | PSA CMYK 1000dpi Binary F4 SE1 FE | Live RIP catalog row discovered on the Fiery box. |
 | Oppboga Wide - Fast 4 | EFI GSLX Pro | PSA | 600 720 | Binary | CMYK | F4 | SE1 | FE | VUTEk_32h_600bin_F4_GSLX-XP_default_081319.epl | VUTEk_32h_600bin_F4_GSLX-XP_default_081319.icc | Default | PSA CMYK 600dpi Binary F4 SE1 FE | Live RIP catalog row discovered on the Fiery box. |

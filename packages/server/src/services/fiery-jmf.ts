@@ -42,13 +42,19 @@ const VUTEK_OUTPUT_CHANNEL = process.env.VUTEK_OUTPUT_CHANNEL ?? 'Zund G7';
 
 // Substrate/media name as configured in Fiery XF System Manager → Output → Substrates.
 // Must match the RIP-side substrate, not the printer-side print-media label.
+// Physical substrate / stock name for JDF <Media>.
+// Keep this separate from the RIP-side mapping name below.
 const VUTEK_MEDIA = process.env.VUTEK_MEDIA ?? 'Oppboga Wide - Fast 4';
+// Fiery RIP-side media mapping name selected in the XF workflow / media catalog.
 const VUTEK_RIP_MEDIA = process.env.VUTEK_RIP_MEDIA ?? '60 inch Web';
 
 // Physical media dimensions in JDF points (1 pt = 1/72 inch): "Width Height".
 // Required so XF can match the substrate to a paper profile (resolution, color mode, ink type).
 // Default: 6912 3456 = 96" × 48" (current flatbed board size).
+// Fiery profile selector fields used to match a substrate to the correct paper profile.
+// These are profile attributes, not substrate names.
 const VUTEK_MEDIA_DIMENSION = process.env.VUTEK_MEDIA_DIMENSION ?? '6912 3456';
+// Remaining profile selectors stay aligned with the Fiery catalog row.
 const VUTEK_MEDIA_TYPE = process.env.VUTEK_MEDIA_TYPE ?? 'Paper';
 const VUTEK_MEDIA_UNIT = process.env.VUTEK_MEDIA_UNIT ?? 'Sheet';
 const VUTEK_COLOR_MODE = process.env.VUTEK_COLOR_MODE ?? 'CMYK';

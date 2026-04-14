@@ -254,3 +254,8 @@
 - Claimed slice: add a shared JDF assertion test for media, comment, and customer fields.
 - Exported the pure Fiery JDF builder, added a shared JDF field parser, and covered the generated media, audit comment, and customer metadata in one focused test.
 - This keeps the JDF assertions reusable instead of repeating XML parsing logic in multiple test files.
+
+### 2026-04-14 Fiery substrate and profile wording cleanup
+- Claimed slice: separate physical substrate, RIP mapping, and profile fields in Fiery docs and code comments.
+- Clarified the Fiery JDF comments, Fiery media mapping comments, and the equipment/mapping docs so physical stock, RIP-side media mapping, and profile selectors are described as distinct concepts.
+- Updated the Fiery media mapping table language to call out the selector fields explicitly instead of blending them into the substrate label.
