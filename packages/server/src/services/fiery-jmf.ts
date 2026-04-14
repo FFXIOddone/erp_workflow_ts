@@ -25,6 +25,7 @@
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
+import { findFieryMediaMapping, normalizeFieryMediaName } from './fiery-media-map.js';
 
 const VUTEK_HOST = '192.168.254.57';
 const VUTEK_JMF_PORT = 8010;
@@ -355,9 +356,22 @@ export function matchFieryWorkflowName(
 }
 
 export function resolveFieryMediaMappingName(
-  settings: Pick<ResolvedVutekPrintSettings, 'ripMedia'>,
+  settings: Partial<Pick<ResolvedVutekPrintSettings, 'media' | 'ripMedia' | 'inkType' | 'mediaType' | 'resolution' | 'colorMode'>>,
 ): string {
-  return normalizeWhitespace(settings.ripMedia || VUTEK_RIP_MEDIA);
+  const explicitRipMedia = normalizeFieryMediaName(settings.ripMedia);
+  if (explicitRipMedia && explicitRipMedia.toUpperCase() !== 'PSA') {
+    return explicitRipMedia;
+  }
+
+  const mapped = findFieryMediaMapping({
+    substrate: settings.media,
+    inkType: settings.inkType,
+    mediaType: settings.mediaType,
+    resolution: settings.resolution,
+    colorMode: settings.colorMode,
+  });
+
+  return mapped?.ripMedia ?? VUTEK_RIP_MEDIA;
 }
 
 function extractStringStateValues(blobText: string, stateName: string): string[] {
@@ -457,12 +471,22 @@ export function getEffectiveVutekSettings(
     ...BLADE_SIGN_DEFAULTS,
     ...overrides,
   };
+  const media = normalizeWhitespace(merged.media || VUTEK_MEDIA) || VUTEK_MEDIA;
+  const resolution = normalizeResolutionValue(merged.resolution) || VUTEK_RESOLUTION;
+  const ripMedia = resolveFieryMediaMappingName({
+    media,
+    ripMedia: merged.ripMedia,
+    inkType: merged.inkType || VUTEK_INK_TYPE,
+    mediaType: merged.mediaType || VUTEK_MEDIA_TYPE,
+    resolution,
+    colorMode: merged.colorMode || VUTEK_COLOR_MODE,
+  });
 
   return {
-    media: merged.media || VUTEK_MEDIA,
+    media,
     mediaType: merged.mediaType || VUTEK_MEDIA_TYPE,
     mediaUnit: merged.mediaUnit || VUTEK_MEDIA_UNIT,
-    ripMedia: merged.ripMedia || VUTEK_RIP_MEDIA,
+    ripMedia,
     printDirection: merged.printDirection || 'Bidirectional',
     interlaceMode: merged.interlaceMode || 'Multipass Standard',
     curing: merged.curing || 'High',
@@ -480,7 +504,7 @@ export function getEffectiveVutekSettings(
     colorMode: merged.colorMode || VUTEK_COLOR_MODE,
     inkType: merged.inkType || VUTEK_INK_TYPE,
     whiteInkOptions: merged.whiteInkOptions || VUTEK_WHITE_INK_OPTIONS,
-    resolution: normalizeResolutionValue(merged.resolution),
+    resolution,
   };
 }
 

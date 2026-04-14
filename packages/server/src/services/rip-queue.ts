@@ -542,7 +542,7 @@ export async function sendToRip(params: {
         ...additionalSettings,
         outputChannelName: effectiveWorkflowName,
         media: printSettings?.mediaType ?? undefined,
-        ripMedia: printSettings?.mediaProfile ?? printSettings?.mediaType ?? undefined,
+        ripMedia: printSettings?.mediaProfile ?? undefined,
       },
     });
 

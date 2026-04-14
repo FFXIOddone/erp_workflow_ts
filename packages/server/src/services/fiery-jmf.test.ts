@@ -5,6 +5,7 @@ import {
   normalizeFieryQueueEntryId,
   resolveFieryMediaMappingName,
 } from './fiery-jmf.js';
+import { findFieryMediaMapping } from './fiery-media-map.js';
 
 describe('matchFieryWorkflowName', () => {
   it('resolves an exact case-insensitive workflow match from the discovered names', () => {
@@ -27,9 +28,45 @@ describe('matchFieryWorkflowName', () => {
   it('keeps the Fiery media mapping separate from the physical substrate name', () => {
     expect(
       resolveFieryMediaMappingName({
+        media: 'Oppboga Wide - Fast 4',
         ripMedia: '60 inch Web',
+        inkType: 'EFI GSLX Pro',
+        mediaType: 'Paper',
+        resolution: '1000 720',
+        colorMode: 'CMYK',
       }),
     ).toBe('60 inch Web');
+  });
+
+  it('falls back from PSA to the mapped Fiery RIP media name', () => {
+    expect(
+      resolveFieryMediaMappingName({
+        media: 'Oppboga Wide - Fast 4',
+        ripMedia: 'PSA',
+        inkType: 'EFI GSLX Pro',
+        mediaType: 'Paper',
+        resolution: '1000 720',
+        colorMode: 'CMYK',
+      }),
+    ).toBe('60 inch Web');
+  });
+
+  it('treats Any as a wildcard in the media mapping table', () => {
+    const mapping = findFieryMediaMapping({
+      substrate: 'Oppboga Wide - Fast 4',
+      inkType: 'EFI GSLX Pro',
+      mediaName: 'Any',
+      resolution: 'Any',
+      dotSize: 'Any',
+      colorMode: 'Any',
+      printMode: 'Any',
+      halftoneMode: 'Any',
+      profileType: 'Any',
+      mediaType: 'Default',
+    });
+
+    expect(mapping?.ripMedia).toBe('60 inch Web');
+    expect(mapping?.label).toBe('Oppboga Wide - Fast 4');
   });
 
   it('defaults the RIP media mapping to the known Fiery media mapping name', () => {

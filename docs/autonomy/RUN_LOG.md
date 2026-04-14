@@ -159,3 +159,10 @@
 - Verified `sendToRip(...)` now passes job-level `mediaType` / `mediaProfile` through to the Fiery JDF builder.
 - Verified the staged JDF for a real smoke submit now carries `Brand="3M 8518"`, `EFI:VutekProp Media="3M 8518"`, and explicit customer values in the submission comment.
 - The live Fiery connector accepted the smoke job successfully with the updated JDF content.
+
+### 2026-04-14 Fiery media mapping table
+- Claimed slice: create an explicit Fiery media mapping table so the ERP can stop guessing when Fiery returns `PSA` or `Any` placeholders.
+- Added `packages/server/src/services/fiery-media-map.ts` with wildcard-aware rows for `Oppboga Wide - Fast 4 -> 60 inch Web`, `3M 8518 -> 3M 8518`, and a wildcard fallback.
+- Updated `resolveFieryMediaMappingName(...)` / `getEffectiveVutekSettings(...)` so Fiery media selection prefers the table and ignores `PSA` / `Any` placeholders.
+- Updated `sendToRip(...)` so `mediaType` is no longer used as a fake RIP-side media mapping.
+- Documented the table in `docs/obsidian/fiery-media-mapping-table.md` and clarified that `Any` is a wildcard, not a literal stored value.
