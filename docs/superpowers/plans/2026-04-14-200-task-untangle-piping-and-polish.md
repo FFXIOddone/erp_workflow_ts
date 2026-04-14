@@ -25,7 +25,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Unify `linkedWorkOrderCount` calculation for the FedEx page and order details page.
 - [x] Make sandbox vs production source labeling flow from one shared shipment metadata field.
 - [x] Extract a shared FedEx location formatter and use it across shipping cards.
-- [ ] Consolidate ambiguous-tracking reconciliation into one repair job.
+- [x] Consolidate ambiguous-tracking reconciliation into one repair job.
 - [x] Ensure hourly tracking refresh skips shipments with no real FedEx identifier.
 - [ ] Audit shipment caches so stale values cannot outlive a fresh API result.
 

@@ -178,3 +178,8 @@
 - Claimed slice: unify the linked work-order count calculation used by the FedEx browser and its downstream consumers.
 - Added a shared FedEx work-order count helper so the summary builder no longer repeats the same `Set.size` logic in multiple branches.
 - Added a focused regression test for the shared count helper.
+
+### 2026-04-14 FedEx ambiguous-tracking repair
+- Claimed slice: consolidate ambiguous tracking/reference reconciliation into a dedicated repair job.
+- Added a dedicated ambiguous-tracking repair cycle and a matching API route so PO/reference-style rows are separated from the real FedEx tracking lane.
+- Tightened the full reconciliation and hourly candidate rules so real FedEx tracking numbers and reference-style rows are handled by different refresh paths.

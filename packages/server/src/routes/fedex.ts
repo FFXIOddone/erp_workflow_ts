@@ -15,6 +15,7 @@ import {
 } from '../services/fedex-api.js';
 import {
   runFedExTrackingFullReconciliationCycle,
+  runFedExAmbiguousTrackingRepairCycle,
   runFedExTrackingRefreshCycle,
 } from '../services/fedex-tracking-refresh.js';
 
@@ -244,6 +245,16 @@ fedexRouter.post('/tracking/refresh-all', wrapAsync(async (_req: AuthRequest, re
 // POST /fedex/tracking/refresh-hourly-scope - Run the same scoped refresh used by the hourly scheduler
 fedexRouter.post('/tracking/refresh-hourly-scope', wrapAsync(async (_req: AuthRequest, res: Response) => {
   const result = await runFedExTrackingRefreshCycle();
+
+  res.json({
+    success: true,
+    data: result,
+  });
+}));
+
+// POST /fedex/tracking/repair-ambiguous - Repair ambiguous FedEx reference-style tracking rows
+fedexRouter.post('/tracking/repair-ambiguous', wrapAsync(async (_req: AuthRequest, res: Response) => {
+  const result = await runFedExAmbiguousTrackingRepairCycle();
 
   res.json({
     success: true,

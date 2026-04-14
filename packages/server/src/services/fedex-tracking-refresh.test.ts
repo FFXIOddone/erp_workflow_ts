@@ -1,6 +1,7 @@
 import { Carrier } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import {
+  isAmbiguousFedExTrackingCandidate,
   isFullFedExRefreshCandidate,
   isHourlyFedExRefreshCandidate,
 } from './fedex-tracking-refresh.js';
@@ -38,7 +39,7 @@ describe('isHourlyFedExRefreshCandidate', () => {
 });
 
 describe('isFullFedExRefreshCandidate', () => {
-  it('targets all shipments that already have tracking numbers for full manual reconciliation', () => {
+  it('targets real FedEx tracking numbers for full manual reconciliation', () => {
     expect(
       isFullFedExRefreshCandidate({
         trackingNumber: '495213068323',
@@ -47,7 +48,38 @@ describe('isFullFedExRefreshCandidate', () => {
 
     expect(
       isFullFedExRefreshCandidate({
+        trackingNumber: 'PO421',
+      })
+    ).toBe(false);
+
+    expect(
+      isFullFedExRefreshCandidate({
         trackingNumber: null,
+      })
+    ).toBe(false);
+  });
+});
+
+describe('isAmbiguousFedExTrackingCandidate', () => {
+  it('targets reference-style tracking values for the dedicated repair job', () => {
+    expect(
+      isAmbiguousFedExTrackingCandidate({
+        carrier: Carrier.FEDEX,
+        trackingNumber: 'PO421',
+      })
+    ).toBe(true);
+
+    expect(
+      isAmbiguousFedExTrackingCandidate({
+        carrier: Carrier.OTHER,
+        trackingNumber: '64249',
+      })
+    ).toBe(true);
+
+    expect(
+      isAmbiguousFedExTrackingCandidate({
+        carrier: Carrier.FEDEX,
+        trackingNumber: '495213068323',
       })
     ).toBe(false);
   });
