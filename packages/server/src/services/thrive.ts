@@ -23,6 +23,10 @@ import { normalizeJobName } from './zund-match.js';
 // Track last known file sizes to detect truncated/partial reads
 const lastKnownSizes = new Map<string, number>();
 
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 // File server base paths
 const FILE_PATHS = {
   safari: '\\\\wildesigns-fs1\\Company Files\\Safari', // Port City Signs (4-digit WO#)
@@ -187,6 +191,61 @@ export interface ParsedJobInfo {
   isSafariPath: boolean;
 }
 
+function normalizeThriveTicketSegment(value: string | null | undefined): string {
+  return normalizeWhitespace(String(value ?? '').replace(/[<>:"/\\|?*\x00-\x1F]+/g, ' '));
+}
+
+function parseStructuredThriveTicketName(text: string): ParsedJobInfo | null {
+  const baseName = path.basename(text).replace(/\.[^.]+$/u, '');
+  const parts = baseName
+    .split('__')
+    .map((part) => normalizeThriveTicketSegment(part))
+    .filter((part) => Boolean(part));
+
+  if (parts.length < 2) return null;
+
+  const workOrderMatch = parts[0]?.match(/^WO(\d{4,6})$/i);
+  if (!workOrderMatch) return null;
+
+  const workOrderNumber = workOrderMatch[1];
+  return {
+    workOrderNumber,
+    customerName: parts[1] || null,
+    companyBrand: workOrderNumber.length === 4 ? 'PORT_CITY_SIGNS' : 'WILDE_SIGNS',
+    jobDescription: parts[2] || null,
+    isSafariPath: text.toLowerCase().includes('\\safari\\'),
+  };
+}
+
+export function buildThriveJobTicketName(params: {
+  workOrderNumber?: string | null;
+  customerName?: string | null;
+  sourceFileName?: string | null;
+  jobDescription?: string | null;
+}): string {
+  const parts: string[] = [];
+  const workOrderNumber = params.workOrderNumber?.trim().replace(/^wo/i, '');
+  const customerName = normalizeThriveTicketSegment(params.customerName);
+  const sourceBaseName = params.sourceFileName
+    ? normalizeThriveTicketSegment(
+        path.basename(params.sourceFileName, path.extname(params.sourceFileName)),
+      )
+    : '';
+  const effectiveDescription = normalizeThriveTicketSegment(params.jobDescription || sourceBaseName);
+
+  if (workOrderNumber) parts.push(`WO${workOrderNumber}`);
+  if (customerName) parts.push(customerName);
+  if (effectiveDescription) parts.push(effectiveDescription);
+
+  const ext = params.sourceFileName ? path.extname(params.sourceFileName) || '.pdf' : '.pdf';
+  const rawLabel = parts.join('__');
+  const sanitized = normalizeThriveTicketSegment(rawLabel).replace(/__+/g, '__');
+  const maxBaseLength = Math.max(40, 240 - ext.length);
+  const clipped = sanitized.slice(0, maxBaseLength).replace(/[.\s_-]+$/g, '');
+
+  return clipped ? `${clipped}${ext}` : `ERP-${Date.now()}${ext}`;
+}
+
 /**
  * Extract work order info from file path or job name
  *
@@ -204,6 +263,10 @@ export function parseJobInfo(text: string): ParsedJobInfo {
 
   // Normalize path separators
   const normalized = text.replace(/\//g, '\\');
+  const structuredInfo = parseStructuredThriveTicketName(normalized);
+  if (structuredInfo) {
+    return structuredInfo;
+  }
 
   // Check if it's a Safari path (Port City Signs)
   const isSafari = normalized.toLowerCase().includes('\\safari\\');
@@ -1077,6 +1140,7 @@ export const thriveService = {
   getAllJobs: getAllThriveJobs,
   getAllJobLogEntries: getAllThriveJobLogEntries,
   findJobByCutId: findThriveJobByCutId,
+  buildJobTicketName: buildThriveJobTicketName,
   parseQueueFile,
   parseCutFile,
   scanCutFolder,

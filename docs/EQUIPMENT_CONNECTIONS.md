@@ -39,6 +39,8 @@ Thrive uses MongoDB internally but does NOT expose it externally. Data is access
 - `packages/server/src/routes/equipment.ts` - API endpoints
 - Work order linking via file path parsing
 - Customer name extraction from paths
+- Thrive-only uploads now stage a renamed temp copy before the hotfolder copy lands, using the convention `WO12345__Customer Name__Job Description.pdf` so the queue file name itself carries the ticket context.
+- The parser understands that structured filename format, so Thrive jobs can still recover work order, customer, and description from the hotfolder copy.
 
 ### Action Items
 - [ ] None - fully integrated

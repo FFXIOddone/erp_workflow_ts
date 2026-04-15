@@ -39,6 +39,7 @@ import {
   type FieryJob,
 } from './fiery.js';
 import { buildFieryJobTicketName, submitVutekJob } from './fiery-jmf.js';
+import { copyThriveFileToHotfolder } from './thrive-upload.js';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -511,12 +512,40 @@ export async function sendToRip(params: {
       },
     };
   } else {
-    // Standard Onyx Thrive hotfolder — plain file copy
-    const copyResult = await copyToHotfolder(sourceFilePath, hotfolderTarget.path);
+    // Thrive hotfolder — stage a renamed file so the ticket metadata is preserved
+    const thriveWorkOrder = await prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      select: {
+        orderNumber: true,
+        customerName: true,
+        description: true,
+      },
+    });
+    const copyResult = await copyThriveFileToHotfolder({
+      sourceFilePath,
+      hotfolderPath: hotfolderTarget.path,
+      workOrderNumber: thriveWorkOrder?.orderNumber ?? null,
+      customerName: thriveWorkOrder?.customerName ?? null,
+      jobDescription: thriveWorkOrder?.description ?? null,
+    });
     if (!copyResult.success) {
       return { success: false, error: copyResult.error };
     }
     destinationPath = copyResult.destinationPath;
+    printSettingsJson = {
+      ...additionalSettings,
+      thrive: {
+        jobTicketName: copyResult.ticketName ?? null,
+        workOrderNumber: thriveWorkOrder?.orderNumber ?? null,
+        customerName: thriveWorkOrder?.customerName ?? null,
+        jobDescription: thriveWorkOrder?.description ?? null,
+        sourceFileName: path.basename(sourceFilePath),
+        copiedFileName: path.basename(copyResult.destinationPath ?? sourceFilePath),
+        destinationPath: copyResult.destinationPath ?? null,
+        stagedPath: copyResult.stagedPath ?? null,
+        importedAt: new Date().toISOString(),
+      },
+    };
   }
 
   // Create tracking record
