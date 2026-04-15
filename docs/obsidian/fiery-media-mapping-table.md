@@ -10,6 +10,7 @@ Important:
 - The remaining Fiery profile fields (`Ink type`, `Resolution`, `Dot size`, `Color mode`, `Print mode`, `Halftone mode`, `Profile type`, and `Media type`) are match selectors, not stock labels.
 - `Any` is a wildcard, not a literal value to store in ERP.
 - If a Fiery media configuration field is `Any`, the ERP should treat it as "match anything".
+- The ERP now writes `PrintMode` from the matched RIP catalog row instead of copying it from `ColorMode`.
 - Live catalog rows from the RIP box should be listed most-specific first so the ERP does not
   fall back to the broad `PSA` placeholders.
 

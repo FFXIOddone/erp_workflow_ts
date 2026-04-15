@@ -484,6 +484,7 @@ export async function sendToRip(params: {
         outputChannelName: effectiveWorkflowName,
         media: printSettings?.mediaType ?? undefined,
         ripMedia: printSettings?.mediaProfile ?? undefined,
+        printMode: printSettings?.printMode ?? undefined,
       },
     });
 

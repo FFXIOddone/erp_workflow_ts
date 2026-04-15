@@ -46,6 +46,7 @@ describe('extractFieryJdfAssertions', () => {
     expect(parsed.mediaBrand).toBe('Oppboga Wide - Fast 4');
     expect(parsed.mediaDescriptiveName).toBe('Oppboga Wide - Fast 4');
     expect(parsed.ripMedia).toBe('60 inch Web');
+    expect(parsed.printMode).toBe('Any');
     expect(parsed.auditComment).toContain('Source: jimmy_deans_blades.pdf');
     expect(parsed.auditComment).toContain('Customer: Pribusin');
     expect(parsed.auditComment).toContain('CustomerID: PO23402');

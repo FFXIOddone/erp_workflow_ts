@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildJdf,
   getEffectiveVutekSettings,
   matchFieryWorkflowName,
   normalizeFieryJobId,
@@ -61,6 +62,42 @@ describe('matchFieryWorkflowName', () => {
         colorMode: 'CMYK',
       }),
     ).toBe('PSA CMYK 1000dpi Binary F4 SE1 FE');
+  });
+
+  it('keeps print mode aligned with the RIP catalog row instead of copying color mode', () => {
+    const settings = getEffectiveVutekSettings({
+      media: 'Oppboga Wide - Fast 4',
+      ripMedia: 'PSA',
+      inkType: 'EFI GSLX Pro',
+      mediaType: 'Paper',
+      resolution: '1000 720',
+      colorMode: 'CMYK',
+    });
+
+    expect(settings.ripMedia).toBe('PSA CMYK 1000dpi Binary F4 SE1 FE');
+    expect(settings.printMode).toBe('F4');
+
+    const jdf = buildJdf({
+      workOrderId: '64524',
+      submissionJobId: 'ERP-64524-1776176299000',
+      jobTicketName: 'WO#64524',
+      pdfLocalPath: 'http://example.test/jimmy_deans_blades.pdf',
+      settings: {
+        media: 'Oppboga Wide - Fast 4',
+        ripMedia: 'PSA',
+        mediaType: 'Paper',
+        mediaUnit: 'Sheet',
+        outputChannelName: 'Zund G7',
+        mediaDimension: '6912 3456',
+        colorMode: 'CMYK',
+        inkType: 'EFI GSLX Pro',
+        whiteInkOptions: 'Spot color WHITE_INK',
+        resolution: '1000 720',
+      },
+    });
+
+    expect(jdf).toContain('PrintMode="F4"');
+    expect(jdf).toContain('<Feature FeatureName="ColorMode" Value="CMYK"/>');
   });
 
   it('treats Any as a wildcard while still preferring the most specific live RIP row', () => {

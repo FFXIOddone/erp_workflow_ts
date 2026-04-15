@@ -11,6 +11,7 @@ export interface FieryJdfAssertions {
   mediaBrand: string | null;
   mediaDescriptiveName: string | null;
   ripMedia: string | null;
+  printMode: string | null;
   auditComment: string | null;
 }
 
@@ -34,6 +35,7 @@ export function extractFieryJdfAssertions(jdfContent: string): FieryJdfAssertion
   let mediaBrand: string | null = null;
   let mediaDescriptiveName: string | null = null;
   let ripMedia: string | null = null;
+  let printMode: string | null = null;
 
   for (const pool of resources) {
     const nodeInfo = pool?.NodeInfo ?? pool?.['EFI:NodeInfo'];
@@ -51,6 +53,7 @@ export function extractFieryJdfAssertions(jdfContent: string): FieryJdfAssertion
     const vutekProp = machineProps?.VutekProp ?? machineProps?.['EFI:VutekProp'];
     if (vutekProp) {
       ripMedia = normalizeText(vutekProp.Media) ?? ripMedia;
+      printMode = normalizeText(vutekProp.PrintMode) ?? printMode;
     }
   }
 
@@ -61,6 +64,7 @@ export function extractFieryJdfAssertions(jdfContent: string): FieryJdfAssertion
     mediaBrand,
     mediaDescriptiveName,
     ripMedia,
+    printMode,
     auditComment: normalizeText(jdf.AuditPool?.Created?.Comment),
   };
 }

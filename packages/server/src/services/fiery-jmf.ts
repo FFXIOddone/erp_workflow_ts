@@ -26,7 +26,11 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 import { resolveFieryCustomerMetadata } from './fiery-customer-metadata.js';
-import { findFieryMediaMapping, normalizeFieryMediaName } from './fiery-media-map.js';
+import {
+  type FieryMediaMappingEntry,
+  findFieryMediaMapping,
+  normalizeFieryMediaName,
+} from './fiery-media-map.js';
 import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
 
 const VUTEK_HOST = '192.168.254.57';
@@ -58,6 +62,7 @@ const VUTEK_MEDIA_DIMENSION = process.env.VUTEK_MEDIA_DIMENSION ?? '6912 3456';
 const VUTEK_MEDIA_TYPE = process.env.VUTEK_MEDIA_TYPE ?? 'Paper';
 const VUTEK_MEDIA_UNIT = process.env.VUTEK_MEDIA_UNIT ?? 'Sheet';
 const VUTEK_COLOR_MODE = process.env.VUTEK_COLOR_MODE ?? 'CMYK';
+const VUTEK_PRINT_MODE = process.env.VUTEK_PRINT_MODE ?? 'Any';
 const VUTEK_INK_TYPE = process.env.VUTEK_INK_TYPE ?? 'EFI GSLX Pro';
 const VUTEK_WHITE_INK_OPTIONS =
   process.env.VUTEK_WHITE_INK_OPTIONS ?? 'Spot color WHITE_INK';
@@ -172,6 +177,8 @@ export interface VutekPrintSettings {
   mediaDimension?: string;
   /** Fiery ColorMode feature value required for paper profile lookup. */
   colorMode?: string;
+  /** Fiery PrintMode feature value required for paper profile lookup. */
+  printMode?: string;
   /** Fiery InkType feature value required for paper profile lookup. */
   inkType?: string;
   /** Fiery WhiteInkOptions feature value. */
@@ -200,6 +207,7 @@ export interface ResolvedVutekPrintSettings extends VutekPrintSettings {
   outputChannelName: string;
   mediaDimension: string;
   colorMode: string;
+  printMode: string;
   inkType: string;
   whiteInkOptions: string;
   resolution: string;
@@ -247,6 +255,7 @@ export const BLADE_SIGN_DEFAULTS: VutekPrintSettings = {
   workspace: 'DEFAULT',
   outputChannelName: VUTEK_OUTPUT_CHANNEL || undefined,
   colorMode: VUTEK_COLOR_MODE,
+  printMode: VUTEK_PRINT_MODE,
   inkType: VUTEK_INK_TYPE,
   whiteInkOptions: VUTEK_WHITE_INK_OPTIONS,
   resolution: VUTEK_RESOLUTION,
@@ -297,6 +306,14 @@ function normalizeDimensionValue(value?: string | null): string {
   const normalized = normalizeWhitespace(String(value ?? '').replace(/[x,]/gi, ' '));
   const match = normalized.match(/^(\d+)\s+(\d+)$/);
   return match ? `${match[1]} ${match[2]}` : VUTEK_MEDIA_DIMENSION;
+}
+
+function normalizeFieryPrintModeValue(value: string | null | undefined): string | undefined {
+  const normalized = normalizeFieryMediaName(value);
+  if (!normalized || /^any$/i.test(normalized)) {
+    return undefined;
+  }
+  return normalized;
 }
 
 function deriveDimensionFromInches(width?: number | null, height?: number | null): string | undefined {
@@ -368,22 +385,43 @@ export function matchFieryWorkflowName(
 }
 
 export function resolveFieryMediaMappingName(
-  settings: Partial<Pick<ResolvedVutekPrintSettings, 'media' | 'ripMedia' | 'inkType' | 'mediaType' | 'resolution' | 'colorMode'>>,
+  settings: Partial<
+    Pick<
+      ResolvedVutekPrintSettings,
+      'media' | 'ripMedia' | 'inkType' | 'mediaType' | 'resolution' | 'colorMode' | 'printMode'
+    >
+  >,
 ): string {
+  const mapped = resolveFieryMediaMappingEntry(settings);
   const explicitRipMedia = normalizeFieryMediaName(settings.ripMedia);
   if (explicitRipMedia && explicitRipMedia.toUpperCase() !== 'PSA') {
     return explicitRipMedia;
   }
 
-  const mapped = findFieryMediaMapping({
+  return mapped?.ripMedia ?? VUTEK_RIP_MEDIA;
+}
+
+export function resolveFieryMediaMappingEntry(
+  settings: Partial<
+    Pick<
+      ResolvedVutekPrintSettings,
+      'media' | 'ripMedia' | 'inkType' | 'mediaType' | 'resolution' | 'colorMode' | 'printMode'
+    >
+  >,
+): FieryMediaMappingEntry | undefined {
+  const explicitRipMedia = normalizeFieryMediaName(settings.ripMedia);
+  const ripMedia = explicitRipMedia && explicitRipMedia.toUpperCase() !== 'PSA'
+    ? explicitRipMedia
+    : undefined;
+  return findFieryMediaMapping({
     substrate: settings.media,
+    ripMedia,
     inkType: settings.inkType,
     mediaType: settings.mediaType,
     resolution: settings.resolution,
     colorMode: settings.colorMode,
+    printMode: settings.printMode,
   });
-
-  return mapped?.ripMedia ?? VUTEK_RIP_MEDIA;
 }
 
 function extractStringStateValues(blobText: string, stateName: string): string[] {
@@ -492,7 +530,18 @@ export function getEffectiveVutekSettings(
     mediaType: merged.mediaType || VUTEK_MEDIA_TYPE,
     resolution,
     colorMode: merged.colorMode || VUTEK_COLOR_MODE,
+    printMode: merged.printMode || VUTEK_PRINT_MODE,
   });
+  const mappedMedia = resolveFieryMediaMappingEntry({
+    media,
+    ripMedia: merged.ripMedia,
+    inkType: merged.inkType || VUTEK_INK_TYPE,
+    mediaType: merged.mediaType || VUTEK_MEDIA_TYPE,
+    resolution,
+    colorMode: merged.colorMode || VUTEK_COLOR_MODE,
+    printMode: merged.printMode || VUTEK_PRINT_MODE,
+  });
+  const requestedPrintMode = normalizeFieryPrintModeValue(merged.printMode);
 
   return {
     media,
@@ -514,6 +563,7 @@ export function getEffectiveVutekSettings(
     outputChannelName: merged.outputChannelName || VUTEK_OUTPUT_CHANNEL,
     mediaDimension: normalizeDimensionValue(merged.mediaDimension),
     colorMode: merged.colorMode || VUTEK_COLOR_MODE,
+    printMode: requestedPrintMode ?? mappedMedia?.printMode ?? VUTEK_PRINT_MODE,
     inkType: merged.inkType || VUTEK_INK_TYPE,
     whiteInkOptions: merged.whiteInkOptions || VUTEK_WHITE_INK_OPTIONS,
     resolution,
@@ -650,7 +700,7 @@ ${nodeInfoXml}
         Media="${escapeXmlAttr(ripMediaName)}"
         Mirror="${s.mirror ? 'true' : 'false'}"
         PrintDirection="${escapeXmlAttr(s.printDirection)}"
-        PrintMode="${escapeXmlAttr(s.colorMode)}"
+        PrintMode="${escapeXmlAttr(s.printMode)}"
         Resolution="${escapeXmlAttr(s.resolution)}"
         ShutterMode="${escapeXmlAttr(s.shutterMode)}"
         Smoothing="${escapeXmlAttr(s.smoothing)}"
