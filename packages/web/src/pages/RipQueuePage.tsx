@@ -470,6 +470,7 @@ interface FieryDiagnosticsData {
     generatedAt: string;
     rowCount: number;
     feedUrl: string;
+    xmlUrl: string;
     csvUrl: string;
   };
   latestJob?: {
@@ -882,7 +883,16 @@ function FieryDiagnosticsPanel() {
                         <p className="mt-1 text-[11px] text-gray-500">
                           Generated {formatDateTime(data.mediaCatalog.generatedAt)} from the ERP mirror.
                         </p>
-                        <div className="mt-2 grid gap-2 text-[11px] sm:grid-cols-2">
+                        <div className="mt-2 grid gap-2 text-[11px] sm:grid-cols-3">
+                          <a
+                            href={data.mediaCatalog.xmlUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-md border border-emerald-200 bg-white px-2.5 py-2 text-emerald-700 hover:bg-emerald-50 break-all"
+                          >
+                            <div className="font-semibold">XML import</div>
+                            <div className="text-gray-500">{data.mediaCatalog.xmlUrl}</div>
+                          </a>
                           <a
                             href={data.mediaCatalog.feedUrl}
                             target="_blank"
@@ -898,13 +908,13 @@ function FieryDiagnosticsPanel() {
                             rel="noreferrer"
                             className="rounded-md border border-emerald-200 bg-white px-2.5 py-2 text-emerald-700 hover:bg-emerald-50 break-all"
                           >
-                            <div className="font-semibold">CSV download</div>
+                            <div className="font-semibold">CSV mirror</div>
                             <div className="text-gray-500">{data.mediaCatalog.csvUrl}</div>
                           </a>
                         </div>
                         <p className="mt-2 text-xs text-gray-500">
-                          Use this feed to seed Fiery Command Center / Media Catalog entries. Fiery still owns the
-                          RIP-side catalog, but the ERP mirror now stays in one place.
+                          Use the XML import to seed Fiery Command Center / Media Catalog entries. Fiery still owns
+                          the RIP-side catalog, but the ERP mirror now stays in one place.
                         </p>
                       </div>
                     )}

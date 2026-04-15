@@ -286,3 +286,8 @@
 - Claimed slice: expose the ERP-side Fiery media catalog as a public feed and surface the connection details in diagnostics.
 - Added a public `/rip-queue/fiery/media-catalog` feed with JSON and CSV output, backed by the shared Fiery mapping table.
 - Surfaced the feed URL in Rip Queue diagnostics and documented the ERP-side MIS mirror for the Fiery PC setup.
+
+### 2026-04-15 Fiery MIS XML catalog import
+- Claimed slice: add an XML export for the mirrored Fiery catalog and make it the primary Fiery import artifact.
+- Added `/rip-queue/fiery/media-catalog?format=xml` plus a reusable XML serializer so the Fiery PC can import the catalog in the Fiery-native database format.
+- Updated the Rip Queue diagnostics and Fiery docs to point operators at the XML import link first, with JSON/CSV remaining as mirror views.

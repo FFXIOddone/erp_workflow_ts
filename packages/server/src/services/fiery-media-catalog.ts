@@ -63,6 +63,16 @@ function csvEscape(value: string | number | null | undefined): string {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
+function xmlEscape(value: string | number | null | undefined): string {
+  const text = value === null || value === undefined ? '' : String(value);
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 export function buildFieryMediaCatalogSnapshot(now = new Date()): FieryMediaCatalogSnapshot {
   const rows = [...FIERY_MEDIA_MAPPINGS]
     .map((entry, index) => {
@@ -119,4 +129,37 @@ export function serializeFieryMediaCatalogCsv(snapshot: FieryMediaCatalogSnapsho
   );
 
   return [headers.join(','), ...rows].join('\n');
+}
+
+export function serializeFieryMediaCatalogXml(snapshot: FieryMediaCatalogSnapshot): string {
+  const rows = snapshot.rows
+    .map(
+      (row) => `  <MediaEntry id="${xmlEscape(row.id)}" specificity="${row.specificity}" wildcardCount="${
+        row.wildcardFields.length
+      }">
+    <Label>${xmlEscape(row.label)}</Label>
+    <Substrate>${xmlEscape(row.substrate ?? '')}</Substrate>
+    <RipMedia>${xmlEscape(row.ripMedia)}</RipMedia>
+    <InkType>${xmlEscape(row.inkType ?? '')}</InkType>
+    <MediaName>${xmlEscape(row.mediaName ?? '')}</MediaName>
+    <Resolution>${xmlEscape(row.resolution ?? '')}</Resolution>
+    <DotSize>${xmlEscape(row.dotSize ?? '')}</DotSize>
+    <ColorMode>${xmlEscape(row.colorMode ?? '')}</ColorMode>
+    <PrintMode>${xmlEscape(row.printMode ?? '')}</PrintMode>
+    <HalftoneMode>${xmlEscape(row.halftoneMode ?? '')}</HalftoneMode>
+    <ProfileType>${xmlEscape(row.profileType ?? '')}</ProfileType>
+    <ResultingCalibration>${xmlEscape(row.resultingCalibration ?? '')}</ResultingCalibration>
+    <Icc>${xmlEscape(row.icc ?? '')}</Icc>
+    <MediaType>${xmlEscape(row.mediaType ?? '')}</MediaType>
+    <WildcardFields>${xmlEscape(row.wildcardFields.join('; '))}</WildcardFields>
+    <Notes>${xmlEscape(row.notes ?? '')}</Notes>
+  </MediaEntry>`,
+    )
+    .join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<FieryMediaCatalog source="${xmlEscape(snapshot.source)}" generatedAt="${xmlEscape(snapshot.generatedAt)}" rowCount="${snapshot.rowCount}">
+${rows}
+</FieryMediaCatalog>
+`;
 }

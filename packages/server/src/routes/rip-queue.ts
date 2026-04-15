@@ -58,7 +58,11 @@ import { resolveFieryWorkflowSelection } from '../services/fiery-workflow-select
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import { buildFieryConnectionHealth } from '../services/fiery-connection-health.js';
 import { FIERY_MEDIA_MAPPINGS, findFieryMediaMapping } from '../services/fiery-media-map.js';
-import { buildFieryMediaCatalogSnapshot, serializeFieryMediaCatalogCsv } from '../services/fiery-media-catalog.js';
+import {
+  buildFieryMediaCatalogSnapshot,
+  serializeFieryMediaCatalogCsv,
+  serializeFieryMediaCatalogXml,
+} from '../services/fiery-media-catalog.js';
 
 export const ripQueueRouter = Router();
 
@@ -117,6 +121,13 @@ ripQueueRouter.get('/fiery/media-catalog', async (req: Request, res: Response) =
     return;
   }
 
+  if (format === 'xml') {
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="fiery-media-catalog.xml"');
+    res.send(serializeFieryMediaCatalogXml(snapshot));
+    return;
+  }
+
   res.json({
     success: true,
     data: {
@@ -124,6 +135,7 @@ ripQueueRouter.get('/fiery/media-catalog', async (req: Request, res: Response) =
       generatedAt: snapshot.generatedAt,
       rowCount: snapshot.rowCount,
       feedUrl: `${origin}/rip-queue/fiery/media-catalog`,
+      xmlUrl: `${origin}/rip-queue/fiery/media-catalog?format=xml`,
       csvUrl: `${origin}/rip-queue/fiery/media-catalog?format=csv`,
       rows: snapshot.rows,
     },
@@ -1088,6 +1100,7 @@ ripQueueRouter.get('/fiery/diagnostics', async (req: AuthRequest, res: Response)
         generatedAt: mediaCatalogSnapshot.generatedAt,
         rowCount: mediaCatalogSnapshot.rowCount,
         feedUrl: `${requestOrigin}/rip-queue/fiery/media-catalog`,
+        xmlUrl: `${requestOrigin}/rip-queue/fiery/media-catalog?format=xml`,
         csvUrl: `${requestOrigin}/rip-queue/fiery/media-catalog?format=csv`,
       },
       capabilities: {

@@ -7,6 +7,7 @@ generic placeholders like `PSA`.
 The same catalog is now exposed by the ERP as a public MIS-style feed:
 - JSON: `/rip-queue/fiery/media-catalog`
 - CSV: `/rip-queue/fiery/media-catalog?format=csv`
+- XML: `/rip-queue/fiery/media-catalog?format=xml`
 
 Important:
 - The physical substrate / stock label belongs in the JDF `<Media>` resource.
