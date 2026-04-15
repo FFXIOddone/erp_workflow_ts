@@ -28,7 +28,9 @@ import {
   normalizeFieryWorkOrderNumber,
 } from './fiery-job-identity.js';
 import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
-import { resolveFieryStagedMetadata } from './fiery-staged-metadata.js';
+import {
+  buildFieryStagedMetadata,
+} from './fiery-staged-metadata.js';
 import { normalizeFieryJobId } from './fiery-jmf.js';
 import {
   getAllFieryDownloadFiles,
@@ -195,14 +197,7 @@ async function repairFieryJobMetadataInternal(): Promise<number> {
     const existingFierySettings = getFierySettingsFromPrintSettings(ripJob.printSettingsJson);
     if (existingFierySettings.importMode !== 'jmf') continue;
 
-    const normalized = resolveFieryStagedMetadata(existingFierySettings, fallbackWorkflowName);
-    const normalizedFierySettings = {
-      ...existingFierySettings,
-      workflowName: normalized.normalizedWorkflowName,
-      stagedPdfPath: normalized.normalizedPdfPath,
-      destinationPath: normalized.normalizedPdfPath,
-      copiedFileName: normalized.normalizedCopiedFileName,
-    };
+    const normalized = buildFieryStagedMetadata(existingFierySettings, fallbackWorkflowName);
 
     if (!normalized.shouldBackfill) continue;
 
@@ -211,7 +206,7 @@ async function repairFieryJobMetadataInternal(): Promise<number> {
       data: {
         printSettingsJson: toJsonValue({
           ...existingPrintSettings,
-          fiery: normalizedFierySettings,
+          fiery: normalized.normalizedFierySettings,
         }),
       },
     });
@@ -721,78 +716,62 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
     if (ripJob.ripType === 'Fiery') {
       const existingPrintSettings = normalizeJsonObject(ripJob.printSettingsJson);
       const existingFierySettings = getFierySettingsFromPrintSettings(ripJob.printSettingsJson);
-      const normalized = resolveFieryStagedMetadata(
+      const normalized = buildFieryStagedMetadata(
         existingFierySettings,
         typeof existingFierySettings.workflowName === 'string' && existingFierySettings.workflowName.trim()
           ? existingFierySettings.workflowName.trim()
           : 'Zund G7',
       );
-      const normalizedFierySettings = normalized.shouldBackfill
-        ? {
-            ...existingFierySettings,
-            workflowName: normalized.normalizedWorkflowName,
-            stagedPdfPath: normalized.normalizedPdfPath,
-            destinationPath: normalized.normalizedPdfPath,
-            copiedFileName: normalized.normalizedCopiedFileName,
-          }
-        : existingFierySettings;
-
-      if (normalized.shouldBackfill) {
-        const backfilledPrintSettings = {
-          ...existingPrintSettings,
-          fiery: normalizedFierySettings,
-        };
-
-        await prisma.ripJob.update({
-          where: { id: ripJob.id },
-          data: {
-            printSettingsJson: toJsonValue(backfilledPrintSettings),
-          },
-        });
-      }
+      let resolvedFierySettings = normalized.normalizedFierySettings;
+      let resolvedRipJobGuid: string | undefined;
 
       const jdfSubmissionJobId = await readFierySubmissionJobIdFromJdfPath(
-        normalizedFierySettings.jdfPath
+        resolvedFierySettings.jdfPath
       );
       const submissionJobId = getFierySubmissionJobId(
-        normalizedFierySettings,
+        resolvedFierySettings,
         ripJob.ripJobGuid
       ) ?? jdfSubmissionJobId;
-      const downloadMatch = findMatchingFieryDownloadFile(allFieryDownloads, [
-        typeof normalizedFierySettings.stagedPdfPath === 'string' ? normalizedFierySettings.stagedPdfPath : undefined,
-        typeof normalizedFierySettings.destinationPath === 'string' ? normalizedFierySettings.destinationPath : undefined,
-        typeof normalizedFierySettings.copiedFileName === 'string' ? normalizedFierySettings.copiedFileName : undefined,
-        typeof normalizedFierySettings.jobTicketName === 'string' ? normalizedFierySettings.jobTicketName : undefined,
-      ]);
-
       if (submissionJobId && ripJob.ripJobGuid !== submissionJobId) {
-        const backfilledPrintSettings = {
-          ...existingPrintSettings,
-          fiery: {
-            ...normalizedFierySettings,
-            submissionJobId,
-          },
+        resolvedFierySettings = {
+          ...resolvedFierySettings,
+          submissionJobId,
         };
+        resolvedRipJobGuid = submissionJobId;
+      }
 
+      if (normalized.shouldBackfill || resolvedRipJobGuid) {
         await prisma.ripJob.update({
           where: { id: ripJob.id },
           data: {
-            ripJobGuid: submissionJobId,
-            printSettingsJson: toJsonValue(backfilledPrintSettings),
+            ...(resolvedRipJobGuid ? { ripJobGuid: resolvedRipJobGuid } : {}),
+            printSettingsJson: toJsonValue({
+              ...existingPrintSettings,
+              fiery: resolvedFierySettings,
+            }),
           },
         });
 
-        ripJob.ripJobGuid = submissionJobId;
+        if (resolvedRipJobGuid) {
+          ripJob.ripJobGuid = resolvedRipJobGuid;
+        }
       }
 
-      const fieryJob = findMatchingFieryJob(ripJob, allFieryJobs, normalizedFierySettings);
+      const downloadMatch = findMatchingFieryDownloadFile(allFieryDownloads, [
+        typeof resolvedFierySettings.stagedPdfPath === 'string' ? resolvedFierySettings.stagedPdfPath : undefined,
+        typeof resolvedFierySettings.destinationPath === 'string' ? resolvedFierySettings.destinationPath : undefined,
+        typeof resolvedFierySettings.copiedFileName === 'string' ? resolvedFierySettings.copiedFileName : undefined,
+        typeof resolvedFierySettings.jobTicketName === 'string' ? resolvedFierySettings.jobTicketName : undefined,
+      ]);
+
+      const fieryJob = findMatchingFieryJob(ripJob, allFieryJobs, resolvedFierySettings);
       if (fieryJob) {
         const matchedAt = fieryJob.timestamp ? new Date(fieryJob.timestamp) : new Date();
         const updatedPrintSettings = {
           ...existingPrintSettings,
           fiery: {
-            ...normalizedFierySettings,
-            submissionJobId: submissionJobId ?? normalizedFierySettings.submissionJobId ?? null,
+            ...resolvedFierySettings,
+            submissionJobId: submissionJobId ?? resolvedFierySettings.submissionJobId ?? null,
             exportedJobId: fieryJob.jobId,
             exportedJobName: fieryJob.jobName,
             exportedFileName: fieryJob.fileName,
@@ -829,8 +808,8 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
       const updatedPrintSettings = {
         ...existingPrintSettings,
         fiery: {
-          ...normalizedFierySettings,
-          submissionJobId: submissionJobId ?? normalizedFierySettings.submissionJobId ?? null,
+          ...resolvedFierySettings,
+          submissionJobId: submissionJobId ?? resolvedFierySettings.submissionJobId ?? null,
           downloadedFileName: downloadMatch.fileName,
           downloadedFilePath: downloadMatch.filePath,
           downloadedAt: matchedAt.toISOString(),
@@ -839,8 +818,8 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
 
       if (
         ripJob.status !== 'PROCESSING' ||
-        normalizedFierySettings.downloadedFileName !== downloadMatch.fileName ||
-        normalizedFierySettings.downloadedAt == null
+        resolvedFierySettings.downloadedFileName !== downloadMatch.fileName ||
+        resolvedFierySettings.downloadedAt == null
       ) {
         await prisma.ripJob.update({
           where: { id: ripJob.id },

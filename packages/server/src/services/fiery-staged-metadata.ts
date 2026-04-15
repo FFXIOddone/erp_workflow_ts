@@ -22,6 +22,10 @@ export interface FieryStagedMetadataResolution {
   shouldBackfill: boolean;
 }
 
+export interface FieryStagedMetadataBackfill extends FieryStagedMetadataResolution {
+  normalizedFierySettings: Record<string, unknown>;
+}
+
 export function getFieryPdfPath(fierySettings: Record<string, unknown>): string | null {
   const stagedPdfPath = pickStringSetting(fierySettings.stagedPdfPath);
   const destinationPath = pickStringSetting(fierySettings.destinationPath);
@@ -58,5 +62,22 @@ export function resolveFieryStagedMetadata(
     normalizedPdfPath,
     normalizedCopiedFileName,
     shouldBackfill,
+  };
+}
+
+export function buildFieryStagedMetadata(
+  fierySettings: Record<string, unknown>,
+  fallbackWorkflowName: string,
+): FieryStagedMetadataBackfill {
+  const resolved = resolveFieryStagedMetadata(fierySettings, fallbackWorkflowName);
+  return {
+    ...resolved,
+    normalizedFierySettings: {
+      ...fierySettings,
+      workflowName: resolved.normalizedWorkflowName,
+      stagedPdfPath: resolved.normalizedPdfPath,
+      destinationPath: resolved.normalizedPdfPath,
+      copiedFileName: resolved.normalizedCopiedFileName,
+    },
   };
 }
