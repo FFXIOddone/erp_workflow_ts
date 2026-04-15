@@ -119,6 +119,9 @@ Note:
 - The `EFI:VutekProp Media` value is the Fiery RIP-side media mapping, which should not be replaced with the workflow name.
 - The remaining Fiery media fields are profile selectors, not stock labels. See [fiery-media-mapping-table.md](obsidian/fiery-media-mapping-table.md).
 - The Fiery media configuration fields that show `Any` are wildcards, not literal values. See [fiery-media-mapping-table.md](obsidian/fiery-media-mapping-table.md).
+- The ERP now exposes the mirrored Fiery MIS media catalog at `/rip-queue/fiery/media-catalog` and `/rip-queue/fiery/media-catalog?format=csv`.
+- Use that feed to seed or reconcile the Fiery Command WorkStation / Media Catalog rows on the RIP PC when the Media Mapping button is greyed out.
+- The ERP remains the source of truth for the catalog rows, but the Fiery side still owns the actual Command WorkStation media database.
 
 ### Integration Status ✅ Ready
 

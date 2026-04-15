@@ -189,6 +189,16 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function formatDateTime(dateStr: string): string {
+  return new Date(dateStr).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function formatFierySelectorSummary(row: FieryMediaMappingRow): string {
   return [
     row.inkType,
@@ -454,6 +464,13 @@ interface FieryDiagnosticsData {
     mediaDimension: string | null;
     resolution: string | null;
     whiteInkEnabled: boolean;
+  };
+  mediaCatalog?: {
+    source: string;
+    generatedAt: string;
+    rowCount: number;
+    feedUrl: string;
+    csvUrl: string;
   };
   latestJob?: {
     jobId: string;
@@ -853,6 +870,44 @@ function FieryDiagnosticsPanel() {
                     <p className="mt-2 text-xs text-gray-500">
                       This is the RIP-side mapping used for Fiery JMF submissions.
                     </p>
+
+                    {data.mediaCatalog && (
+                      <div className="mt-3 rounded-md border border-emerald-100 bg-emerald-50/70 p-3">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <p className="text-xs font-semibold text-gray-700">ERP Fiery MIS feed</p>
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
+                            {data.mediaCatalog.rowCount} rows
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-gray-500">
+                          Generated {formatDateTime(data.mediaCatalog.generatedAt)} from the ERP mirror.
+                        </p>
+                        <div className="mt-2 grid gap-2 text-[11px] sm:grid-cols-2">
+                          <a
+                            href={data.mediaCatalog.feedUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-md border border-emerald-200 bg-white px-2.5 py-2 text-emerald-700 hover:bg-emerald-50 break-all"
+                          >
+                            <div className="font-semibold">JSON feed</div>
+                            <div className="text-gray-500">{data.mediaCatalog.feedUrl}</div>
+                          </a>
+                          <a
+                            href={data.mediaCatalog.csvUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-md border border-emerald-200 bg-white px-2.5 py-2 text-emerald-700 hover:bg-emerald-50 break-all"
+                          >
+                            <div className="font-semibold">CSV download</div>
+                            <div className="text-gray-500">{data.mediaCatalog.csvUrl}</div>
+                          </a>
+                        </div>
+                        <p className="mt-2 text-xs text-gray-500">
+                          Use this feed to seed Fiery Command Center / Media Catalog entries. Fiery still owns the
+                          RIP-side catalog, but the ERP mirror now stays in one place.
+                        </p>
+                      </div>
+                    )}
 
                     {data.media.selectedMapping && (
                       <div className="mt-3 rounded-md border border-sky-100 bg-white p-3">

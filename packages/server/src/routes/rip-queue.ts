@@ -58,6 +58,7 @@ import { resolveFieryWorkflowSelection } from '../services/fiery-workflow-select
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import { buildFieryConnectionHealth } from '../services/fiery-connection-health.js';
 import { FIERY_MEDIA_MAPPINGS, findFieryMediaMapping } from '../services/fiery-media-map.js';
+import { buildFieryMediaCatalogSnapshot, serializeFieryMediaCatalogCsv } from '../services/fiery-media-catalog.js';
 
 export const ripQueueRouter = Router();
 
@@ -91,6 +92,42 @@ ripQueueRouter.get('/vutek-files/:filename', async (req: Request, res: Response)
   res.setHeader('Content-Type', contentType);
   res.setHeader('Content-Length', stat.size);
   createReadStream(filePath).pipe(res);
+});
+
+function getRequestOrigin(req: Request): string {
+  const forwardedProto = req.header('x-forwarded-proto');
+  const proto = forwardedProto?.split(',')[0]?.trim() || req.protocol || 'http';
+  const host = req.get('host');
+  return host ? `${proto}://${host}` : `${proto}://localhost`;
+}
+
+/**
+ * GET /rip-queue/fiery/media-catalog
+ * Public ERP-side Fiery MIS catalog mirror. Returns JSON by default or CSV when format=csv.
+ */
+ripQueueRouter.get('/fiery/media-catalog', async (req: Request, res: Response) => {
+  const snapshot = buildFieryMediaCatalogSnapshot();
+  const origin = getRequestOrigin(req);
+  const format = typeof req.query.format === 'string' ? req.query.format.toLowerCase() : 'json';
+
+  if (format === 'csv') {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="fiery-media-catalog.csv"');
+    res.send(serializeFieryMediaCatalogCsv(snapshot));
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: {
+      source: snapshot.source,
+      generatedAt: snapshot.generatedAt,
+      rowCount: snapshot.rowCount,
+      feedUrl: `${origin}/rip-queue/fiery/media-catalog`,
+      csvUrl: `${origin}/rip-queue/fiery/media-catalog?format=csv`,
+      rows: snapshot.rows,
+    },
+  });
 });
 
 ripQueueRouter.use(authenticate);
@@ -928,7 +965,7 @@ ripQueueRouter.post('/batches/hh-global', async (req: AuthRequest, res: Response
  * Run connectivity checks against the VUTEk/Fiery system.
  * Returns share accessibility, JMF endpoint discovery, and queue status.
  */
-ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response) => {
+ripQueueRouter.get('/fiery/diagnostics', async (req: AuthRequest, res: Response) => {
   const [shareResult, discovery, queueStatus, workflowDiscovery, capabilities, settings, latestFieryJob] =
     await Promise.all([
     testVutekShareAccess(),
@@ -975,6 +1012,8 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
   });
   const latestJobTimeline = latestFieryJob ? buildFieryJobTimelineSummary(latestFieryJob) : null;
   const heldJobs = extractFieryHeldJobs(queueStatus);
+  const mediaCatalogSnapshot = buildFieryMediaCatalogSnapshot();
+  const requestOrigin = getRequestOrigin(req);
   const health = buildFieryConnectionHealth({
     share: {
       accessible: shareResult.accessible,
@@ -1043,6 +1082,13 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
         mediaDimension: effective.mediaDimension,
         resolution: effective.resolution,
         whiteInkEnabled: effective.whiteInk,
+      },
+      mediaCatalog: {
+        source: mediaCatalogSnapshot.source,
+        generatedAt: mediaCatalogSnapshot.generatedAt,
+        rowCount: mediaCatalogSnapshot.rowCount,
+        feedUrl: `${requestOrigin}/rip-queue/fiery/media-catalog`,
+        csvUrl: `${requestOrigin}/rip-queue/fiery/media-catalog?format=csv`,
       },
       capabilities: {
         workflows: capabilities.workflows,

@@ -4,6 +4,10 @@ This table is the ERP-side mirror of the Fiery media catalog we are using on the
 It is intentionally small and explicit so the ERP stops guessing and stops falling back to
 generic placeholders like `PSA`.
 
+The same catalog is now exposed by the ERP as a public MIS-style feed:
+- JSON: `/rip-queue/fiery/media-catalog`
+- CSV: `/rip-queue/fiery/media-catalog?format=csv`
+
 Important:
 - The physical substrate / stock label belongs in the JDF `<Media>` resource.
 - The RIP-side media mapping name is what belongs in `EFI:VutekProp Media`.

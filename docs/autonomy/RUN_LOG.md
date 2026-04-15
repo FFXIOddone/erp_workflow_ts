@@ -281,3 +281,8 @@
 - Claimed slice: consolidate file-chain completion heuristics into one helper.
 - Added `summarizeFileChainTrace(...)` to the shared file-chain status module and switched `traceFile(...)` to use it instead of duplicating the printed/cut status arrays inline.
 - Extended `file-chain-state.test.ts` to cover the shared trace summary rules alongside the existing link-state and summary assertions.
+
+### 2026-04-15 Fiery MIS media catalog feed
+- Claimed slice: expose the ERP-side Fiery media catalog as a public feed and surface the connection details in diagnostics.
+- Added a public `/rip-queue/fiery/media-catalog` feed with JSON and CSV output, backed by the shared Fiery mapping table.
+- Surfaced the feed URL in Rip Queue diagnostics and documented the ERP-side MIS mirror for the Fiery PC setup.
