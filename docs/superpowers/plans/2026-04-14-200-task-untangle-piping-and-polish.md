@@ -48,7 +48,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Reconcile Fiery print-mode values against the RIP-side catalog entries.
 - [x] Ensure held Fiery jobs can be inspected without re-running submit logic.
 - [x] Audit Fiery queue repair for duplicate writes to the same metadata fields.
-- [ ] Add a helper to normalize `Any` wildcards in Fiery media table lookups.
+- [x] Add a helper to normalize `Any` wildcards in Fiery media table lookups.
 - [ ] Make the Fiery media mapping table discoverable from Rip Queue diagnostics.
 
 ### File Chain / Linked Data

@@ -32,10 +32,28 @@ function normalizeFieryField(value: string | null | undefined): string | undefin
   return trimmed;
 }
 
+export function normalizeFieryMediaLookupCriteria(
+  criteria: Partial<FieryMediaMappingEntry>,
+): Partial<FieryMediaMappingEntry> {
+  return {
+    substrate: normalizeFieryField(criteria.substrate),
+    ripMedia: normalizeFieryField(criteria.ripMedia),
+    inkType: normalizeFieryField(criteria.inkType),
+    mediaName: normalizeFieryField(criteria.mediaName),
+    resolution: normalizeFieryField(criteria.resolution),
+    dotSize: normalizeFieryField(criteria.dotSize),
+    colorMode: normalizeFieryField(criteria.colorMode),
+    printMode: normalizeFieryField(criteria.printMode),
+    halftoneMode: normalizeFieryField(criteria.halftoneMode),
+    profileType: normalizeFieryField(criteria.profileType),
+  };
+}
+
 function fieldsMatch(candidate: string | null | undefined, expected: string | null | undefined): boolean {
   const normalizedCandidate = normalizeFieryField(candidate);
+  if (!normalizedCandidate || !expected) return true;
   const normalizedExpected = normalizeFieryField(expected);
-  if (!normalizedCandidate || !normalizedExpected) return true;
+  if (!normalizedExpected) return true;
   return normalizedCandidate.toLowerCase() === normalizedExpected.toLowerCase();
 }
 
@@ -194,19 +212,20 @@ export const FIERY_MEDIA_MAPPINGS: readonly FieryMediaMappingEntry[] = [
 export function findFieryMediaMapping(criteria: Partial<FieryMediaMappingEntry>): FieryMediaMappingEntry | undefined {
   let bestMatch: FieryMediaMappingEntry | undefined;
   let bestScore = -1;
+  const normalizedCriteria = normalizeFieryMediaLookupCriteria(criteria);
 
   for (const entry of FIERY_MEDIA_MAPPINGS) {
     const matches =
-      fieldsMatch(entry.substrate, criteria.substrate) &&
-      fieldsMatch(entry.ripMedia, criteria.ripMedia) &&
-      fieldsMatch(entry.inkType, criteria.inkType) &&
-      fieldsMatch(entry.mediaName, criteria.mediaName) &&
-      fieldsMatch(entry.resolution, criteria.resolution) &&
-      fieldsMatch(entry.dotSize, criteria.dotSize) &&
-      fieldsMatch(entry.colorMode, criteria.colorMode) &&
-      fieldsMatch(entry.printMode, criteria.printMode) &&
-      fieldsMatch(entry.halftoneMode, criteria.halftoneMode) &&
-      fieldsMatch(entry.profileType, criteria.profileType);
+      fieldsMatch(entry.substrate, normalizedCriteria.substrate) &&
+      fieldsMatch(entry.ripMedia, normalizedCriteria.ripMedia) &&
+      fieldsMatch(entry.inkType, normalizedCriteria.inkType) &&
+      fieldsMatch(entry.mediaName, normalizedCriteria.mediaName) &&
+      fieldsMatch(entry.resolution, normalizedCriteria.resolution) &&
+      fieldsMatch(entry.dotSize, normalizedCriteria.dotSize) &&
+      fieldsMatch(entry.colorMode, normalizedCriteria.colorMode) &&
+      fieldsMatch(entry.printMode, normalizedCriteria.printMode) &&
+      fieldsMatch(entry.halftoneMode, normalizedCriteria.halftoneMode) &&
+      fieldsMatch(entry.profileType, normalizedCriteria.profileType);
 
     if (!matches) continue;
 
