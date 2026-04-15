@@ -52,7 +52,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Make the Fiery media mapping table discoverable from Rip Queue diagnostics.
 
 ### File Chain / Linked Data
-- [ ] Create one shared file-chain status evaluator used by order details and the file-chain page.
+- [x] Create one shared file-chain status evaluator used by order details and the file-chain page.
 - [ ] Move linked-data summary counts into the same source that drives file-chain rows.
 - [ ] Unify placeholder creation so batch repair and summary rendering cannot diverge.
 - [ ] Consolidate file-chain completion heuristics into one helper.

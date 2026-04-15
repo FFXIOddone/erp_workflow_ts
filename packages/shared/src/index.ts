@@ -19,6 +19,9 @@ export * from './routing-inference.js';
 // Search helpers
 export * from './search.js';
 
+// File chain status helpers
+export * from './file-chain-status.js';
+
 // FedEx tracking helpers
 export * from './fedex-tracking.js';
 

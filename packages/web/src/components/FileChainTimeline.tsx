@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Clock, Printer, Scissors, FileCheck, ChevronRight, Link2, Shield, CheckCircle, X, Lock, Maximize2 } from 'lucide-react';
+import { deriveFileChainLinkState } from '@erp/shared';
 import { api } from '../lib/api';
 import { FullscreenPanel } from './FullscreenPanel';
 
@@ -73,16 +74,37 @@ function ConfidenceBadge({ confidence, confirmed }: { confidence?: string; confi
   );
 }
 
-function StepBadge({ label, status, time, icon: Icon }: { label: string; status?: string; time?: string; icon: any }) {
+function StepBadge({
+  label,
+  status,
+  time,
+  icon: Icon,
+}: {
+  label: string;
+  status?: string;
+  time?: string | Date | null;
+  icon: any;
+}) {
   const color = STATUS_COLORS[status || 'PENDING'] || STATUS_COLORS.PENDING;
+  const formattedTime =
+    time instanceof Date
+      ? time
+      : typeof time === 'string'
+        ? new Date(time)
+        : null;
   return (
     <div className={`flex min-w-[104px] flex-col items-center rounded-xl border px-3 py-2.5 text-center ${color}`}>
       <Icon className="mb-1 h-5 w-5" />
       <span className="text-xs font-semibold">{label}</span>
       <span className="mt-0.5 text-[10px] capitalize">{(status || 'pending').toLowerCase().replace(/_/g, ' ')}</span>
-      {time && (
+      {formattedTime && !Number.isNaN(formattedTime.getTime()) && (
         <span className="mt-0.5 text-[10px] opacity-70">
-          {new Date(time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          {formattedTime.toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
         </span>
       )}
     </div>
@@ -101,6 +123,21 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
     },
     enabled: !!orderId,
   });
+
+  const derivedLinks = useMemo(
+    () =>
+      (links ?? []).map((link) =>
+        ({
+          ...link,
+          status: link.status ?? 'DESIGN',
+          ...deriveFileChainLinkState({
+            ...link,
+            status: link.status ?? 'DESIGN',
+          }),
+        }),
+      ),
+    [links],
+  );
 
   const confirmMutation = useMutation({
     mutationFn: (linkId: string) => api.put(`/file-chain/links/${linkId}/confirm`),
@@ -140,7 +177,7 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
 
   const renderRows = () => (
     <div className="space-y-4">
-      {(links ?? []).map((link) => (
+      {derivedLinks.map((link) => (
         <div key={link.id} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div className="min-w-0 flex-1 overflow-x-auto pb-1">
@@ -154,7 +191,7 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
 
                 <StepBadge
                   label="RIP"
-                  status={link.ripStatus || (link.rippedAt ? 'COMPLETED' : 'PENDING')}
+                  status={link.ripStatus}
                   time={link.rippedAt}
                   icon={Printer}
                 />
@@ -162,7 +199,7 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
 
                 <StepBadge
                   label="Print"
-                  status={link.printStatus || (link.printCompletedAt ? 'COMPLETED' : link.printStartedAt ? 'IN_PROGRESS' : 'PENDING')}
+                  status={link.printStatus}
                   time={link.printCompletedAt || link.printedAt || link.printStartedAt}
                   icon={Printer}
                 />
@@ -170,7 +207,7 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
 
                 <StepBadge
                   label="Cut"
-                  status={link.cutStatus || (link.cutCompletedAt ? 'COMPLETED' : (link.cutStartedAt || link.cutFilePath || link.cutFileName) ? 'IN_PROGRESS' : 'PENDING')}
+                  status={link.cutStatus}
                   time={link.cutCompletedAt || link.cutAt || link.cutStartedAt}
                   icon={Scissors}
                 />
