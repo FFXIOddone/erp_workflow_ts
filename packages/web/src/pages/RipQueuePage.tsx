@@ -189,6 +189,21 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function formatFierySelectorSummary(row: FieryMediaMappingRow): string {
+  return [
+    row.inkType,
+    row.mediaName,
+    row.resolution,
+    row.dotSize,
+    row.colorMode,
+    row.printMode,
+    row.halftoneMode,
+    row.profileType,
+  ]
+    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+    .join(' · ');
+}
+
 // ─── Main Page ────────────────────────────────────────────────
 
 type Tab = 'dashboard' | 'jobs' | 'send';
@@ -433,6 +448,8 @@ interface FieryDiagnosticsData {
     media: string | null;
     mediaType: string | null;
     mapping: string | null;
+    selectedMapping?: FieryMediaMappingRow | null;
+    availableMappings?: FieryMediaMappingRow[];
     mediaUnit: string | null;
     mediaDimension: string | null;
     resolution: string | null;
@@ -469,6 +486,24 @@ interface FieryDiagnosticsData {
     stageLabel: string;
     message: string;
   } | null;
+}
+
+interface FieryMediaMappingRow {
+  label: string;
+  substrate?: string | null;
+  ripMedia: string;
+  inkType?: string | null;
+  mediaName?: string | null;
+  resolution?: string | null;
+  dotSize?: string | null;
+  colorMode?: string | null;
+  printMode?: string | null;
+  halftoneMode?: string | null;
+  profileType?: string | null;
+  resultingCalibration?: string | null;
+  icc?: string | null;
+  mediaType?: string | null;
+  notes?: string | null;
 }
 
 function FieryDiagnosticsPanel() {
@@ -818,6 +853,84 @@ function FieryDiagnosticsPanel() {
                     <p className="mt-2 text-xs text-gray-500">
                       This is the RIP-side mapping used for Fiery JMF submissions.
                     </p>
+
+                    {data.media.selectedMapping && (
+                      <div className="mt-3 rounded-md border border-sky-100 bg-white p-3">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <p className="text-xs font-semibold text-gray-700">Resolved catalog row</p>
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200">
+                            {data.media.selectedMapping.label}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-gray-500">
+                          {formatFierySelectorSummary(data.media.selectedMapping) || 'Any'}
+                        </p>
+                        <div className="mt-2 grid gap-1 text-[11px] text-gray-600 sm:grid-cols-2">
+                          <DetailField label="Substrate" value={data.media.selectedMapping.substrate ?? null} />
+                          <DetailField label="RIP Media" value={data.media.selectedMapping.ripMedia} />
+                          <DetailField label="Calibration" value={data.media.selectedMapping.resultingCalibration ?? null} />
+                          <DetailField label="ICC" value={data.media.selectedMapping.icc ?? null} />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-3 rounded-md border border-sky-100 bg-white">
+                      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-sky-100">
+                        <div>
+                          <p className="text-xs font-semibold text-gray-700">Fiery media mapping table</p>
+                          <p className="text-[11px] text-gray-500">
+                            {data.media.availableMappings?.length ?? 0} catalog rows loaded from the RIP
+                          </p>
+                        </div>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200">
+                          Discoverable here
+                        </span>
+                      </div>
+                      <div className="max-h-64 overflow-auto">
+                        <table className="min-w-full text-[11px]">
+                          <thead className="sticky top-0 bg-sky-50 text-sky-700">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-semibold">Label</th>
+                              <th className="px-3 py-2 text-left font-semibold">RIP Media</th>
+                              <th className="px-3 py-2 text-left font-semibold">Selectors</th>
+                              <th className="px-3 py-2 text-left font-semibold">Notes</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(data.media.availableMappings ?? []).map((row) => {
+                              const isSelected = data.media?.selectedMapping?.label === row.label;
+                              return (
+                                <tr
+                                  key={row.label}
+                                  className={isSelected ? 'bg-sky-50/70' : 'bg-white'}
+                                >
+                                  <td className="px-3 py-2 align-top font-medium text-gray-800">
+                                    <div>{row.label}</div>
+                                    {row.substrate && (
+                                      <div className="mt-0.5 text-gray-500">{row.substrate}</div>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2 align-top text-gray-700">
+                                    <div className="font-medium">{row.ripMedia}</div>
+                                    {row.mediaType && (
+                                      <div className="mt-0.5 text-gray-500">{row.mediaType}</div>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2 align-top text-gray-600">
+                                    {formatFierySelectorSummary(row) || 'Any'}
+                                  </td>
+                                  <td className="px-3 py-2 align-top text-gray-500">
+                                    <div className="max-w-xs whitespace-pre-wrap">
+                                      {row.notes || '—'}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

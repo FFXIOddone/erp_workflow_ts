@@ -57,6 +57,7 @@ import { extractFieryHeldJobs } from '../services/fiery-held-jobs.js';
 import { resolveFieryWorkflowSelection } from '../services/fiery-workflow-selection.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import { buildFieryConnectionHealth } from '../services/fiery-connection-health.js';
+import { FIERY_MEDIA_MAPPINGS, findFieryMediaMapping } from '../services/fiery-media-map.js';
 
 export const ripQueueRouter = Router();
 
@@ -963,6 +964,15 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
   const effective = getEffectiveVutekSettings({
     outputChannelName: resolveFieryWorkflowSelection(undefined, settings?.fieryWorkflowName),
   });
+  const selectedMediaMapping = findFieryMediaMapping({
+    substrate: effective.media,
+    ripMedia: effective.ripMedia,
+    inkType: effective.inkType,
+    mediaType: effective.mediaType,
+    resolution: effective.resolution,
+    colorMode: effective.colorMode,
+    printMode: effective.printMode,
+  });
   const latestJobTimeline = latestFieryJob ? buildFieryJobTimelineSummary(latestFieryJob) : null;
   const heldJobs = extractFieryHeldJobs(queueStatus);
   const health = buildFieryConnectionHealth({
@@ -1027,6 +1037,8 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
         media: effective.media,
         mediaType: effective.mediaType,
         mapping: resolveFieryMediaMappingName(effective),
+        selectedMapping: selectedMediaMapping ?? null,
+        availableMappings: FIERY_MEDIA_MAPPINGS,
         mediaUnit: effective.mediaUnit,
         mediaDimension: effective.mediaDimension,
         resolution: effective.resolution,

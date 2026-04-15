@@ -49,7 +49,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Ensure held Fiery jobs can be inspected without re-running submit logic.
 - [x] Audit Fiery queue repair for duplicate writes to the same metadata fields.
 - [x] Add a helper to normalize `Any` wildcards in Fiery media table lookups.
-- [ ] Make the Fiery media mapping table discoverable from Rip Queue diagnostics.
+- [x] Make the Fiery media mapping table discoverable from Rip Queue diagnostics.
 
 ### File Chain / Linked Data
 - [ ] Create one shared file-chain status evaluator used by order details and the file-chain page.
