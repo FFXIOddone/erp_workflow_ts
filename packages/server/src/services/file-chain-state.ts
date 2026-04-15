@@ -1,6 +1,7 @@
 export {
   deriveFileChainLinkState,
   summarizeFileChainLinks,
+  summarizeFileChainTrace,
 } from '@erp/shared';
 
 export type {

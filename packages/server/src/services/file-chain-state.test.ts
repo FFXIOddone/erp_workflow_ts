@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { deriveFileChainLinkState, summarizeFileChainLinks } from './file-chain-state.js';
+import { summarizeFileChainCompletion } from '@erp/shared';
+import {
+  deriveFileChainLinkState,
+  summarizeFileChainLinks,
+  summarizeFileChainTrace,
+} from './file-chain-state.js';
 
 describe('file chain state normalization', () => {
   it('treats timestamped print and cut progress as complete even when the raw chain status is stale', () => {
@@ -79,5 +84,78 @@ describe('file chain state normalization', () => {
       cutComplete: 1,
       chainStatus: 'RIPPING',
     });
+  });
+
+  it('summarizes trace outcomes from the same completion heuristics', () => {
+    expect(
+      summarizeFileChainTrace([
+        {
+          status: 'READY_TO_PRINT',
+          printFilePath: '\\\\server\\design\\file.pdf',
+          printCompletedAt: '2026-04-06T10:00:00.000Z',
+          cutFileName: 'file.zcc',
+          cutCompletedAt: '2026-04-06T10:08:00.000Z',
+          ripJob: {
+            status: 'PRINTED',
+            rippedAt: '2026-04-06T09:55:00.000Z',
+          },
+        },
+      ]),
+    ).toEqual({
+      hasPrinted: true,
+      hasCut: true,
+      status: 'PRINTED_AND_CUT',
+    });
+
+    expect(
+      summarizeFileChainTrace([
+        {
+          status: 'SENT_TO_RIP',
+          printFilePath: '\\\\server\\design\\file-2.pdf',
+          ripJob: {
+            status: 'PROCESSING',
+          },
+        },
+      ]),
+    ).toEqual({
+      hasPrinted: false,
+      hasCut: false,
+      status: 'NOT_PRINTED',
+    });
+
+    expect(summarizeFileChainTrace([])).toEqual({
+      hasPrinted: false,
+      hasCut: false,
+      status: 'NOT_FOUND',
+    });
+  });
+
+  it('returns the same completion outcome for links and derived states', () => {
+    const links = [
+      {
+        status: 'READY_TO_PRINT',
+        printFilePath: '\\\\server\\design\\file.pdf',
+        printCompletedAt: '2026-04-06T10:00:00.000Z',
+        cutFileName: 'file.zcc',
+        cutCompletedAt: '2026-04-06T10:08:00.000Z',
+        ripJob: {
+          status: 'PRINTED',
+          rippedAt: '2026-04-06T09:55:00.000Z',
+        },
+      },
+      {
+        status: 'SENT_TO_RIP',
+        printFilePath: '\\\\server\\design\\file-2.pdf',
+        ripJob: {
+          status: 'PROCESSING',
+        },
+      },
+    ];
+
+    const expectedTrace = summarizeFileChainTrace(links);
+    const derivedStates = links.map((link) => deriveFileChainLinkState(link));
+
+    expect(summarizeFileChainCompletion(links)).toEqual(expectedTrace);
+    expect(summarizeFileChainCompletion(derivedStates)).toEqual(expectedTrace);
   });
 });

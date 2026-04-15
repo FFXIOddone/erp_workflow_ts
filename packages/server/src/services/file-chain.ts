@@ -29,7 +29,7 @@ import {
 } from './zund-match.js';
 import { FIERY_CONFIG, getAllFieryJobs } from './fiery.js';
 import { scanZundQueueFiles } from './zund-live.js';
-import { deriveFileChainLinkState, summarizeFileChainLinks } from './file-chain-state.js';
+import { deriveFileChainLinkState, summarizeFileChainLinks, summarizeFileChainTrace } from './file-chain-state.js';
 import type { Prisma, PrintCutLink } from '@prisma/client';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
@@ -1610,20 +1610,16 @@ export async function traceFile(fileName: string) {
     take: 10,
   });
 
-  const states = asprint.map((link) => deriveFileChainLinkState(link));
+  const traceSummary = summarizeFileChainTrace(asprint);
 
   return {
     fileName,
     normalized,
     printCutLinks: asprint,
     ripJobs,
-    hasPrinted: states.some((state) => ['READY_TO_PRINT', 'PRINTING', 'PRINTED', 'CUT_PENDING', 'CUTTING', 'CUT_COMPLETE', 'FINISHED'].includes(state.effectiveStatus)),
-    hasCut: states.some((state) => ['CUT_COMPLETE', 'FINISHED'].includes(state.effectiveStatus)),
-    status: states.length > 0
-      ? states.some((state) => state.effectiveStatus === 'CUT_COMPLETE' || state.effectiveStatus === 'FINISHED') ? 'PRINTED_AND_CUT'
-        : states.some((state) => ['READY_TO_PRINT', 'PRINTING', 'PRINTED', 'CUT_PENDING', 'CUTTING'].includes(state.effectiveStatus)) ? 'PRINTED_NOT_CUT'
-        : 'NOT_PRINTED'
-      : 'NOT_FOUND',
+    hasPrinted: traceSummary.hasPrinted,
+    hasCut: traceSummary.hasCut,
+    status: traceSummary.status,
   };
 }
 

@@ -44,6 +44,14 @@ export type FileChainLinkState = {
 
 export type FileChainLinkView<T extends FileChainLinkLike = FileChainLinkLike> = T & FileChainLinkState;
 
+export type FileChainTraceSummary = {
+  hasPrinted: boolean;
+  hasCut: boolean;
+  status: 'PRINTED_AND_CUT' | 'PRINTED_NOT_CUT' | 'NOT_PRINTED' | 'NOT_FOUND';
+};
+
+export type FileChainCompletionInput = FileChainLinkLike | Pick<FileChainLinkState, 'effectiveStatus'>;
+
 const STATUS_PRIORITY: Record<FileChainStatus, number> = {
   FAILED: 0,
   DESIGN: 1,
@@ -83,6 +91,16 @@ const PRINT_IN_PROGRESS_STATUSES = new Set<FileChainStatus>(['PRINTING']);
 const CUT_COMPLETE_STATUSES = new Set<FileChainStatus>(['CUT_COMPLETE', 'FINISHED']);
 
 const CUT_IN_PROGRESS_STATUSES = new Set<FileChainStatus>(['CUT_PENDING', 'CUTTING']);
+const TRACE_PRINTED_STATUSES = new Set<FileChainStatus>([
+  'READY_TO_PRINT',
+  'PRINTING',
+  'PRINTED',
+  'CUT_PENDING',
+  'CUTTING',
+  'CUT_COMPLETE',
+  'FINISHED',
+]);
+const TRACE_CUT_STATUSES = new Set<FileChainStatus>(['CUT_COMPLETE', 'FINISHED']);
 
 function normalizeChainStatus(status: string | null | undefined): FileChainStatus {
   if (!status) return 'DESIGN';
@@ -202,4 +220,29 @@ export function summarizeFileChainLinks(links: FileChainLinkLike[]) {
     cutComplete: states.filter((state) => state.cutStatus === 'COMPLETED').length,
     chainStatus,
   };
+}
+
+export function summarizeFileChainCompletion(entries: FileChainCompletionInput[]): FileChainTraceSummary {
+  const effectiveStatuses = entries.map((entry) =>
+    'effectiveStatus' in entry ? entry.effectiveStatus : deriveFileChainLinkState(entry).effectiveStatus,
+  );
+  const hasPrinted = effectiveStatuses.some((status) => TRACE_PRINTED_STATUSES.has(status));
+  const hasCut = effectiveStatuses.some((status) => TRACE_CUT_STATUSES.has(status));
+
+  return {
+    hasPrinted,
+    hasCut,
+    status: effectiveStatuses.length > 0
+      ? hasCut
+        ? 'PRINTED_AND_CUT'
+        : hasPrinted
+          ? 'PRINTED_NOT_CUT'
+          : 'NOT_PRINTED'
+      : 'NOT_FOUND',
+  };
+}
+
+export function summarizeFileChainTrace(links: FileChainLinkLike[]): FileChainTraceSummary {
+  const states = links.map((link) => deriveFileChainLinkState(link));
+  return summarizeFileChainCompletion(states);
 }

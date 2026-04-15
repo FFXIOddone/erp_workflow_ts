@@ -276,3 +276,8 @@
 - Claimed slice: unify placeholder creation so batch repair and summary rendering cannot diverge.
 - Added `buildPlaceholderPrintCutLinkData(...)` and `createPlaceholderPrintCutLinkRow(...)` in `file-chain.ts` so order creation and linked-data repair use the same placeholder payload.
 - Replaced the direct `printCutLink.create(...)` calls in `routes/orders.ts` and `order-linked-data.ts`, and added focused coverage in `file-chain-placeholder.test.ts`.
+
+### 2026-04-15 File-chain completion heuristic helper
+- Claimed slice: consolidate file-chain completion heuristics into one helper.
+- Added `summarizeFileChainTrace(...)` to the shared file-chain status module and switched `traceFile(...)` to use it instead of duplicating the printed/cut status arrays inline.
+- Extended `file-chain-state.test.ts` to cover the shared trace summary rules alongside the existing link-state and summary assertions.
