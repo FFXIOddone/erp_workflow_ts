@@ -271,3 +271,8 @@
 - Claimed slice: make Fiery connection health surface the exact failing stage.
 - Added a shared Fiery connection-health helper and wired it into the Rip Queue diagnostics payload so share, queue, workflow, and latest-job stage failures can surface the exact stage label and message.
 - The diagnostics panel now shows the current health stage explicitly instead of only a generic connected / issue badge.
+
+### 2026-04-15 Placeholder print-cut link helper
+- Claimed slice: unify placeholder creation so batch repair and summary rendering cannot diverge.
+- Added `buildPlaceholderPrintCutLinkData(...)` and `createPlaceholderPrintCutLinkRow(...)` in `file-chain.ts` so order creation and linked-data repair use the same placeholder payload.
+- Replaced the direct `printCutLink.create(...)` calls in `routes/orders.ts` and `order-linked-data.ts`, and added focused coverage in `file-chain-placeholder.test.ts`.

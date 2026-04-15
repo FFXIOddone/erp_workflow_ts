@@ -54,6 +54,7 @@ import {
   getOrderLinkedDataSummary,
   repairOrderLinkedDataIntegrity,
 } from '../services/order-linked-data.js';
+import { createPlaceholderPrintCutLinkRow } from '../services/file-chain.js';
 
 export const ordersRouter = Router();
 const MATERIAL_DEDUCTION_STATIONS = ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT', 'CUT', 'FABRICATION', 'INSTALLATION'];
@@ -1326,14 +1327,10 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
   });
 
   try {
-    await prisma.printCutLink.create({
-      data: {
-        workOrderId: order.id,
-        printFileName: order.orderNumber,
-        printFilePath: '',
-        status: 'DESIGN',
-        linkConfidence: 'NONE',
-      },
+    await createPlaceholderPrintCutLinkRow(prisma, {
+      workOrderId: order.id,
+      orderNumber: order.orderNumber,
+      status: 'DESIGN',
     });
   } catch (err) {
     console.error('Failed to create placeholder chain:', err);

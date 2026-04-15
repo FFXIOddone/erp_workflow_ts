@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { PrintingMethod } from '@erp/shared';
 import { prisma } from '../db/client.js';
-import { formatLinkedFileChainSummary, getOrderFileChainSummary } from './file-chain.js';
+import {
+  createPlaceholderPrintCutLinkRow,
+  formatLinkedFileChainSummary,
+  getOrderFileChainSummary,
+} from './file-chain.js';
 import {
   applyRoutingDefaults,
   buildInitialStationProgress,
@@ -375,14 +379,10 @@ export async function repairOrderLinkedDataIntegrity(options: {
       }
 
       if (shouldCreateFileChain) {
-        await tx.printCutLink.create({
-          data: {
-            workOrderId: order.id,
-            printFileName: order.orderNumber,
-            printFilePath: '',
-            status: 'DESIGN',
-            linkConfidence: 'NONE',
-          },
+        await createPlaceholderPrintCutLinkRow(tx, {
+          workOrderId: order.id,
+          orderNumber: order.orderNumber,
+          status: 'DESIGN',
         });
       }
 

@@ -228,6 +228,14 @@ type LinkedFileChainLinkShape = {
   cutCompletedAt: Date | string | null;
 };
 
+type PrintCutLinkCreateClient = {
+  printCutLink: {
+    create: (args: {
+      data: Prisma.PrintCutLinkUncheckedCreateInput;
+    }) => Promise<PrintCutLink>;
+  };
+};
+
 export function formatLinkedFileChainSummary(
   fileChainSummary: Awaited<ReturnType<typeof getOrderFileChainSummary>> | null,
 ): {
@@ -268,6 +276,39 @@ export function formatLinkedFileChainSummary(
     fileChainLinks,
     latestFileChainLinks: fileChainLinks.slice(0, 5),
   };
+}
+
+export function buildPlaceholderPrintCutLinkData(input: {
+  workOrderId: string;
+  orderNumber?: string;
+  printFileName?: string;
+  printFilePath?: string;
+  status?: string;
+}): Prisma.PrintCutLinkUncheckedCreateInput {
+  const printFileName = input.printFileName ?? input.orderNumber ?? '';
+  const extractedCutId = extractCutId(printFileName) ?? undefined;
+
+  return {
+    workOrderId: input.workOrderId,
+    printFileName,
+    printFilePath: input.printFilePath ?? '',
+    status: (input.status ?? 'DESIGN') as any,
+    linkConfidence: 'NONE',
+    cutId: extractedCutId,
+  };
+}
+
+export async function createPlaceholderPrintCutLinkRow(
+  client: PrintCutLinkCreateClient,
+  input: {
+    workOrderId: string;
+    orderNumber: string;
+    status?: string;
+  },
+) {
+  return client.printCutLink.create({
+    data: buildPlaceholderPrintCutLinkData(input),
+  });
 }
 
 /**
@@ -439,14 +480,15 @@ export async function createPrintCutLink(input: {
 
   return prisma.printCutLink.create({
     data: {
-      workOrderId: input.workOrderId,
-      printFileName: input.printFileName,
-      printFilePath: input.printFilePath,
+      ...buildPlaceholderPrintCutLinkData({
+        workOrderId: input.workOrderId,
+        printFileName: input.printFileName,
+        printFilePath: input.printFilePath,
+        status: input.status,
+      }),
       printFileSize: input.printFileSize,
       ripJobId: input.ripJobId,
-      status: (input.status ?? 'DESIGN') as any,
-      linkConfidence: 'NONE',
-      cutId: extractedCutId,
+      cutId: extractedCutId ?? undefined,
     },
   });
 }
