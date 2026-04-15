@@ -46,7 +46,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Separate physical substrate, RIP mapping, and profile fields in Fiery docs and code comments.
 - [x] Make Fiery connection health surface the exact failing stage.
 - [x] Reconcile Fiery print-mode values against the RIP-side catalog entries.
-- [ ] Ensure held Fiery jobs can be inspected without re-running submit logic.
+- [x] Ensure held Fiery jobs can be inspected without re-running submit logic.
 - [ ] Audit Fiery queue repair for duplicate writes to the same metadata fields.
 - [ ] Add a helper to normalize `Any` wildcards in Fiery media table lookups.
 - [ ] Make the Fiery media mapping table discoverable from Rip Queue diagnostics.

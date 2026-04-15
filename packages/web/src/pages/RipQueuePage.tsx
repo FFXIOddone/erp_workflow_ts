@@ -10,6 +10,7 @@ import {
   CheckCircle,
   XCircle,
   AlertTriangle,
+  PauseCircle,
   Cpu,
   Printer,
   Loader2,
@@ -452,6 +453,16 @@ interface FieryDiagnosticsData {
       complete: boolean;
     }[];
   } | null;
+  heldJobs?: {
+    jobId: string;
+    jobPartId: string;
+    status: string;
+    priority: number;
+    submissionTime: string | null;
+    startTime: string | null;
+    endTime: string | null;
+    descriptiveName: string | null;
+  }[];
   health?: {
     issue: boolean;
     stageKey: string | null;
@@ -629,6 +640,40 @@ function FieryDiagnosticsPanel() {
                       Stage: <span className="font-semibold">{data.health.stageLabel}</span>
                     </p>
                     <p className="text-xs text-gray-400">{data.health.message}</p>
+                  </div>
+                </div>
+              )}
+
+              {data.heldJobs && data.heldJobs.length > 0 && (
+                <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 border border-amber-100">
+                  <PauseCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-sm font-medium text-gray-800">Held Fiery jobs</p>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                        {data.heldJobs.length} held
+                      </span>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {data.heldJobs.map((job) => (
+                        <div key={`${job.jobId}-${job.jobPartId}`} className="rounded-md border border-amber-200 bg-white/80 p-2">
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <p className="text-xs font-semibold text-gray-800">
+                              {job.descriptiveName || job.jobId}
+                            </p>
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                              {job.status}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            JobID {job.jobId} · Part {job.jobPartId} · Priority {job.priority}
+                          </p>
+                          <p className="text-[11px] text-gray-400">
+                            {job.submissionTime ? `Submitted ${timeAgo(job.submissionTime)}` : 'Submission time unavailable'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}

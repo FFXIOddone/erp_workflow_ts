@@ -53,6 +53,7 @@ import {
 } from '../services/fiery-jmf.js';
 import { buildFieryJobTimelineSummary } from '../services/fiery-job-timeline.js';
 import { buildFieryJobTimelineMetrics } from '../services/fiery-job-timeline.js';
+import { extractFieryHeldJobs } from '../services/fiery-held-jobs.js';
 import { resolveFieryWorkflowSelection } from '../services/fiery-workflow-selection.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import { buildFieryConnectionHealth } from '../services/fiery-connection-health.js';
@@ -963,6 +964,7 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
     outputChannelName: resolveFieryWorkflowSelection(undefined, settings?.fieryWorkflowName),
   });
   const latestJobTimeline = latestFieryJob ? buildFieryJobTimelineSummary(latestFieryJob) : null;
+  const heldJobs = extractFieryHeldJobs(queueStatus);
   const health = buildFieryConnectionHealth({
     share: {
       accessible: shareResult.accessible,
@@ -1005,6 +1007,7 @@ ripQueueRouter.get('/fiery/diagnostics', async (_req: AuthRequest, res: Response
         queueEntryId: queueStatus.queueEntryId ?? null,
         raw: queueStatus.raw ?? null,
       },
+      heldJobs,
       latestJob: latestJobTimeline,
       health,
       workflow: {

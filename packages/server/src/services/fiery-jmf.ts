@@ -25,6 +25,7 @@
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
+import { XMLParser } from 'fast-xml-parser';
 import { resolveFieryCustomerMetadata } from './fiery-customer-metadata.js';
 import {
   type FieryMediaMappingEntry,
@@ -32,6 +33,7 @@ import {
   normalizeFieryMediaName,
 } from './fiery-media-map.js';
 import { resolveFieryWorkflowSelection } from './fiery-workflow-selection.js';
+import type { VUTEkQueueEntry, VUTEkQueueStatus } from './vutek.js';
 
 const VUTEK_HOST = '192.168.254.57';
 const VUTEK_JMF_PORT = 8010;
@@ -1009,13 +1011,13 @@ async function scanDirForWorkflows(dir: string, depth: number): Promise<string[]
 /**
  * Query the current VUTEk print queue status.
  */
-export async function getVutekQueueStatus(): Promise<{
-  status: string;
-  queueSize: number;
-  jobId?: string | null;
-  queueEntryId?: string | null;
-  raw?: string;
-}> {
+export async function getVutekQueueStatus(): Promise<
+  VUTEkQueueStatus & {
+    jobId?: string | null;
+    queueEntryId?: string | null;
+    raw?: string;
+  }
+> {
   const now = new Date().toISOString();
   const jmf = `<?xml version="1.0" encoding="UTF-8"?>
 <JMF xmlns="http://www.CIP4.org/JDFSchema_1_1" SenderID="WildeSignsERP" TimeStamp="${now}" Version="1.3">
@@ -1031,18 +1033,37 @@ export async function getVutekQueueStatus(): Promise<{
       signal: AbortSignal.timeout(8000),
     });
     const body = await resp.text();
-    const statusMatch = body.match(/Status="([^"]+)"/);
-    const sizeMatch = body.match(/QueueSize="(\d+)"/);
-    const jobIdMatch = body.match(/JobID="([^"]+)"/);
-    const queueEntryMatch = body.match(/QueueEntryID="([^"]+)"/);
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '',
+      removeNSPrefix: true,
+    });
+    const parsed = parser.parse(body);
+    const response = parsed?.JMF?.Response;
+    const queue = response?.Queue;
+    const rawEntries = queue?.QueueEntry;
+    const entries = (Array.isArray(rawEntries) ? rawEntries : rawEntries ? [rawEntries] : [])
+      .map((entry): VUTEkQueueEntry => ({
+        jobId: entry.JobID || '',
+        jobPartId: entry.JobPartID || '',
+        status: entry.Status || 'Unknown',
+        priority: parseInt(entry.Priority || '0', 10),
+        submissionTime: entry.SubmissionTime || null,
+        startTime: entry.StartTime || null,
+        endTime: entry.EndTime || null,
+        descriptiveName: entry.DescriptiveName || null,
+      }));
     return {
-      status: statusMatch?.[1] ?? 'Unknown',
-      queueSize: sizeMatch ? parseInt(sizeMatch[1], 10) : 0,
-      jobId: jobIdMatch?.[1] ?? null,
-      queueEntryId: normalizeFieryQueueEntryId(queueEntryMatch?.[1]) ?? null,
+      status: queue?.Status || 'Unknown',
+      queueSize: parseInt(queue?.QueueSize || '0', 10),
+      deviceId: queue?.DeviceID || '',
+      entries,
+      lastQueried: now,
+      jobId: queue?.JobID ?? null,
+      queueEntryId: normalizeFieryQueueEntryId(queue?.QueueEntryID) ?? null,
       raw: body,
     };
   } catch (err: any) {
-    return { status: 'Unreachable', queueSize: 0, raw: err.message };
+    return { status: 'Unreachable', queueSize: 0, deviceId: '', entries: [], lastQueried: now, raw: err.message };
   }
 }
