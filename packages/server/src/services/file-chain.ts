@@ -206,6 +206,70 @@ export async function getOrderFileChainSummary(workOrderId: string) {
   };
 }
 
+type LinkedFileChainSummaryShape = {
+  totalFiles: number;
+  printCutFiles: number;
+  linked: number;
+  unlinked: number;
+  printComplete: number;
+  cutComplete: number;
+  chainStatus: string;
+};
+
+type LinkedFileChainLinkShape = {
+  id: string;
+  printFileName: string;
+  cutFileName: string | null;
+  cutId: string | null;
+  status: string;
+  printStatus: string;
+  cutStatus: string;
+  printedAt: Date | string | null;
+  cutCompletedAt: Date | string | null;
+};
+
+export function formatLinkedFileChainSummary(
+  fileChainSummary: Awaited<ReturnType<typeof getOrderFileChainSummary>> | null,
+): {
+  fileChainSummary: LinkedFileChainSummaryShape | null;
+  fileChainLinks: LinkedFileChainLinkShape[];
+  latestFileChainLinks: LinkedFileChainLinkShape[];
+} {
+  if (!fileChainSummary) {
+    return {
+      fileChainSummary: null,
+      fileChainLinks: [],
+      latestFileChainLinks: [],
+    };
+  }
+
+  const fileChainLinks = fileChainSummary.links.map((link) => ({
+    id: link.id,
+    printFileName: link.printFileName,
+    cutFileName: link.cutFileName ?? null,
+    cutId: link.cutId ?? null,
+    status: link.effectiveStatus,
+    printStatus: link.printStatus,
+    cutStatus: link.cutStatus,
+    printedAt: link.printedAt,
+    cutCompletedAt: link.cutCompletedAt,
+  }));
+
+  return {
+    fileChainSummary: {
+      totalFiles: fileChainSummary.totalFiles,
+      printCutFiles: fileChainSummary.printCutFiles,
+      linked: fileChainSummary.linked,
+      unlinked: fileChainSummary.unlinked,
+      printComplete: fileChainSummary.printComplete,
+      cutComplete: fileChainSummary.cutComplete,
+      chainStatus: fileChainSummary.chainStatus,
+    },
+    fileChainLinks,
+    latestFileChainLinks: fileChainLinks.slice(0, 5),
+  };
+}
+
 /**
  * Query print-cut links with filters
  */

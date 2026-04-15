@@ -53,7 +53,7 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 
 ### File Chain / Linked Data
 - [x] Create one shared file-chain status evaluator used by order details and the file-chain page.
-- [ ] Move linked-data summary counts into the same source that drives file-chain rows.
+- [x] Move linked-data summary counts into the same source that drives file-chain rows.
 - [ ] Unify placeholder creation so batch repair and summary rendering cannot diverge.
 - [ ] Consolidate file-chain completion heuristics into one helper.
 - [ ] Make order-linked-data and file-chain agree on completed-station counts.

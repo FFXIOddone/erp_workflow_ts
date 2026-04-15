@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { PrintingMethod } from '@erp/shared';
 import { prisma } from '../db/client.js';
-import { getOrderFileChainSummary } from './file-chain.js';
+import { formatLinkedFileChainSummary, getOrderFileChainSummary } from './file-chain.js';
 import {
   applyRoutingDefaults,
   buildInitialStationProgress,
@@ -213,43 +213,10 @@ export async function getOrderLinkedDataSummary(orderId: string): Promise<OrderL
     ]);
 
   const completedStationCount = order.stationProgress.filter((entry) => entry.status === 'COMPLETED').length;
-  const normalizedFileChain = fileChainSummary
-    ? {
-        totalFiles: fileChainSummary.totalFiles,
-        printCutFiles: fileChainSummary.printCutFiles,
-        linked: fileChainSummary.linked,
-        unlinked: fileChainSummary.unlinked,
-        printComplete: fileChainSummary.printComplete,
-        cutComplete: fileChainSummary.cutComplete,
-        chainStatus: fileChainSummary.chainStatus,
-      }
-    : null;
-  const latestFileChainLinks = fileChainSummary
-    ? fileChainSummary.links.slice(0, 5).map((link) => ({
-        id: link.id,
-        printFileName: link.printFileName,
-        cutFileName: link.cutFileName ?? null,
-        cutId: link.cutId ?? null,
-        status: link.effectiveStatus,
-        printStatus: link.printStatus,
-        cutStatus: link.cutStatus,
-        printedAt: link.printedAt,
-        cutCompletedAt: link.cutCompletedAt,
-      }))
-    : [];
-  const fileChainLinks = fileChainSummary
-    ? fileChainSummary.links.map((link) => ({
-        id: link.id,
-        printFileName: link.printFileName,
-        cutFileName: link.cutFileName ?? null,
-        cutId: link.cutId ?? null,
-        status: link.effectiveStatus,
-        printStatus: link.printStatus,
-        cutStatus: link.cutStatus,
-        printedAt: link.printedAt,
-        cutCompletedAt: link.cutCompletedAt,
-      }))
-    : [];
+  const linkedFileChain = formatLinkedFileChainSummary(fileChainSummary);
+  const normalizedFileChain = linkedFileChain.fileChainSummary;
+  const latestFileChainLinks = linkedFileChain.latestFileChainLinks;
+  const fileChainLinks = linkedFileChain.fileChainLinks;
 
   const warnings: string[] = [];
   if (order.routing.length === 0) {
