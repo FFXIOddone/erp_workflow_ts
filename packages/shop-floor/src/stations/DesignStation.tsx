@@ -92,7 +92,12 @@ export function DesignStation() {
         toast.success(`New order: ${p.orderNumber} — ${p.customerName}`, { duration: 5000 });
         void fetchOrdersRef.current();
       }
-      if (msg.type === 'PROOF_STATUS_CHANGED' || msg.type === 'REVISION_REQUESTED') {
+      if (
+        msg.type === 'PROOF_STATUS_CHANGED' ||
+        msg.type === 'REVISION_REQUESTED' ||
+        msg.type === 'STATION_COMPLETED' ||
+        msg.type === 'STATION_UPDATED'
+      ) {
         void fetchOrdersRef.current();
       }
     });
@@ -143,12 +148,24 @@ export function DesignStation() {
         toast.error('Network drive path is not configured in ERP settings');
         return;
       }
-      if (!resolved.folderPath || resolved.exists === false) {
-        toast.error('Folder not found on network');
-        return;
+      let folderPath = resolved.folderPath;
+      if (!folderPath || resolved.exists === false) {
+        const createRes = await fetch(`${config.apiUrl}/file-browser/orders/${order.id}/create-folder`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!createRes.ok) {
+          throw new Error(`Failed to create order folder (${createRes.status})`);
+        }
+
+        const createJson = await createRes.json();
+        folderPath = createJson.data?.folderPath ?? null;
+        if (!folderPath) {
+          throw new Error('Folder could not be created');
+        }
       }
 
-      const result = await openExternalPath(resolved.folderPath, 'folder');
+      const result = await openExternalPath(folderPath, 'folder');
       if (result === 'opened') {
         toast.success('Order folder opened');
       } else {
@@ -302,17 +319,19 @@ export function DesignStation() {
     if (!window.confirm(confirmationMessage)) return;
 
     try {
-      const res = await fetch(`${config.apiUrl}/orders/${order.id}/proof-status`, {
+      const res = await fetch(`${config.apiUrl}/orders/${order.id}/stations/DESIGN/complete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: 'COMPLETED' }),
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error(`API ${res.status}`);
+
+      await fetchOrders();
 
       if (designOnly) {
         toast.success(`${order.orderNumber} design complete`);
         if (window.confirm(`Create a new work order from ${order.orderNumber} now?`)) {
           const newOrderNumber = await createFollowOnOrder(order.id);
+          await fetchOrders();
           toast.success(`Created ${newOrderNumber} from ${order.orderNumber}`);
         }
       } else {
