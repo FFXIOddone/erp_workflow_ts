@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { disconnectShopFloorWebSocket } from '../lib/websocket-manager';
 
 export interface User {
   id: string;
@@ -28,7 +29,10 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       login: (user, token) => set({ user, token, isAuthenticated: true }),
       setUser: (user) => set({ user }),
-      logout: () => set({ user: null, token: null, isAuthenticated: false }),
+      logout: () => {
+        disconnectShopFloorWebSocket();
+        set({ user: null, token: null, isAuthenticated: false });
+      },
     }),
     { name: 'shop-floor-auth' },
   ),
