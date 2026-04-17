@@ -23,6 +23,7 @@ import { findThriveJobByCutId, parseJobInfo } from './thrive.js';
 import { getAllFieryJobs, type FieryJob } from './fiery.js';
 import { logChainEvent, createPrintCutLink } from './file-chain.js';
 import { broadcast } from '../ws/server.js';
+import { buildWorkOrderNumberWhere, WORK_ORDER_REFERENCE_SELECT } from '../lib/work-order-reference.js';
 
 // ─── Configuration ─────────────────────────────────────
 
@@ -202,14 +203,8 @@ async function processNewZccFile(fileName: string, fullPath: string): Promise<st
 
   // Step 5 — Look up WO in the ERP database
   const wo = await prisma.workOrder.findFirst({
-    where: {
-      OR: [
-        { orderNumber: woNumber },
-        { orderNumber: `WO${woNumber}` },
-        { orderNumber: { endsWith: woNumber } },
-      ],
-    },
-    select: { id: true, orderNumber: true, customerName: true },
+    where: buildWorkOrderNumberWhere(woNumber),
+    select: WORK_ORDER_REFERENCE_SELECT,
   });
 
   if (!wo) {

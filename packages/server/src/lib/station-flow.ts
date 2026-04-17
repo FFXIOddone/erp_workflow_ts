@@ -11,6 +11,90 @@ import { PrintingMethod } from '@erp/shared';
 import { broadcast } from '../ws/server.js';
 import { logActivity, ActivityAction, EntityType } from './activity-logger.js';
 
+type StationProgressStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
+
+type StationProgressTransitionMode = 'upsert' | 'update';
+
+interface StationProgressTransitionParams {
+  orderId: string;
+  station: PrintingMethod;
+  userId: string;
+  status: StationProgressStatus;
+  description: string;
+  eventType: 'STATION_STATUS_CHANGED' | 'STATION_COMPLETED' | 'STATION_UNCOMPLETED';
+  mode: StationProgressTransitionMode;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
+}
+
+/**
+ * Persist a station status transition, write the matching work event, and broadcast the update.
+ */
+export async function saveStationProgressTransition(params: StationProgressTransitionParams) {
+  const timestamp = params.completedAt ?? params.startedAt ?? new Date();
+  const startedAt =
+    params.startedAt !== undefined
+      ? params.startedAt
+      : params.status === 'IN_PROGRESS'
+        ? timestamp
+        : null;
+  const completedAt =
+    params.completedAt !== undefined
+      ? params.completedAt
+      : params.status === 'COMPLETED'
+        ? timestamp
+        : null;
+
+  const mutation =
+    params.mode === 'upsert'
+      ? prisma.stationProgress.upsert({
+          where: { orderId_station: { orderId: params.orderId, station: params.station } },
+          update: {
+            status: params.status,
+            startedAt,
+            completedAt,
+            completedById: params.status === 'COMPLETED' ? params.userId : null,
+          },
+          create: {
+            orderId: params.orderId,
+            station: params.station,
+            status: params.status,
+            startedAt: startedAt ?? undefined,
+            completedAt: completedAt ?? undefined,
+            completedById: params.status === 'COMPLETED' ? params.userId : undefined,
+          },
+        })
+      : prisma.stationProgress.update({
+          where: { orderId_station: { orderId: params.orderId, station: params.station } },
+          data: {
+            status: params.status,
+            startedAt,
+            completedAt,
+            completedById: params.status === 'COMPLETED' ? params.userId : null,
+          },
+        });
+
+  const progress = await mutation;
+
+  await prisma.workEvent.create({
+    data: {
+      orderId: params.orderId,
+      eventType: params.eventType,
+      description: params.description,
+      userId: params.userId,
+      details: { station: params.station, status: params.status },
+    },
+  });
+
+  broadcast({
+    type: 'STATION_UPDATED',
+    payload: { orderId: params.orderId, station: params.station, status: params.status },
+    timestamp,
+  });
+
+  return progress;
+}
+
 interface ResetStationParams {
   orderId: string;
   station: PrintingMethod;

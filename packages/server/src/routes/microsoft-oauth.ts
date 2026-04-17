@@ -6,7 +6,7 @@
  */
 
 import { Router, type Response } from 'express';
-import { authenticate, type AuthRequest } from '../middleware/auth.js';
+import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { UserRole } from '@erp/shared';
 import {
   isMicrosoftOAuthConfigured,
@@ -21,20 +21,11 @@ export const microsoftOAuthRouter = Router();
 // All routes require authentication
 microsoftOAuthRouter.use(authenticate);
 
-// Helper: require admin role
-function requireAdmin(req: AuthRequest, res: Response, next: () => void) {
-  if (req.user?.role !== UserRole.ADMIN) {
-    res.status(403).json({ success: false, error: 'Admin access required' });
-    return;
-  }
-  next();
-}
-
 /**
  * GET /microsoft-oauth/status
  * Check if Microsoft email is connected, configured, etc.
  */
-microsoftOAuthRouter.get('/status', requireAdmin, async (_req: AuthRequest, res: Response) => {
+microsoftOAuthRouter.get('/status', requireRole(UserRole.ADMIN), async (_req: AuthRequest, res: Response) => {
   const status = await getConnectionStatus();
   res.json({ success: true, data: status });
 });
@@ -43,7 +34,7 @@ microsoftOAuthRouter.get('/status', requireAdmin, async (_req: AuthRequest, res:
  * GET /microsoft-oauth/auth-url
  * Generate the Microsoft login URL. Frontend opens this in a popup.
  */
-microsoftOAuthRouter.get('/auth-url', requireAdmin, async (_req: AuthRequest, res: Response) => {
+microsoftOAuthRouter.get('/auth-url', requireRole(UserRole.ADMIN), async (_req: AuthRequest, res: Response) => {
   if (!isMicrosoftOAuthConfigured()) {
     res.status(400).json({
       success: false,
@@ -60,7 +51,7 @@ microsoftOAuthRouter.get('/auth-url', requireAdmin, async (_req: AuthRequest, re
  * POST /microsoft-oauth/disconnect
  * Remove stored tokens and disconnect Microsoft email
  */
-microsoftOAuthRouter.post('/disconnect', requireAdmin, async (_req: AuthRequest, res: Response) => {
+microsoftOAuthRouter.post('/disconnect', requireRole(UserRole.ADMIN), async (_req: AuthRequest, res: Response) => {
   await disconnectMicrosoft();
   res.json({ success: true, message: 'Microsoft email disconnected' });
 });

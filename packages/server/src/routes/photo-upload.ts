@@ -6,6 +6,7 @@ import fs from 'fs';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { prisma } from '../db/client.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 
 const router = Router();
 
@@ -217,7 +218,7 @@ router.post('/:token/upload', (req: Request, res: Response, next) => {
     },
   });
 
-  broadcast({ type: 'PHOTO_UPLOADED', payload: { orderId, attachment }, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'PHOTO_UPLOADED', payload: { orderId, attachment }, timestamp: new Date() }));
   res.json({ success: true, data: attachment });
 });
 

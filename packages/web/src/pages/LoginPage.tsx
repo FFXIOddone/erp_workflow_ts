@@ -4,6 +4,7 @@ import { useAuthStore } from '../stores/auth';
 import toast from 'react-hot-toast';
 import { LogIn, Lock, User, Eye, EyeOff } from 'lucide-react';
 import { hasAcceptedEula } from '@erp/shared';
+import { getApiErrorMessage } from '../lib/api';
 
 export function LoginPage() {
   const [username, setUsername] = useState('');
@@ -31,7 +32,7 @@ export function LoginPage() {
         navigate('/');
       }
     } catch (error) {
-      toast.error('Invalid credentials');
+      toast.error(getApiErrorMessage(error));
     } finally {
       setLoading(false);
     }

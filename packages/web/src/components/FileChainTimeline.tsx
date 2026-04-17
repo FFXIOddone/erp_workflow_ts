@@ -38,6 +38,10 @@ interface FileChainLink {
   createdAt: string;
 }
 
+interface FileChainSummaryResponse {
+  normalizedLinks: FileChainLink[];
+}
+
 const STATUS_COLORS: Record<string, string> = {
   COMPLETED: 'bg-green-100 text-green-800 border-green-300',
   IN_PROGRESS: 'bg-yellow-100 text-yellow-800 border-yellow-300',
@@ -115,18 +119,20 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
   const queryClient = useQueryClient();
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  const { data: links, isLoading } = useQuery({
+  const { data: summary, isLoading } = useQuery<FileChainSummaryResponse>({
     queryKey: ['file-chain', orderId],
     queryFn: async () => {
-      const res = await api.get(`/file-chain/orders/${orderId}`);
-      return (res.data.data || []) as FileChainLink[];
+      const res = await api.get(`/file-chain/orders/${orderId}/summary`);
+      return res.data.data as FileChainSummaryResponse;
     },
     enabled: !!orderId,
   });
 
+  const normalizedLinks = summary?.normalizedLinks ?? [];
+
   const derivedLinks = useMemo(
     () =>
-      (links ?? []).map((link) =>
+      (summary?.normalizedLinks ?? []).map((link) =>
         ({
           ...link,
           status: link.status ?? 'DESIGN',
@@ -136,16 +142,21 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
           }),
         }),
       ),
-    [links],
+    [summary],
   );
 
   const confirmMutation = useMutation({
     mutationFn: (linkId: string) => api.put(`/file-chain/links/${linkId}/confirm`),
     onMutate: async (linkId) => {
       await queryClient.cancelQueries({ queryKey: ['file-chain', orderId] });
-      const previous = queryClient.getQueryData<FileChainLink[]>(['file-chain', orderId]);
-      queryClient.setQueryData<FileChainLink[]>(['file-chain', orderId], (old) =>
-        old?.map((l) => l.id === linkId ? { ...l, confirmed: true } : l)
+      const previous = queryClient.getQueryData<FileChainSummaryResponse>(['file-chain', orderId]);
+      queryClient.setQueryData<FileChainSummaryResponse>(['file-chain', orderId], (old) =>
+        old
+          ? {
+              ...old,
+              normalizedLinks: old.normalizedLinks.map((l) => (l.id === linkId ? { ...l, confirmed: true } : l)),
+            }
+          : old,
       );
       return { previous };
     },
@@ -161,9 +172,16 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
     mutationFn: (linkId: string) => api.put(`/file-chain/links/${linkId}/dismiss`),
     onMutate: async (linkId) => {
       await queryClient.cancelQueries({ queryKey: ['file-chain', orderId] });
-      const previous = queryClient.getQueryData<FileChainLink[]>(['file-chain', orderId]);
-      queryClient.setQueryData<FileChainLink[]>(['file-chain', orderId], (old) =>
-        old?.map((l) => l.id === linkId ? { ...l, cutFileName: undefined, cutFilePath: undefined, linkConfidence: 'NONE' } : l)
+      const previous = queryClient.getQueryData<FileChainSummaryResponse>(['file-chain', orderId]);
+      queryClient.setQueryData<FileChainSummaryResponse>(['file-chain', orderId], (old) =>
+        old
+          ? {
+              ...old,
+              normalizedLinks: old.normalizedLinks.map((l) =>
+                l.id === linkId ? { ...l, cutFileName: undefined, cutFilePath: undefined, linkConfidence: 'NONE' } : l,
+              ),
+            }
+          : old,
       );
       return { previous };
     },
@@ -282,7 +300,7 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
     );
   }
 
-  if (!links || links.length === 0) {
+  if (normalizedLinks.length === 0) {
     return (
       <div className="bg-white rounded-xl shadow-soft border border-gray-100 p-6">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -324,7 +342,7 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
           </div>
           <div className="flex items-center gap-2 self-start sm:self-auto">
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
-              {(links ?? []).length} link{(links ?? []).length === 1 ? '' : 's'}
+              {normalizedLinks.length} link{normalizedLinks.length === 1 ? '' : 's'}
             </span>
             {showFullscreenButton && (
               <button
@@ -360,7 +378,7 @@ export function FileChainTimeline({ orderId, showFullscreenButton = true }: { or
               </div>
               <div className="self-start sm:self-auto">
                 <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
-                  {(links ?? []).length} link{(links ?? []).length === 1 ? '' : 's'}
+                  {normalizedLinks.length} link{normalizedLinks.length === 1 ? '' : 's'}
                 </span>
               </div>
             </div>

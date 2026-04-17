@@ -10,8 +10,13 @@ export interface WorkOrderThriveMatchContext {
   printCutIdMap: Map<string, string>;
 }
 
-function matchesWorkOrderNumber(candidate: string | null | undefined, orderNumber: string, bareNumber: string): boolean {
+export function getBareWorkOrderNumber(orderNumber: string): string {
+  return orderNumber.replace(/^WO/i, '');
+}
+
+export function matchesWorkOrderNumber(candidate: string | null | undefined, orderNumber: string): boolean {
   if (!candidate) return false;
+  const bareNumber = getBareWorkOrderNumber(orderNumber);
   const normalizedCandidate = candidate.replace(/^WO/i, '');
   return (
     candidate === orderNumber ||
@@ -21,9 +26,25 @@ function matchesWorkOrderNumber(candidate: string | null | undefined, orderNumbe
   );
 }
 
-function parsedWorkOrderNumber(text: string | null | undefined): string | null {
+export function extractWorkOrderNumber(text: string | null | undefined): string | null {
   if (!text) return null;
   return parseJobInfo(text).workOrderNumber;
+}
+
+export function matchesWorkOrderText(text: string | null | undefined, orderNumber: string): boolean {
+  return matchesWorkOrderNumber(extractWorkOrderNumber(text), orderNumber);
+}
+
+function hasDistinctThriveCutIdentity(
+  job: Pick<ThriveCutJob, 'guid' | 'jobName' | 'fileName'>,
+  printCutIdMap: Map<string, string>,
+): boolean {
+  if (job.guid?.trim()) return true;
+
+  const cutId = extractCutId(job.jobName) || extractCutId(job.fileName);
+  if (!cutId) return false;
+
+  return !printCutIdMap.has(cutId.toLowerCase());
 }
 
 export function buildWorkOrderThriveMatchContext(
@@ -31,13 +52,13 @@ export function buildWorkOrderThriveMatchContext(
   printJobs: ThriveJob[],
   cutJobs: ThriveCutJob[],
 ): WorkOrderThriveMatchContext {
-  const bareNumber = orderNumber.replace(/^WO/i, '');
+  const bareNumber = getBareWorkOrderNumber(orderNumber);
 
   const matchingPrintJobs = printJobs.filter((job) => {
-    if (matchesWorkOrderNumber(job.workOrderNumber, orderNumber, bareNumber)) return true;
+    if (matchesWorkOrderNumber(job.workOrderNumber, orderNumber)) return true;
     return (
-      parsedWorkOrderNumber(job.fileName) === bareNumber ||
-      parsedWorkOrderNumber(job.jobName) === bareNumber
+      extractWorkOrderNumber(job.fileName) === bareNumber ||
+      extractWorkOrderNumber(job.jobName) === bareNumber
     );
   });
 
@@ -59,9 +80,19 @@ export function buildWorkOrderThriveMatchContext(
   }
 
   const matchingCutJobs = cutJobs.filter((job) => {
-    if (matchesWorkOrderNumber(job.workOrderNumber, orderNumber, bareNumber)) return true;
-    if (parsedWorkOrderNumber(job.jobName) === bareNumber) return true;
-    if (parsedWorkOrderNumber(job.fileName) === bareNumber) return true;
+    const cutNormalizedName = normalizeJobName(job.jobName);
+    const cutNormalizedFileName = normalizeJobName(job.fileName);
+    const hasIdentity = hasDistinctThriveCutIdentity(job, printCutIdMap);
+    const echoesPrintRow =
+      !hasIdentity &&
+      ((cutNormalizedName && normalizedPrintNames.has(cutNormalizedName)) ||
+        (cutNormalizedFileName && normalizedPrintNames.has(cutNormalizedFileName)));
+
+    if (echoesPrintRow) return false;
+
+    if (matchesWorkOrderNumber(job.workOrderNumber, orderNumber)) return true;
+    if (extractWorkOrderNumber(job.jobName) === bareNumber) return true;
+    if (extractWorkOrderNumber(job.fileName) === bareNumber) return true;
     if (job.guid && printJobGuids.has(job.guid.toLowerCase())) return true;
     return false;
   });

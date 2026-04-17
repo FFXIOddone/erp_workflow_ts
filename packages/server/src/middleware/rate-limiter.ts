@@ -153,6 +153,7 @@ export async function preLoginCheck(
   if (ipAttempts?.lockoutUntil && ipAttempts.lockoutUntil > now) {
     const remainingMs = ipAttempts.lockoutUntil - now;
     const remainingMinutes = Math.ceil(remainingMs / 60000);
+    console.warn(`[AUTH] Login blocked for "${username ?? 'unknown'}" from ${ip}: IP locked out (${remainingMinutes} minute(s) remaining)`);
     
     res.status(429).json({
       success: false,
@@ -170,6 +171,7 @@ export async function preLoginCheck(
     if (userAttempts?.lockoutUntil && userAttempts.lockoutUntil > now) {
       const remainingMs = userAttempts.lockoutUntil - now;
       const remainingMinutes = Math.ceil(remainingMs / 60000);
+      console.warn(`[AUTH] Login blocked for "${username}" from ${ip}: account locked (${remainingMinutes} minute(s) remaining)`);
       
       // Log the blocked attempt
       await logSecurityEvent('LOGIN_BLOCKED_LOCKOUT', ip, username, {

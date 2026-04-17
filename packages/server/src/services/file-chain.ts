@@ -16,7 +16,6 @@ import {
   THRIVE_CONFIG, 
   parseQueueFile, 
   parseCutFile, 
-  parseJobInfo, 
   getAllThriveJobs,
   type ThriveJob, 
   type ThriveCutJob 
@@ -29,9 +28,22 @@ import {
 } from './zund-match.js';
 import { FIERY_CONFIG, getAllFieryJobs } from './fiery.js';
 import { scanZundQueueFiles } from './zund-live.js';
-import { deriveFileChainLinkState, summarizeFileChainLinks, summarizeFileChainTrace } from './file-chain-state.js';
+import { WorkOrderReferenceSelect } from '../lib/dto-selects.js';
+import {
+  deriveFileChainLinkState,
+  isCutFileName,
+  isPrintFileName,
+  summarizeFileChainLinks,
+  summarizeFileChainTrace,
+} from './file-chain-state.js';
+import { repairMissingCutId } from './file-chain-cut-id.js';
 import type { Prisma, PrintCutLink } from '@prisma/client';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
+import { inferRoutingSource, summarizeStationProgressCounts } from '../lib/routing-defaults.js';
+import {
+  extractWorkOrderNumber,
+  matchesWorkOrderNumber,
+} from './workorder-equipment-matching.js';
 
 // ─── Constants ─────────────────────────────────────────
 
@@ -142,11 +154,11 @@ async function resolveCutFilePath(
 /**
  * Get all print-cut links for a work order
  */
-export async function getOrderFileChain(workOrderId: string) {
+async function loadOrderFileChainLinks(workOrderId: string) {
   const links = await prisma.printCutLink.findMany({
     where: { workOrderId },
     include: {
-      workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+      workOrder: { select: WorkOrderReferenceSelect },
       ripJob: {
         select: {
           id: true,
@@ -165,31 +177,250 @@ export async function getOrderFileChain(workOrderId: string) {
   });
 
   return Promise.all(
-    links.map(async (link) => ({
-      ...link,
-      cutFilePath: await resolveCutFilePath(link),
-      ...deriveFileChainLinkState(link),
-    })),
+    links.map(async (link) => {
+      const cutFilePath = await resolveCutFilePath(link);
+      return {
+        ...link,
+        cutFilePath,
+        cutId: repairMissingCutId({
+          cutId: link.cutId,
+          printFileName: link.printFileName,
+          printFilePath: link.printFilePath,
+          cutFileName: link.cutFileName,
+          cutFilePath,
+        }),
+        ...deriveFileChainLinkState(link),
+      };
+    }),
   );
+}
+
+type OrderFileChainLink = Awaited<ReturnType<typeof loadOrderFileChainLinks>>[number];
+
+function normalizeFileChainStem(value: string | null | undefined): string {
+  const candidate = value?.trim() ?? '';
+  if (!candidate) return '';
+
+  const withoutQuery = candidate.split(/[?#]/, 1)[0];
+  const baseName = path.basename(withoutQuery);
+  const shouldStripExtension = isPrintFileName(baseName) || isCutFileName(baseName);
+  const stem = shouldStripExtension && baseName.includes('.')
+    ? baseName.slice(0, baseName.lastIndexOf('.'))
+    : baseName;
+  return stem.replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function isPlaceholderFileChainLink(link: OrderFileChainLink): boolean {
+  return (
+    link.status === 'DESIGN' &&
+    link.linkConfidence === 'NONE' &&
+    !link.hasPrintFile &&
+    !link.hasCutFile
+  );
+}
+
+export function selectFileChainSummaryLinks(links: OrderFileChainLink[]): OrderFileChainLink[] {
+  return links.filter((link) => !isPlaceholderFileChainLink(link));
+}
+
+function getFileChainGroupingKeys(link: Pick<
+  OrderFileChainLink,
+  'cutId' | 'printFileName' | 'printFilePath' | 'cutFileName' | 'cutFilePath'
+>): string[] {
+  const keys = new Set<string>();
+
+  if (link.cutId?.trim()) {
+    keys.add(`cutId:${link.cutId.trim().toLowerCase()}`);
+  }
+
+  const stemCandidates = [link.printFileName, link.printFilePath, link.cutFileName, link.cutFilePath];
+  for (const candidate of stemCandidates) {
+    const stem = normalizeFileChainStem(candidate);
+    if (stem) {
+      keys.add(`stem:${stem}`);
+      break;
+    }
+  }
+
+  return [...keys];
+}
+
+function pickPrimaryFileChainLink(group: OrderFileChainLink[]): OrderFileChainLink {
+  return group.find((link) => link.hasPrintFile) ?? group[0];
+}
+
+function pickCutFileChainLink(group: OrderFileChainLink[]): OrderFileChainLink | null {
+  return group.find((link) => link.hasCutFile) ?? null;
+}
+
+function pickFirstDefined<T>(...values: Array<T | null | undefined>): T | null {
+  for (const value of values) {
+    if (value !== null && value !== undefined) {
+      return value;
+    }
+  }
+  return null;
+}
+
+export function groupOrderFileChainLinksForDisplay(links: OrderFileChainLink[]): OrderFileChainLink[] {
+  const normalizedLinks = links.map((link) =>
+    'hasPrintFile' in link && 'hasCutFile' in link
+      ? link
+      : (Object.assign({}, link, deriveFileChainLinkState(link as any)) as OrderFileChainLink),
+  );
+
+  const grouped: OrderFileChainLink[][] = [];
+  const keyToGroup = new Map<string, OrderFileChainLink[]>();
+
+  for (const link of normalizedLinks) {
+    const keys = getFileChainGroupingKeys(link);
+    const existingGroup = keys.map((key) => keyToGroup.get(key)).find((group): group is OrderFileChainLink[] => !!group);
+
+    if (existingGroup) {
+      existingGroup.push(link);
+      for (const key of keys) {
+        keyToGroup.set(key, existingGroup);
+      }
+      continue;
+    }
+
+    const group = [link];
+    grouped.push(group);
+    for (const key of keys) {
+      keyToGroup.set(key, group);
+    }
+  }
+
+  return grouped
+    .map((group) => {
+      const primary = pickPrimaryFileChainLink(group);
+      const cutLink = pickCutFileChainLink(group);
+      const displayLink = (cutLink ?? primary) as OrderFileChainLink;
+
+      const merged: OrderFileChainLink = {
+        ...primary,
+        ...displayLink,
+        id: displayLink.id,
+        createdAt: primary.createdAt,
+        updatedAt: group.reduce((latest, link) => (link.updatedAt > latest.updatedAt ? link : latest), primary).updatedAt,
+        printFileName: pickFirstDefined(primary.printFileName, displayLink.printFileName) ?? '',
+        printFilePath: pickFirstDefined(primary.printFilePath, displayLink.printFilePath) ?? '',
+        cutFileName: pickFirstDefined(cutLink?.cutFileName, primary.cutFileName, displayLink.cutFileName) ?? null,
+        cutFilePath: pickFirstDefined(cutLink?.cutFilePath, primary.cutFilePath, displayLink.cutFilePath) ?? null,
+        cutFileSource: pickFirstDefined(cutLink?.cutFileSource, primary.cutFileSource, displayLink.cutFileSource) ?? null,
+        cutFileFormat: pickFirstDefined(cutLink?.cutFileFormat, primary.cutFileFormat, displayLink.cutFileFormat) ?? null,
+        cutId: pickFirstDefined(cutLink?.cutId, primary.cutId, displayLink.cutId) ?? null,
+        ripJobId: pickFirstDefined(primary.ripJobId, displayLink.ripJobId) ?? null,
+        ripJob: pickFirstDefined(primary.ripJob, displayLink.ripJob) ?? null,
+        linkedById: pickFirstDefined(primary.linkedById, displayLink.linkedById) ?? null,
+        linkedBy: pickFirstDefined(primary.linkedBy, displayLink.linkedBy) ?? null,
+        confirmed: group.some((link) => link.confirmed),
+        confirmedAt:
+          pickFirstDefined(
+            group.find((link) => link.confirmedAt)?.confirmedAt,
+            primary.confirmedAt,
+            displayLink.confirmedAt,
+          ) ?? null,
+        confirmedById:
+          pickFirstDefined(
+            group.find((link) => link.confirmedById)?.confirmedById,
+            primary.confirmedById,
+            displayLink.confirmedById,
+          ) ?? null,
+        confirmedBy:
+          pickFirstDefined(
+            group.find((link) => link.confirmedBy)?.confirmedBy,
+            primary.confirmedBy,
+            displayLink.confirmedBy,
+          ) ?? null,
+        printStartedAt:
+          pickFirstDefined(
+            primary.printStartedAt,
+            displayLink.printStartedAt,
+            group.find((link) => link.printStartedAt && link.hasPrintFile)?.printStartedAt,
+          ) ?? null,
+        printCompletedAt:
+          pickFirstDefined(
+            primary.printCompletedAt,
+            displayLink.printCompletedAt,
+            group.find((link) => link.printCompletedAt && link.hasPrintFile)?.printCompletedAt,
+          ) ?? null,
+        printerName: pickFirstDefined(primary.printerName, displayLink.printerName) ?? null,
+        ripMachine: pickFirstDefined(primary.ripMachine, displayLink.ripMachine) ?? null,
+        cutStartedAt: pickFirstDefined(cutLink?.cutStartedAt, primary.cutStartedAt, displayLink.cutStartedAt) ?? null,
+        cutCompletedAt: pickFirstDefined(cutLink?.cutCompletedAt, primary.cutCompletedAt, displayLink.cutCompletedAt) ?? null,
+        cutterName: pickFirstDefined(cutLink?.cutterName, primary.cutterName, displayLink.cutterName) ?? null,
+        cutJobName: pickFirstDefined(cutLink?.cutJobName, primary.cutJobName, displayLink.cutJobName) ?? null,
+        cutCopiesDone: pickFirstDefined(cutLink?.cutCopiesDone, primary.cutCopiesDone, displayLink.cutCopiesDone) ?? null,
+        cutCopiesTotal: pickFirstDefined(cutLink?.cutCopiesTotal, primary.cutCopiesTotal, displayLink.cutCopiesTotal) ?? null,
+        zundJobId: pickFirstDefined(cutLink?.zundJobId, primary.zundJobId, displayLink.zundJobId) ?? null,
+        zundMaterialGuid: pickFirstDefined(cutLink?.zundMaterialGuid, primary.zundMaterialGuid, displayLink.zundMaterialGuid) ?? null,
+        cuttingTimeMs: pickFirstDefined(cutLink?.cuttingTimeMs, primary.cuttingTimeMs, displayLink.cuttingTimeMs) ?? null,
+        setupTimeMs: pickFirstDefined(cutLink?.setupTimeMs, primary.setupTimeMs, displayLink.setupTimeMs) ?? null,
+        cutLengthMm: pickFirstDefined(cutLink?.cutLengthMm, primary.cutLengthMm, displayLink.cutLengthMm) ?? null,
+        status: primary.status,
+        linkConfidence:
+          pickFirstDefined(
+            group.find((link) => link.linkConfidence && link.linkConfidence !== 'NONE')?.linkConfidence,
+            primary.linkConfidence,
+            displayLink.linkConfidence,
+          ) ?? primary.linkConfidence,
+        errorMessage: pickFirstDefined(group.find((link) => link.errorMessage)?.errorMessage, primary.errorMessage, displayLink.errorMessage) ?? null,
+      };
+
+      return {
+        ...merged,
+        ...deriveFileChainLinkState(merged),
+      };
+    })
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
+}
+
+/**
+ * Get all print-cut links for a work order
+ */
+export async function getOrderFileChain(workOrderId: string) {
+  const links = await loadOrderFileChainLinks(workOrderId);
+  return groupOrderFileChainLinksForDisplay(links);
 }
 
 /**
  * Get a summary of the file chain for an order
  */
 export async function getOrderFileChainSummary(workOrderId: string) {
-  const links = await getOrderFileChain(workOrderId);
-  const order = await prisma.workOrder.findUnique({
-    where: { id: workOrderId },
-    select: { id: true, orderNumber: true, customerName: true },
-  });
+  const [links, order] = await Promise.all([
+    getOrderFileChain(workOrderId),
+    prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      select: {
+        id: true,
+        orderNumber: true,
+        customerName: true,
+        description: true,
+        createdAt: true,
+        routing: true,
+        stationProgress: {
+          select: {
+            station: true,
+            status: true,
+          },
+        },
+      },
+    }),
+  ]);
 
   if (!order) return null;
 
-  const totalFiles = links.length;
-  const printCutFiles = links.filter(l => PRINT_CUT_PATTERNS.some(p => p.test(l.printFileName))).length;
-  const linked = links.filter(l => l.cutFileName !== null).length;
-  const unlinked = links.filter(l => l.cutFileName === null).length;
-  const { printComplete, cutComplete, chainStatus } = summarizeFileChainLinks(links);
+  const stationProgressCounts = summarizeStationProgressCounts(order.routing, order.stationProgress, {
+    source: inferRoutingSource(order.orderNumber, order.customerName ?? order.description),
+    entryTimestamp: order.createdAt,
+  });
+  const summaryLinks = selectFileChainSummaryLinks(links);
+  const totalFiles = summaryLinks.length;
+  const printCutFiles = summaryLinks.filter((link) => link.hasPrintFile && link.hasCutFile).length;
+  const linked = summaryLinks.filter((link) => link.cutFileName !== null).length;
+  const unlinked = summaryLinks.filter((link) => link.cutFileName === null).length;
+  const { printComplete, cutComplete, chainStatus } = summarizeFileChainLinks(summaryLinks);
 
   return {
     workOrderId: order.id,
@@ -201,7 +432,9 @@ export async function getOrderFileChainSummary(workOrderId: string) {
     unlinked,
     printComplete,
     cutComplete,
+    completedStationCount: stationProgressCounts.completedStationCount,
     chainStatus,
+    normalizedLinks: summaryLinks,
     links,
   };
 }
@@ -213,6 +446,7 @@ type LinkedFileChainSummaryShape = {
   unlinked: number;
   printComplete: number;
   cutComplete: number;
+  completedStationCount: number;
   chainStatus: string;
 };
 
@@ -271,6 +505,7 @@ export function formatLinkedFileChainSummary(
       unlinked: fileChainSummary.unlinked,
       printComplete: fileChainSummary.printComplete,
       cutComplete: fileChainSummary.cutComplete,
+      completedStationCount: fileChainSummary.completedStationCount,
       chainStatus: fileChainSummary.chainStatus,
     },
     fileChainLinks,
@@ -363,7 +598,7 @@ export async function queryPrintCutLinks(filters: {
     prisma.printCutLink.findMany({
       where,
       include: {
-        workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+          workOrder: { select: WorkOrderReferenceSelect },
         ripJob: { select: { id: true, status: true, hotfolderName: true } },
         linkedBy: { select: { id: true, username: true, displayName: true } },
       },
@@ -397,7 +632,7 @@ export async function getFileChainDashboard() {
         cutFileName: { not: null },
       },
       include: {
-        workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+          workOrder: { select: WorkOrderReferenceSelect },
       },
       orderBy: { linkedAt: 'desc' },
       take: 20,
@@ -409,7 +644,7 @@ export async function getFileChainDashboard() {
         updatedAt: { lt: staleDate },
       },
       include: {
-        workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+          workOrder: { select: WorkOrderReferenceSelect },
       },
       orderBy: { updatedAt: 'asc' },
       take: 20,
@@ -1036,7 +1271,7 @@ async function syncRipJobsToPrintCutLinks(result: { linksUpdated: number }) {
       printCutLinks: { some: {} },
     },
     include: {
-      printCutLinks: { select: { id: true, status: true } },
+      printCutLinks: { select: { id: true, status: true, printFileName: true } },
     },
   });
 
@@ -1044,6 +1279,8 @@ async function syncRipJobsToPrintCutLinks(result: { linksUpdated: number }) {
     const newStatus = ripJobStatusToChainStatus(rj.status);
     
     for (const link of rj.printCutLinks) {
+      if (!isPrintFileName(link.printFileName)) continue;
+
       if (link.status !== newStatus) {
         const updateData: Prisma.PrintCutLinkUpdateInput = { status: newStatus as any };
         
@@ -1053,9 +1290,6 @@ async function syncRipJobsToPrintCutLinks(result: { linksUpdated: number }) {
         }
         if (newStatus === 'PRINTED' && rj.printCompletedAt) {
           updateData.printCompletedAt = rj.printCompletedAt;
-          // If this is a PRINTCUT file, advance to CUT_PENDING
-          const isPrintCut = PRINT_CUT_PATTERNS.some(p => p.test(link.id)); // Check actual file
-          // We'll check the print file name from a separate query if needed
         }
         
         await prisma.printCutLink.update({ where: { id: link.id }, data: updateData });
@@ -1079,6 +1313,7 @@ async function syncRipJobsToPrintCutLinks(result: { linksUpdated: number }) {
 
   for (const rj of completedRipJobs) {
     for (const link of rj.printCutLinks) {
+      if (!isPrintFileName(link.printFileName)) continue;
       const isPrintCut = PRINT_CUT_PATTERNS.some(p => p.test(link.printFileName));
       const newStatus = isPrintCut ? 'CUT_PENDING' : 'FINISHED';
       
@@ -1226,7 +1461,10 @@ async function matchByCutId(
     select: { id: true, printFileName: true, printFilePath: true },
   });
   for (const link of linksMissingCutId) {
-    const cid = extractCutId(link.printFileName) || extractCutId(path.basename(link.printFilePath || ''));
+    const cid = repairMissingCutId({
+      printFileName: link.printFileName,
+      printFilePath: link.printFilePath,
+    });
     if (cid) {
       await prisma.printCutLink.update({
         where: { id: link.id },
@@ -1338,8 +1576,8 @@ async function matchThriveCutFiles(
       }
       
       // Strategy 2: WO number match + substring
-      const cutInfo = parseJobInfo(cutJob.fileName || cutJob.jobName);
-      if (cutInfo.workOrderNumber && link.workOrder.orderNumber === cutInfo.workOrderNumber) {
+      const cutWorkOrderNumber = extractWorkOrderNumber(cutJob.fileName || cutJob.jobName);
+      if (matchesWorkOrderNumber(cutWorkOrderNumber, link.workOrder.orderNumber)) {
         if (cutNormalized.includes(printNormalized) || printNormalized.includes(cutNormalized)) {
           await linkCutToChain(link.id, cutJob, 'HIGH', result);
           break;
@@ -1416,7 +1654,7 @@ async function matchFieryCutFiles(
       }
       
       // Match by normalized name or WO number
-      const woMatch = fieryJob.workOrderNumber && link.workOrder.orderNumber === fieryJob.workOrderNumber;
+      const woMatch = matchesWorkOrderNumber(fieryJob.workOrderNumber, link.workOrder.orderNumber);
       const nameMatch = fieryNormalized === printNormalized || 
                         fieryNormalized.includes(printNormalized) || 
                         printNormalized.includes(fieryNormalized);
@@ -1592,7 +1830,7 @@ export async function traceFile(fileName: string) {
       ],
     },
     include: {
-      workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+      workOrder: { select: WorkOrderReferenceSelect },
       ripJob: { select: { id: true, status: true, hotfolderName: true, ripJobGuid: true } },
     },
     orderBy: { createdAt: 'desc' },
@@ -1604,7 +1842,7 @@ export async function traceFile(fileName: string) {
       sourceFileName: { contains: fileName, mode: 'insensitive' },
     },
     include: {
-      workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+      workOrder: { select: WorkOrderReferenceSelect },
     },
     orderBy: { createdAt: 'desc' },
     take: 10,

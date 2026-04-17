@@ -49,6 +49,8 @@ import { IppPrintModal } from '../components/IppPrintModal';
 import { ConnectivityCard } from '../components/ConnectivityCard';
 import { CollapsibleSection } from '../components/CollapsibleSection';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/Tabs';
+import { LiveDataSummaryGrid, type LiveDataSummaryItem } from '../components/LiveDataSummaryGrid';
+import { resolveEquipmentLastSeenTimestamp } from '../lib/equipment-last-seen';
 import {
   EquipmentStatus,
   EQUIPMENT_STATUS_DISPLAY_NAMES,
@@ -478,7 +480,10 @@ export default function EquipmentDetailPage() {
                     <div className="flex justify-between">
                       <dt className="text-gray-500">Last Polled</dt>
                       <dd className="text-gray-500 text-sm">
-                        {formatDistanceToNow(new Date(live.lastPolled), { addSuffix: true })}
+                        {formatDistanceToNow(
+                          resolveEquipmentLastSeenTimestamp(live.lastPolled) ?? new Date(live.lastPolled),
+                          { addSuffix: true },
+                        )}
                       </dd>
                     </div>
                   )}
@@ -552,7 +557,14 @@ export default function EquipmentDetailPage() {
                       <span>Protocol: <span className="font-medium">{connType || 'PING'}</span></span>
                       {live?.systemName && <span>Host: <span className="font-mono font-medium">{live.systemName}</span></span>}
                       {live?.lastPolled && (
-                        <span>Polled: <span className="font-medium">{formatDistanceToNow(new Date(live.lastPolled), { addSuffix: true })}</span></span>
+                        <span>
+                          Polled: <span className="font-medium">
+                            {formatDistanceToNow(
+                              resolveEquipmentLastSeenTimestamp(live.lastPolled) ?? new Date(live.lastPolled),
+                              { addSuffix: true },
+                            )}
+                          </span>
+                        </span>
                       )}
                     </div>
                   </div>
@@ -1805,7 +1817,9 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
               {ink?.printerStatus ? 'Printer SSH + Fiery XF' : devStatus ? 'Fiery XF (JMF)' : 'Port Scan'}
             </div>
             <div className="text-xs text-purple-200">
-              {vutek.lastPolled ? formatDistanceToNow(new Date(vutek.lastPolled), { addSuffix: true }) : ''}
+              {resolveEquipmentLastSeenTimestamp(vutek.lastPolled)
+                ? formatDistanceToNow(resolveEquipmentLastSeenTimestamp(vutek.lastPolled)!, { addSuffix: true })
+                : ''}
             </div>
           </div>
         </div>
@@ -2010,7 +2024,11 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
                     : null}
               </span>
             }
-            subtitle={`Source: VUTEk MySQL via SSH · Polled ${ink.lastPolled ? formatDistanceToNow(new Date(ink.lastPolled), { addSuffix: true }) : 'unknown'}`}
+            subtitle={`Source: VUTEk MySQL via SSH · Polled ${
+              resolveEquipmentLastSeenTimestamp(ink.lastPolled)
+                ? formatDistanceToNow(resolveEquipmentLastSeenTimestamp(ink.lastPolled)!, { addSuffix: true })
+                : 'unknown'
+            }`}
             defaultOpen={true}
             warningContent={hasWarnings ? (
               <div className="space-y-2">
@@ -2472,6 +2490,40 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
         const linkedJobs = fieryJobs.filter((j: any) => j.workOrder);
         const highConfidence = fieryJobs.filter((j: any) => j.linkConfidence === 'high').length;
         const withCutFiles = fieryJobs.filter((j: any) => j.hasZccCutFile).length;
+        const fierySummaryItems: LiveDataSummaryItem[] = [
+          {
+            key: 'fiery-total',
+            label: 'Total Jobs',
+            value: fieryJobs.length,
+            tone: 'indigo',
+            valueClassName: 'text-lg font-bold text-indigo-700',
+            labelClassName: 'text-xs text-indigo-600',
+          },
+          {
+            key: 'fiery-linked',
+            label: 'Linked to WO',
+            value: linkedJobs.length,
+            tone: 'green',
+            valueClassName: 'text-lg font-bold text-green-700',
+            labelClassName: 'text-xs text-green-600',
+          },
+          {
+            key: 'fiery-confidence',
+            label: 'High Confidence',
+            value: highConfidence,
+            tone: 'purple',
+            valueClassName: 'text-lg font-bold text-purple-700',
+            labelClassName: 'text-xs text-purple-600',
+          },
+          {
+            key: 'fiery-cut-files',
+            label: 'With Cut Files',
+            value: withCutFiles,
+            tone: 'amber',
+            valueClassName: 'text-lg font-bold text-amber-700',
+            labelClassName: 'text-xs text-amber-600',
+          },
+        ];
 
         return (
           <CollapsibleSection
@@ -2485,25 +2537,11 @@ function VUTEkPanel({ vutek, fieryJobs, onLaunchConnection, onOpenFileShares, on
             subtitle="Source: Fiery XF Export Folder + Thrive cross-reference"
             defaultOpen={true}
           >
-            {/* Summary stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-center">
-                <div className="text-lg font-bold text-indigo-700">{fieryJobs.length}</div>
-                <div className="text-xs text-indigo-600">Total Jobs</div>
-              </div>
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
-                <div className="text-lg font-bold text-green-700">{linkedJobs.length}</div>
-                <div className="text-xs text-green-600">Linked to WO</div>
-              </div>
-              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-center">
-                <div className="text-lg font-bold text-purple-700">{highConfidence}</div>
-                <div className="text-xs text-purple-600">High Confidence</div>
-              </div>
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center">
-                <div className="text-lg font-bold text-amber-700">{withCutFiles}</div>
-                <div className="text-xs text-amber-600">With Cut Files</div>
-              </div>
-            </div>
+            <LiveDataSummaryGrid
+              items={fierySummaryItems}
+              variant="tiles"
+              className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"
+            />
 
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

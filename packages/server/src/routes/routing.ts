@@ -5,7 +5,7 @@ import {
   OptimizationRuleType,
   PredictionFeedbackSchema,
   PrintingMethod,
-  STATION_DISPLAY_NAMES,
+  getStationDisplayName,
   RequestRoutingOptimizationSchema,
   type RoutingDecision,
   type RoutingIntelligenceDashboard,
@@ -14,6 +14,7 @@ import {
 } from '@erp/shared';
 import { prisma } from '../db/client.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { inferRoutingSource } from '../lib/routing-defaults.js';
@@ -175,7 +176,7 @@ function mapOptimizationRules(rows: OptimizationRuleRow[]): RoutingOptimizationR
 function mapStationSummaries(rows: StationIntelligenceRow[]): StationStatusSummary[] {
   return rows.map((row) => ({
     station: row.station,
-    displayName: STATION_DISPLAY_NAMES[row.station as PrintingMethod] ?? row.station,
+    displayName: getStationDisplayName(row.station),
     status: row.equipmentStatus as StationStatusSummary['status'],
     queueDepth: row.currentQueueDepth,
     waitTimeMinutes: row.currentWaitTime,
@@ -195,6 +196,7 @@ function roundToTwoDecimals(value: number): number {
 
 async function recordRoutingActivity(params: {
   userId: string;
+  req: AuthRequest;
   workOrderId: string;
   orderNumber: string;
   description: string;
@@ -202,15 +204,18 @@ async function recordRoutingActivity(params: {
   broadcastType: string;
   broadcastPayload: Record<string, unknown>;
 }): Promise<void> {
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: params.workOrderId,
-    entityName: params.orderNumber,
-    description: params.description,
-    details: params.details,
-    userId: params.userId,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: params.workOrderId,
+      entityName: params.orderNumber,
+      description: params.description,
+      details: params.details,
+      userId: params.userId,
+      req: params.req,
+    }),
+  );
 
   broadcastToUser(params.userId, {
     type: params.broadcastType,
@@ -482,6 +487,7 @@ routingRouter.post('/optimize', async (req: AuthRequest, res: Response) => {
 
   await recordRoutingActivity({
     userId: req.userId!,
+    req,
     workOrderId: context.workOrder.id,
     orderNumber: context.workOrder.orderNumber,
     description: `Generated routing recommendation for order #${context.workOrder.orderNumber}`,
@@ -524,6 +530,7 @@ routingRouter.post('/predictions/:predictionId/feedback', async (req: AuthReques
 
     await recordRoutingActivity({
       userId: req.userId!,
+      req,
       workOrderId: result.prediction.workOrderId,
       orderNumber,
       description: `Recorded routing feedback for order #${orderNumber}`,

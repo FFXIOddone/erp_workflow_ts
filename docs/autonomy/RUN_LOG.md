@@ -123,6 +123,20 @@
 | 2026-04-15T07:55:51.1755495-04:00 | FIERY-QUEUE-107 | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md:52 | Make the Fiery media mapping table discoverable from Rip Queue diagnostics. | npm run test -w @erp/server -- src/services/fiery-media-map.test.ts src/services/fiery-jmf.test.ts; npx tsc --noEmit -p packages/server/tsconfig.json; npx tsc --noEmit -p packages/web/tsconfig.json; npm run build -w @erp/server; npm run build -w @erp/web; git diff --check | 14b39e4 | completed | Rip Queue diagnostics now surface the resolved Fiery media mapping plus the full media table in a readable diagnostic section. |
 | 2026-04-15T08:01:02.2029969-04:00 | FIERY-QUEUE-108 | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md:55 | Create one shared file-chain status evaluator used by order details and the file-chain page. | npm run test -w @erp/server -- src/services/file-chain-state.test.ts; npx tsc --noEmit -p packages/shared/tsconfig.json; npx tsc --noEmit -p packages/server/tsconfig.json; npx tsc --noEmit -p packages/web/tsconfig.json; npm run build -w @erp/server; npm run build -w @erp/web; git diff --check | 1be3589 | completed | File-chain status evaluation now lives in packages/shared and both the order-details summary path and file-chain timeline UI consume the same evaluator. |
 | 2026-04-15T08:04:22.8776402-04:00 | FIERY-QUEUE-110 | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md:56 | Move linked-data summary counts into the same source that drives file-chain rows. | npm run test -w @erp/server -- src/services/file-chain-summary.test.ts src/services/file-chain-state.test.ts; npx tsc --noEmit -p packages/server/tsconfig.json; npm run build -w @erp/server; git diff --check | 1be3589 | completed | File-chain summary counts and row summaries now come from the same file-chain formatter, eliminating duplicate remapping in linked-data. |
+| 2026-04-15T15:08:00.1353357-04:00 | PLAN:2026-04-14-200-task-untangle-piping-and-polish | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md:69 | Add a repair helper for missing cut IDs that both pages can consume. | npm.cmd run test -w @erp/server -- src/services/file-chain-cut-id.test.ts src/services/order-linked-data-selectors.test.ts src/services/file-chain-summary.test.ts src/services/file-chain-grouping.test.ts src/services/file-chain-state.test.ts; npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/server; npm.cmd run build -w @erp/web |  | complete | Commit skipped because the worktree still contains unrelated dirty files. |
+| 2026-04-15T15:10:25.8830003-04:00 | PLAN:2026-04-14-200-task-untangle-piping-and-polish | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md:70 | Reconcile the file-chain state machine with the linked-data order summary state. | npm.cmd run test -w @erp/server -- src/services/file-chain-cut-id.test.ts src/services/order-linked-data-selectors.test.ts src/services/file-chain-summary.test.ts src/services/file-chain-grouping.test.ts src/services/file-chain-state.test.ts; npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/server; npm.cmd run build -w @erp/web |  | complete | Commit skipped because the worktree still contains unrelated dirty files. |
+| 2026-04-15T15:12:39.3337342-04:00 | PLAN:2026-04-14-200-task-untangle-piping-and-polish | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md:71 | Untangle the order-detail card assembly so shipment, file, and proof data all come from one composed model. | npm.cmd run test -w @erp/server -- src/services/file-chain-cut-id.test.ts src/services/order-linked-data-selectors.test.ts src/services/file-chain-summary.test.ts src/services/file-chain-grouping.test.ts src/services/file-chain-state.test.ts; npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/server; npm.cmd run build -w @erp/web |  | complete | Commit skipped because the worktree still contains unrelated dirty files. |
+| 2026-04-15T15:15:28.1727588-04:00 | PLAN:2026-04-14-200-task-untangle-piping-and-polish | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md:72 | Make the linked-data refresh broadcast invalidate file-chain and order-detail queries together. | npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/web |  | complete | Commit skipped because the worktree still contains unrelated dirty files. |
+| 2026-04-15T15:15:59.9171820-04:00 | PLAN:2026-04-14-200-task-untangle-piping-and-polish | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md:73 | Deduplicate code that finds the latest linked shipment or attachment. | npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npm.cmd run build -w @erp/server; npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/web |  | complete | Already centralized through the shared shipment/attachment selector module; commit skipped because the worktree still contains unrelated dirty files. |
+| 2026-04-17T11:16:08.842Z | PLAN:2026-04-14-200-task-untangle-piping-and-polish | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md | Collapsed the flatbed live-data unlinked-job fetch into one combined request so the server no longer rebuilds Thrive jobs twice for the same modal. | npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/server; npm.cmd run build -w @erp/web |  | complete |  |
+| 2026-04-17T11:21:25.715Z | PLAN:2026-04-14-200-task-untangle-piping-and-polish | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md | Introduced a shared Zund queue snapshot helper and switched the flatbed live-data, work-order, and Zund live-data callers to reuse the same normalized queue set. | npm.cmd run test -w @erp/server -- src/services/zund-live.test.ts; npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npm.cmd run build -w @erp/server |  | complete | Commit skipped because the touched route/component files already contain unrelated pre-existing edits in the dirty worktree. |
+| 2026-04-17T11:23:08.293Z | PLAN:2026-04-14-200-task-untangle-piping-and-polish | docs/superpowers/plans/2026-04-14-200-task-untangle-piping-and-polish.md | Extracted the equipment reachability probe into a shared server service and switched the flatbed, Zund, and Fiery share checks to use it. | npm.cmd run test -w @erp/server -- src/services/equipment-reachability.test.ts src/services/zund-live.test.ts; npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npm.cmd run build -w @erp/server |  | complete | Commit skipped because the worktree already contains unrelated pre-existing edits in the touched route and service files. |
+| 2026-04-17T11:29:12.800Z | PLAN:2026-04-14-200-task-untangle-piping-and-polish | codex | Refactored Fiery, Thrive, and Zund live-data summary blocks to use shared LiveDataSummaryGrid while preserving tones and click filters. | npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/web |  | complete | No commit due unrelated in-flight edits in touched files. |
+| 2026-04-17T11:32:02.020Z | PLAN:2026-04-14-200-task-untangle-piping-and-polish | PLAN:2026-04-14-200-task-untangle-piping-and-polish | Reduce repeated timeout wrappers in routes/equipment.ts | npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npm.cmd run test -w @erp/server -- src/services/equipment-reachability.test.ts; npm.cmd run build -w @erp/server; git diff --check |  | complete | Shared with-timeout helper extracted to packages/server/src/lib/with-timeout.ts and reused by equipment route plus equipment-reachability service; kept unrelated dirty worktree edits untouched. |
+| 2026-04-17T11:35:39.463Z | PLAN:2026-04-14-200-task-untangle-piping-and-polish | AUTONOMOUS | Equipment live-data filtering now uses family-specific helpers | npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/web |  | completed | Extracted Thrive and Zund list filtering into one helper module and updated both panels to call it while keeping component-local sorting behavior unchanged. |
+| 2026-04-17T11:41:23.842Z | PLAN:2026-04-14-200-task-untangle-piping-and-polish | PLAN:2026-04-14-200-task-untangle-piping-and-polish | Standardize how equipment cards report linked, queued, and completed counts | npm.cmd run test -w @erp/server -- src/services/equipment-queue.test.ts; npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/server; npm.cmd run build -w @erp/web; git diff --check |  | complete | Thrive machine summaries now expose queued/completed counts alongside linked work orders, and the live-data panel reports the same trio of counts as the Zund card. Kept unrelated in-flight edits untouched. |
+| 2026-04-17T07:46:57.9920082-04:00 | PLAN:2026-04-14-200-task-untangle-piping-and-polish | autonomous | Share work-order matching logic between equipment live data and file-chain repair. | npm.cmd run test -w @erp/server -- src/services/workorder-equipment-matching.test.ts src/services/file-chain-grouping.test.ts src/services/file-chain-state.test.ts; npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npm.cmd run build -w @erp/server; git diff --check (CRLF warnings only) | not committed (dirty worktree with unrelated edits) | complete | Exported shared work-order match helpers and reused them in equipment live data and file-chain repair. |
+| 2026-04-17T07:53:29.6906264-04:00 | PLAN:2026-04-14-200-task-untangle-piping-and-polish | autonomous | Keep the same job from appearing in both print and cut lists unless it truly is dual-linked. | npm.cmd run test -w @erp/server -- src/services/workorder-equipment-matching.test.ts src/services/file-chain-grouping.test.ts src/services/file-chain-state.test.ts; npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npm.cmd run build -w @erp/server; git diff --check (CRLF warnings only) | not committed (dirty worktree with unrelated edits) | complete | Added a distinct-cut-identity guard to the shared Thrive work-order matcher so print-row echoes no longer spill into the cut side unless the cut row carries its own identity. |
 <!-- RUN_LOG_ROWS -->
 | 2026-04-07T10:27:24.4447581-04:00 | SHIPMENT-DETAIL-075 | user-request | Tightened the shipment read path so order-detail shipping rows stay fast, FedEx evidence flips OTHER shipments to FEDEX, the shipment detail panel opens from the order details page, and the detail payload now carries FedEx status summary plus tracking events without mutating the database on read. | npm.cmd run test -w @erp/server -- src/routes/shipments.test.ts src/services/shipment-linking.test.ts; npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npm.cmd run build -w @erp/server; npx.cmd tsc --noEmit -p packages/web/tsconfig.json; npm.cmd run build -w @erp/web | skipped | complete | The list route now stays lean, the detail route carries the richer FedEx evidence and tracking history, and the shared FedEx designation logic is now aligned between the read path and shipment backfill. |
 | 2026-04-07T08:52:26.6780400-04:00 | ORDER-DETAIL-AUDIT-074 | user-request | Created an Obsidian-friendly order-detail audit note for 64524 / Pribusin PO23402 that maps every Order Details page section to its query route, captures the current ERP state, and records the Thrive JobLog print evidence versus the still-unlinked file-chain rows. | documentation only; no build or tests required | skipped | complete | The note lives under `docs/obsidian/` so it can be used as a vault-style reference for future order-detail wiring checks. |
@@ -291,4 +305,312 @@
 - Claimed slice: add an XML export for the mirrored Fiery catalog and make it the primary Fiery import artifact.
 - Added `/rip-queue/fiery/media-catalog?format=xml` plus a reusable XML serializer so the Fiery PC can import the catalog in the Fiery-native database format.
 - Updated the Rip Queue diagnostics and Fiery docs to point operators at the XML import link first, with JSON/CSV remaining as mirror views.
-| 2026-04-15T11:39:01.5091773-04:00 | THRIVE-TICKET-109 | user-request | Thrive-only uploads now stage a renamed temp copy before the hotfolder copy lands, using a structured `WO12345__Customer Name__Job Description.pdf` convention so the queue filename carries the ticket context; Fiery/Vutek stayed on the JDF/JMF path. | npm.cmd run test -w @erp/server -- src/services/thrive-upload.test.ts src/services/thrive.match.test.ts; npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npm.cmd run build -w @erp/server; git diff --check | pending | complete | `parseJobInfo(...)` now recovers the structured Thrive filename fields, and the temp staging folder is removed after the hotfolder copy completes. |
+
+### 2026-04-15 Printer-station batch RIP send
+- Claimed slice: let the printer station select multiple linked files and submit them sequentially in one RIP action.
+- Updated `PrintingStation.tsx` to support auto/manual/multi selection modes, multi-select checkboxes for linked files, sequential batch submission through the existing RIP job endpoint, and aggregated validation feedback for batch sends.
+- Validation passed for the shop-floor package, and the slice was left uncommitted because the worktree already contains unrelated Thrive/docs edits from the earlier staging-work task.
+
+### 2026-04-15 Printer-station batch send payload fix
+- Claimed slice: fix the multi-file printer send path so each selected file uses its own explicit submit payload.
+- Found and corrected a payload-key mismatch in `PrintingStation.tsx`: validation was using `filePath`, but the RIP submit route expects `sourceFilePath`. That mismatch caused the server to fall back to the auto-selected file, which is why the same file was being sent repeatedly.
+- The shop-floor package revalidated cleanly after the fix.
+| 2026-04-15T11:39:01.5091773-04:00 | THRIVE-TICKET-109 | user-request | Thrive-only uploads now stage a renamed temp copy before the hotfolder copy lands, using Fiery's Smart File Name Job Submission pattern (`OriginalFile_#JMD#_copies;magnification;rotation;order;company;customer.ext`) so the queue filename carries the ticket context; Fiery/Vutek stayed on the JDF/JMF path. | npm.cmd run test -w @erp/server -- src/services/thrive-upload.test.ts src/services/thrive.match.test.ts; npx.cmd tsc --noEmit -p packages/server/tsconfig.json; npm.cmd run build -w @erp/server; git diff --check | pending | complete | `parseJobInfo(...)` now recovers the Smart File Name metadata fields, and the temp staging folder is removed after the hotfolder copy completes. |
+
+### 2026-04-15 File-chain file-type classification
+- Claimed slice: separate printable PDF/TIFF links from Zund cut-only links in the file-chain status model.
+- Added file-extension classification helpers to the shared file-chain status module so RIP/Print/Cut step badges only advance for real print files, while cut-only `.zcc` rows stay out of the RIP/Print lifecycle until cut activity actually begins.
+- Updated the file-chain summary counts and RIP sync path to stop treating cut-only rows as printable jobs, and added regression coverage for cut-only links plus printable print-cut links.
+- Validation passed for shared, server, and web builds/tests; commit skipped because the worktree still contains unrelated Thrive/docs edits already in progress.
+- 2026-04-15 File-chain grouping display collapse: grouped print + Zund pairs into one display chain row using cutId/stem matching, preserving print-first order and stage status derivation. Validation: `npm.cmd run test -w @erp/server -- src/services/file-chain-grouping.test.ts src/services/file-chain-state.test.ts src/services/file-chain-summary.test.ts`, `npx.cmd tsc --noEmit -p packages/server/tsconfig.json`, `npm.cmd run build -w @erp/server`, `npx.cmd tsc --noEmit -p packages/web/tsconfig.json`, `git diff --check`.
+
+### 2026-04-15 File-chain completed-station alignment
+- Claimed slice: make order-linked-data and file-chain agree on completed-station counts by using one normalized routing helper in both summary paths.
+- Widened the shared routing summary helper to accept Prisma string-shaped station data, then wired both order-linked-data and file-chain summaries through the same source and entry timestamp inputs so completed-station counts stay aligned.
+- Validation passed for the server test/build path and the web typecheck path; the slice remains uncommitted because the worktree still contains unrelated Thrive/Fiery edits already in progress.
+
+### 2026-04-15 Order latest-record selectors
+- Claimed slice: extract a shared latest-shipment/latest-attachment selector for order details so the summary path uses one projection helper instead of inline mapping blocks.
+- Added `order-linked-data-selectors.ts` to project shipment and attachment rows into the order-details summary shapes, then wired `getOrderLinkedDataSummary(...)` through those shared selectors.
+- Validation passed for the server test/build path; the slice remains uncommitted because the worktree still contains unrelated Thrive/Fiery edits already in progress.
+
+### 2026-04-15 File-chain repair logic dedupe
+- Claimed slice: remove duplicate file-chain repair logic from the route and service layers by relying on the same shared placeholder helper path.
+- Confirmed the order-create route and the linked-data repair service both use the shared placeholder print-cut row helper, so the repair/placeholder shape stays canonical across both entry points.
+- Validation passed for the server test/build path; the slice remains uncommitted because the worktree still contains unrelated Thrive/Fiery edits already in progress.
+
+### 2026-04-15 Normalized order-linked records
+- Claimed slice: add one normalized representation for shipment, attachment, proof, and file-chain links in the order-detail summary.
+- Added `order-linked-data-selectors.ts` to project shipments, attachments, proofs, and file-chain links into a single sorted normalized feed, and wired the order-linked-data summary through that shared selector.
+- Validation passed for the server test/build path; the slice remains uncommitted because the worktree still contains unrelated Thrive/Fiery edits already in progress.
+
+### 2026-04-15 Exact linked-data warnings
+- Claimed slice: make linked-data warnings name the exact missing record type instead of using vague repair copy.
+- Updated the order-linked-data summary warnings to call out routing, station progress, print/cut file-chain, shipment, and attachment records explicitly.
+- Validation passed for the server test/build path; the slice remains uncommitted because the worktree still contains unrelated Thrive/Fiery edits already in progress.
+
+### 2026-04-15 Placeholder summary counter filter
+- Claimed slice: stop placeholder file-chain scaffold rows from being counted twice in order-detail summary counters.
+- Added a summary-only placeholder filter in `file-chain.ts` so pure scaffold rows are dropped from totals while the raw link list can still remain available for display and repair flows.
+- Validation passed for the server test/build path; the slice remains uncommitted because the worktree still contains unrelated Thrive/Fiery edits already in progress.
+
+### 2026-04-15 Stale READY_TO_PRINT suppression
+- Claimed slice: keep the file-chain summary from surfacing stale `READY_TO_PRINT` states after completion.
+- Updated the shared file-chain summary helper so once a post-ready status appears, older `READY_TO_PRINT` rows no longer drag the summary back to the initial state.
+- Validation remained green on the shared/server/web checks already exercised for the file-chain summary slice; the worktree is still intentionally uncommitted because unrelated Thrive/Fiery edits are in flight.
+
+### 2026-04-15 Linked-data empty-state standardization
+- Claimed slice: standardize linked-data empty states across shipments, attachments, proofs, and reprints.
+- Added a shared server-side empty-state warning builder so the order summary surfaces the same no-linked-record messages for shipments, attachments, proofs, reprints, routing, station progress, and file chains.
+- Aligned the order-detail shipping panel and linked-data card copy to the shared wording so the visible empty states match the summary warnings.
+- Validation passed for the server test/build path and the web typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Linked-data provenance field
+- Claimed slice: add a per-link provenance field so operators can tell where each linked record came from.
+- Extended the normalized linked-record model with a provenance label and surfaced it in the order details linked-record feed so shipment, attachment, proof, and file-chain rows now show their source type directly.
+- Validation passed for the server test/build path and the web typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Linked-data count audit
+- Claimed slice: audit all order-detail linked-data counts against the raw database rows.
+- Added a root-level audit script that compares the order-detail summary counters against direct Prisma counts plus the raw file-chain summary source, then ran it across all orders.
+- Audit result: 929 orders checked, 0 linked-data count mismatches.
+
+### 2026-04-15 Station transition helper
+- Claimed slice: extract a shared station-transition mutation helper from `routes/orders.ts`.
+- Added one shared helper in `station-flow.ts` that persists station progress transitions, writes the matching work event, and broadcasts the update, then wired the single-station start/complete/uncomplete routes through it.
+- Validation passed for the server typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Order completion mutation path
+- Claimed slice: consolidate completion, validation-request, and status-broadcast side effects into one order mutation path.
+- Added a shared order-completion helper that handles the validation-request branch and the final completion branch, including work events, logging, admin notifications, email triggers, and broadcasts, then wired the route through it.
+- Validation passed for the server typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Order notification payload builders now live in one shared helper
+- Claimed slice: reduce repeated notification logic in order station routes.
+- Added shared order-notification payload builders for status changes and assignments so the route branches no longer duplicate the same payload/link/data shapes inline.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Proof approval broadcast payloads now use one shared builder
+- Claimed slice: merge duplicate proof-approval broadcast payload shapes.
+- Added a shared proof-status payload builder so the SENT and APPROVED branches use the same payload shape and keep comments/revision normalization in one place.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Middleware-style admin checks now use shared route guards
+- Claimed slice: clean up repeated route-level authorization checks that mirror middleware behavior.
+- Replaced the custom Microsoft OAuth admin guard with the shared `requireRole(UserRole.ADMIN)` middleware so the route no longer duplicates the same role check inline.
+- Validation passed for the server typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Order status transition side effects now live in one helper
+- Claimed slice: extract one helper for order completion and shipping designation updates.
+- Added a shared order-status-transition helper so the order update route no longer carries the status-change log, customer notification/email fan-out, and shipped-order shipment scaffolding inline.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Shared list-query normalization now drives order, shipment, and FedEx routes
+- Claimed slice: remove duplicate filter parsing from the order, shipment, and FedEx list routes.
+- Added one shared list-query helper for page, pageSize, and search normalization and wired the order, shipment, and FedEx list routes through it.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Shared list-query defaults now cover pagination and sort order helpers
+- Claimed slice: consolidate route-level pagination and sorting defaults into a shared utility.
+- Extended the shared list-query helper so order and shipment routes now share the same page/pageSize/search normalization and the same orderBy builder logic.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Shared equipment queue builders now power the Thrive live-data route
+- Claimed slice: make `routes/equipment.ts` use shared queue/data builders rather than ad hoc composition.
+- Added a shared equipment-queue helper that composes Thrive jobs and machine summaries once, then wired the live-data route through it so the route no longer hand-builds the same response shapes inline.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Route work-order reference selects now share one DTO helper
+- Claimed slice: audit route handlers for repeated `select` shapes and share the repeated work-order reference lookup.
+- Added `WorkOrderReferenceSelect` in the server DTO select helpers and wired the route-layer work-order reference lookups in items, equipment, documents, and RIP queue through it so the route handlers no longer duplicate the same exact three-field select inline.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Station label resolution now shares one helper
+- Claimed slice: unify station label resolution across orders, equipment, and shop-floor routes.
+- Added a shared `getStationDisplayName(...)` helper in `@erp/shared` and used it in the routing intelligence route plus the production and printing shop-floor station badges so the underscore-fallback label formatting lives in one place.
+- Validation passed for the shared/server/shop-floor build and typecheck path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Last-updated timestamp fallback now shares one helper
+- Claimed slice: centralize `last updated at` fallback formatting across routes.
+- Added shared last-updated timestamp helpers in `packages/server/src/lib/last-updated.ts` and wired them into the dashboard stats and portal routes so the route-level fallback timestamp logic and ISO formatting live in one place.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-15 Work-order extraction now shares one lookup helper
+- Claimed slice: remove redundant work-order extraction helpers from multiple controllers.
+- Added a shared work-order reference lookup helper and shared select in the server lib, then wired Zund live, Zund watcher, QB auto-poll, file-chain, and RIP queue call sites through the shared shapes so the same work-order matching logic no longer lives inline in several controllers.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-16 Linked-data repair routes now share one handler
+- Claimed slice: make the batch repair routes call the same backend service as the single-item routes.
+- Added a single-order `/:id/repair-linked-data` route and a shared route helper so the batch and single repair entry points both call `repairOrderLinkedDataIntegrity(...)` through the same validation, logging, and response path.
+- Validation passed for the server typecheck path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-16 Shipment mutation responses now share one guard helper
+- Claimed slice: add a shared route helper for `NotFound` versus `BadRequest` shipment responses.
+- Added one reusable `requireShipmentState(...)` guard in `packages/server/src/lib/shipment-route-guards.ts` and swapped the shipment mutation routes over to it so the 404 and 400 responses for mutation guards live in one place instead of being repeated inline.
+- Validation passed for the server test/typecheck/build path; the worktree remains intentionally uncommitted because unrelated Thrive/Fiery edits are still in flight.
+
+### 2026-04-16 Shipment route activity payloads now share one builder
+- Claimed slice: consolidate route-specific activity logging payloads.
+- Added a reusable shipment-route activity payload builder in `packages/server/src/lib/shipment-route-activity.ts` and swapped the shipment route logs over to it so the entity/action/entityName shape no longer lives inline in each shipment mutation handler.
+- Validation passed for the server test/typecheck/build path; the broader route-logging consolidation task remains open for the other route families.
+
+### 2026-04-16 Work-order route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Added a reusable work-order route activity payload builder in `packages/server/src/lib/work-order-route-activity.ts` and swapped the order route's repeated work-order activity logs over to it so the entity/action/entityName shape is centralized in one place.
+- Validation passed for the server test/typecheck/build path; a small route-logging outlier remains for later cleanup.
+
+### 2026-04-16 Linked-data repair route logging now shares one payload helper
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Added a reusable linked-data repair route activity payload helper in `packages/server/src/lib/linked-data-repair-route-activity.ts` and swapped the batch repair log over to it so the system-level linked-data repair log shape no longer lives inline in `orders.ts`.
+- Validation passed for the server test/typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 RIP queue route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `rip-queue.ts` activity log payloads over to the shared `buildRouteActivityPayload(...)` helper so the RIP job create/update/delete and HH Global batch logs no longer rebuild the same envelope inline.
+- Validation passed for the server test/typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Scheduling route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `scheduling.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the create, bulk-schedule, update, reschedule, start, complete, and cancel envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Production-list route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `production-list.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the sync and export envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Document route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `documents.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the document upload, version, update, and delete envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Batch-import route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `batch-import.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the import create, import complete, and cancel envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Routing recommendation activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the routing helper over to the shared `buildRouteActivityPayload(...)` helper so routing optimization and feedback logs now share the same activity envelope instead of building it inline in `routing.ts`.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Import route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `import.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the spreadsheet import create and server-path import logs now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Job-cost route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `job-costs.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the calculate, update, and recalculate-all envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Search route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the global search audit log over to the shared `buildRouteActivityPayload(...)` helper so the search activity envelope no longer lives inline in `search.ts`.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Interaction route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `interactions.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the create, update, follow-up, and delete envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Credit route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `credit.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the credit hold, release, approval request, and approval process envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 File-chain route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `file-chain.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the chain add, manual link, confirm, dismiss, and sync envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Material route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `materials.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the record, update, delete, BOM add, and BOM apply envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Bulk route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `bulk.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the quote, PO, inventory, and customer bulk operation envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Auth route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the repeated `auth.ts` activity logs over to the shared `buildRouteActivityPayload(...)` helper so the login, login-failed, EULA acceptance, account unlock, and IP unblock envelopes now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining route families.
+
+### 2026-04-16 Equipment route activity payloads now share one builder
+- Claimed slice: continue consolidating route-specific activity logging payloads.
+- Swapped the first equipment-route activity cluster over to the shared `buildRouteActivityPayload(...)` helper so the equipment CRUD and maintenance schedule logs now share the same builder.
+- Validation passed for the server typecheck/build path; the broader route-logging consolidation task remains open for the remaining equipment route families.
+
+### 2026-04-16T08:48:48.6988410-04:00 Orders / Routes route plumbing finished
+- Claimed slice: finish the remaining Orders / Routes cleanup so the ERP can get back to use.
+- Converted the last inline route activity payloads in equipment.ts, wrapped the route broadcast envelopes through a shared helper across the route layer, and audited the remaining route-level timeout wrappers to the smallest necessary ones.
+- Validation passed for the server tests/build path; the Orders / Routes checklist items are now closed out.
+
+### 2026-04-16T10:12:00.0000000-04:00 Launcher and shop-floor startup hardening
+- Claimed slice: audit the server launcher and shop-floor startup path after the regressions from today.
+- The local launcher now cleans stale ERP processes, ensures PostgreSQL is available before Prisma sync, and runs the concurrent dev stack without an extra command-shell wrapper. The shop-floor config store now normalizes API URLs so login/API calls do not break on trailing slashes or stale persisted values.
+- Validation passed for the shop-floor and server build paths; this slice is ready for the next restart.
+
+### 2026-04-17T07:07:38.8981185-04:00 Email dev override routed to approvals
+- Claimed slice: add a development-only email safety override so no customer mail leaves the ERP during local development.
+- Added a central mail-routing helper that reroutes every non-production outbound email to `approvals@wilde-signs.com`, seeded the override in the active env files and example env, and added a focused regression test to prove dev vs production behavior.
+- Validation passed for the server test and build path; the email safety rule is now archived in the plan docs.
+
+### 2026-04-17T07:57:42.2515780-04:00 Equipment summaries now share one last-seen helper
+- Claimed slice: add a single source for the "last seen" timestamp shown in equipment summaries.
+- Introduced a shared equipment-last-seen resolver for the equipment detail page and Zund live-data panel so summary timestamps resolve from one helper instead of repeating timestamp fallback logic inline.
+- Validation passed for the web typecheck/build path; the Equipment / Live Data checklist remains open for the next unchecked item.
+
+### 2026-04-17T08:03:33.5188906-04:00 Equipment detail modals now share one shell
+- Claimed slice: make equipment detail modals use a common header and action bar.
+- Added a shared `EquipmentModalShell` and moved the File Shares, Windows Services, and IPP Print dialogs onto it so the header chrome, refresh/close controls, and footer action bar stay consistent across equipment detail modals.
+- Validation passed for the web typecheck/build path; the Equipment / Live Data checklist remains open for the next unchecked item.
+
+### 2026-04-17T08:07:32.7129950-04:00 Equipment live-data empty states now share one helper
+- Claimed slice: standardize equipment empty-state copy across all live-data tabs.
+- Added a shared live-data empty-state component and moved the print, Thrive, and Zund live-data tabs onto the same copy helpers so the "no data" and filtered-empty messages read consistently across the equipment views.
+- Validation passed for the web typecheck/build path; the Equipment / Live Data checklist remains open for the next unchecked item.
+
+### 2026-04-17T08:12:11.4328270-04:00 Fiery download scans now skip settled jobs
+- Claimed slice: simplify the download-file scan so it only runs when a connected source changed.
+- Added a guard in the RIP sync loop so Fiery download-folder scans are skipped once all active Fiery jobs already have a downloaded-file match, which avoids re-walking the download tree on every poll when nothing new is waiting to connect.
+- Validation passed for the server typecheck/build path; the Equipment / Live Data checklist remains open for the next unchecked item.
+
+### 2026-04-17T08:19:28.7158838-04:00 Remove duplicate JDF parsing from the equipment route and Fiery service
+- Claimed slice: remove duplicate JDF parsing from the equipment route and Fiery service.
+- Reused one already-parsed Fiery job snapshot across the VUTEk live probe and the Fiery print-log probe, then taught the VUTEk poller to normalize the reused Fiery job shape instead of reparsing the same JDF files.
+- Validation passed for the server typecheck/build path; the Equipment / Live Data checklist remains open for the next unchecked item.
+
+### 2026-04-17T08:28:36.9472229-04:00 Keep Zund cut-link repair from racing with Fiery job enrichment
+- Claimed slice: keep Zund cut-link repair from racing with Fiery job enrichment.
+- Added an in-flight Fiery JDF snapshot promise so concurrent callers share the same parsed job set during a cold start or cache refresh, instead of each path re-reading and parsing the export folder independently.
+- Validation passed for the server typecheck/build path plus a focused concurrency test for the shared snapshot loader.
+
+### 2026-04-17T08:31:14.3109261-04:00 Make equipment job naming use one normalized order/work-order parser
+- Claimed slice: make equipment job naming use one normalized order/work-order parser.
+- Added a shared equipment work-order text matcher and switched the remaining Fiery/Zund equipment lookups over to it so route-level job-name checks stop re-implementing their own string matching.
+- Validation passed for the server typecheck/build path plus the work-order matcher regression tests.
+
+### 2026-04-17T08:34:37.0761767-04:00 Audit live-data badge counts for duplicated or stale rows
+- Claimed slice: audit live-data badge counts for duplicated or stale rows.
+- Deduped Thrive live-data summary counts by stable job identity so duplicated or stale print/cut rows no longer inflate the live-data badge totals, and added a regression test that proves duplicate rows collapse down to one count.
+- Validation passed for the server typecheck/build path plus the equipment-queue summary regression tests.
+
+### 2026-04-17T08:39:50.5311706-04:00 Thrive cut rows now stay out of Fiery-linked cut results
+- Claimed slice: ensure linked Fiery cut rows never fall back to Thrive cutter-folder data.
+- Added a Fiery-aware filter to the Thrive cut route so any cutter-folder row already represented by a linked Fiery cut job is removed before the machine payload is returned, and added a regression test proving the duplicate Thrive cut row is filtered out.
+- Validation passed for the server typecheck/build path plus the new Fiery cut-job filter regression test.
+
+### 2026-04-17T08:39:50.5311706-04:00 Equipment search now follows the shared parser
+- Claimed slice: keep equipment page search and filters aligned with the shared search helper.
+- Updated the equipment page to normalize its search/filter state using the shared parser so whitespace-only input no longer counts as an active filter and the query key/query params stay aligned with server-side search behavior.
+- Validation passed for the web typecheck/build path plus the web production build.
+
+### 2026-04-17T08:47:20.5056507-04:00 Equipment identity changes now broadcast one repair event
+- Claimed slice: add one repair broadcast path for any equipment row that changes identity.
+- Added a shared equipment-identity snapshot helper and an `EQUIPMENT_REPAIRED` broadcast path for equipment updates and connectivity/IP changes, then wired the websocket invalidation path so clients refresh the equipment views when identity fields move.
+- Validation passed for the server and web typecheck/build paths plus focused repair-broadcast tests.

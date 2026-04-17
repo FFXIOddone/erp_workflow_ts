@@ -15,6 +15,7 @@ import * as http from 'http';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { XMLParser } from 'fast-xml-parser';
+import type { FieryJob } from './fiery.js';
 import { pollVUTEkInk } from './vutek-ink.js';
 
 // ============ Interfaces ============
@@ -562,9 +563,34 @@ async function getFieryJobs(maxJobs: number = 50): Promise<VUTEkFieryJob[]> {
   }
 }
 
+function mapFieryJobsToVUTEkFieryJobs(jobs: FieryJob[]): VUTEkFieryJob[] {
+  return jobs.map((job) => ({
+    jobId: job.jobId,
+    jobName: job.jobName,
+    fileName: job.fileName,
+    timestamp: job.timestamp,
+    inks: job.inks,
+    dimensions: job.dimensions
+      ? {
+          widthIn: job.dimensions.widthIn,
+          heightIn: job.dimensions.heightIn,
+          sqFt: Number((job.dimensions.widthIn * job.dimensions.heightIn / 144).toFixed(2)),
+        }
+      : null,
+    media: job.media
+      ? {
+          brand: job.media.brand ?? job.media.vutekMedia ?? null,
+          description: job.media.description,
+          type: job.media.type,
+        }
+      : null,
+    hasZccCutFile: job.hasZccCutFile,
+  }));
+}
+
 // ============ Main Poll Function ============
 
-export async function pollVUTEk(): Promise<VUTEkData> {
+export async function pollVUTEk(preFetchedFieryJobs?: FieryJob[]): Promise<VUTEkData> {
   const now = Date.now();
 
   // Return cache if polled within last 15 seconds
@@ -615,9 +641,13 @@ export async function pollVUTEk(): Promise<VUTEkData> {
     result.ink = inkData;
     result.available = connectivity.printerReachable || connectivity.fieryReachable;
 
-    // Parse Fiery JDF jobs if share is accessible
+    // Parse Fiery JDF jobs if share is accessible.
+    // When the caller already fetched the Fiery snapshot, reuse it so we do not
+    // parse the same JDF files twice in the same request path.
     if (connectivity.fieryShareAccessible && shareData.counts && shareData.counts.jdf > 0) {
-      result.fieryJobs = await getFieryJobs(50);
+      result.fieryJobs = preFetchedFieryJobs
+        ? mapFieryJobsToVUTEkFieryJobs(preFetchedFieryJobs).slice(0, 50)
+        : await getFieryJobs(50);
       result.fieryJobCount = shareData.counts.jdf;
     }
 

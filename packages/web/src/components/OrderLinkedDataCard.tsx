@@ -50,6 +50,20 @@ type LinkedFileChainLinkSummary = {
   cutCompletedAt: string | null;
 };
 
+type NormalizedLinkedRecordKind = 'SHIPMENT' | 'ATTACHMENT' | 'PROOF' | 'PRINT' | 'CUT';
+
+type NormalizedLinkedRecord = {
+  id: string;
+  kind: NormalizedLinkedRecordKind;
+  label: string;
+  status: string;
+  timestamp: string | null;
+  sourceId: string;
+  provenance: string;
+  note: string | null;
+  cutId: string | null;
+};
+
 type OrderLinkedDataSummary = {
   orderId: string;
   orderNumber: string;
@@ -64,6 +78,7 @@ type OrderLinkedDataSummary = {
   proofApprovalCount: number;
   latestShipments: LinkedShipmentSummary[];
   latestAttachments: LinkedAttachmentSummary[];
+  normalizedLinks: NormalizedLinkedRecord[];
   fileChainSummary: LinkedFileChainSummary | null;
   latestFileChainLinks: LinkedFileChainLinkSummary[];
   warnings: string[];
@@ -72,6 +87,25 @@ type OrderLinkedDataSummary = {
 interface OrderLinkedDataCardProps {
   orderId: string;
   orderNumber: string;
+}
+
+function buildOrderLinkedDataCardModel(data: OrderLinkedDataSummary) {
+  return {
+    shipments: data.latestShipments,
+    attachments: data.latestAttachments,
+    proofApprovalCount: data.proofApprovalCount,
+    fileChainSummary: data.fileChainSummary,
+    linkedRecords: data.normalizedLinks,
+    warnings: data.warnings,
+    counts: {
+      shipments: data.shipmentCount,
+      attachments: data.attachmentCount,
+      reprints: data.reprintRequestCount,
+      timeEntries: data.timeEntryCount,
+      completedStations: data.completedStationCount,
+      routingCount: data.routingCount,
+    },
+  };
 }
 
 function getChainBadgeVariant(
@@ -137,6 +171,33 @@ function getFileChainBadgeVariant(
   }
 }
 
+function getLinkedRecordBadgeVariant(
+  kind: NormalizedLinkedRecordKind,
+  status: string,
+): 'default' | 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
+  switch (kind) {
+    case 'SHIPMENT':
+      return getShipmentBadgeVariant(status);
+    case 'ATTACHMENT':
+      return 'neutral';
+    case 'PROOF':
+      switch (status) {
+        case 'APPROVED':
+          return 'success';
+        case 'REJECTED':
+          return 'danger';
+        case 'PENDING':
+        default:
+          return 'warning';
+      }
+    case 'PRINT':
+    case 'CUT':
+      return getFileChainBadgeVariant(status);
+    default:
+      return 'neutral';
+  }
+}
+
 function StatCard({
   label,
   value,
@@ -182,7 +243,8 @@ export function OrderLinkedDataCard({ orderId, orderNumber }: OrderLinkedDataCar
     );
   }
 
-  const chainSummary = data.fileChainSummary;
+  const model = buildOrderLinkedDataCardModel(data);
+  const chainSummary = model.fileChainSummary;
 
   return (
     <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-soft">
@@ -207,14 +269,14 @@ export function OrderLinkedDataCard({ orderId, orderNumber }: OrderLinkedDataCar
         </div>
       </div>
 
-      {data.warnings.length > 0 && (
+      {model.warnings.length > 0 && (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" />
             <div className="space-y-1 text-sm text-amber-800">
               <p className="font-medium">Linked data warnings</p>
               <ul className="list-disc space-y-0.5 pl-5">
-                {data.warnings.map((warning) => (
+                {model.warnings.map((warning) => (
                   <li key={warning}>{warning}</li>
                 ))}
               </ul>
@@ -224,14 +286,14 @@ export function OrderLinkedDataCard({ orderId, orderNumber }: OrderLinkedDataCar
       )}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6">
-        <StatCard label="Shipments" value={data.shipmentCount} />
-        <StatCard label="Attachments" value={data.attachmentCount} />
-        <StatCard label="Reprints" value={data.reprintRequestCount} />
-        <StatCard label="Time Entries" value={data.timeEntryCount} />
-        <StatCard label="Proofs" value={data.proofApprovalCount} />
+        <StatCard label="Shipments" value={model.counts.shipments} />
+        <StatCard label="Attachments" value={model.counts.attachments} />
+        <StatCard label="Reprints" value={model.counts.reprints} />
+        <StatCard label="Time Entries" value={model.counts.timeEntries} />
+        <StatCard label="Proofs" value={model.proofApprovalCount} />
         <StatCard
           label="Completed Stations"
-          value={`${data.completedStationCount}/${data.routingCount}`}
+          value={`${model.counts.completedStations}/${model.counts.routingCount}`}
         />
       </div>
 
@@ -241,9 +303,9 @@ export function OrderLinkedDataCard({ orderId, orderNumber }: OrderLinkedDataCar
             <Truck className="h-4 w-4 text-primary-600" />
             Latest Shipments
           </div>
-          {data.latestShipments.length > 0 ? (
+          {model.shipments.length > 0 ? (
             <div className="space-y-2">
-              {data.latestShipments.map((shipment) => (
+              {model.shipments.map((shipment) => (
                 <div
                   key={shipment.id}
                   className="rounded-lg border border-white bg-white px-3 py-2"
@@ -295,9 +357,9 @@ export function OrderLinkedDataCard({ orderId, orderNumber }: OrderLinkedDataCar
             <Paperclip className="h-4 w-4 text-primary-600" />
             Latest Attachments
           </div>
-          {data.latestAttachments.length > 0 ? (
+          {model.attachments.length > 0 ? (
             <div className="space-y-2">
-              {data.latestAttachments.map((attachment) => (
+              {model.attachments.map((attachment) => (
                 <div
                   key={attachment.id}
                   className="rounded-lg border border-white bg-white px-3 py-2"
@@ -322,7 +384,7 @@ export function OrderLinkedDataCard({ orderId, orderNumber }: OrderLinkedDataCar
             </div>
           ) : (
             <p className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-4 text-sm text-gray-500">
-              No attachments are linked yet.
+              No attachment records are linked yet.
             </p>
           )}
         </section>
@@ -357,27 +419,33 @@ export function OrderLinkedDataCard({ orderId, orderNumber }: OrderLinkedDataCar
         </section>
       </div>
 
-      {data.latestFileChainLinks.length > 0 && (
+      {model.linkedRecords.length > 0 && (
         <section className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-900">
             <FileText className="h-4 w-4 text-primary-600" />
-            Latest File Chain Links
+            Latest Normalized Linked Records
           </div>
           <div className="space-y-2">
-            {data.latestFileChainLinks.map((link) => (
-              <div key={link.id} className="rounded-lg border border-white bg-white px-3 py-2">
+            {model.linkedRecords.map((record) => (
+              <div key={record.id} className="rounded-lg border border-white bg-white px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={getFileChainBadgeVariant(link.status)} size="sm">
-                    {link.status}
+                  <Badge variant={getLinkedRecordBadgeVariant(record.kind, record.status)} size="sm">
+                    {record.kind}
                   </Badge>
-                  <span className="font-medium text-gray-900">{link.printFileName}</span>
-                  {link.cutFileName && <span className="text-xs text-gray-500">→ {link.cutFileName}</span>}
+                  <Badge variant="neutral" size="sm">
+                    {record.provenance}
+                  </Badge>
+                  <span className="font-medium text-gray-900">{record.label}</span>
+                  {record.cutId && (
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600">
+                      {record.cutId}
+                    </span>
+                  )}
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
-                  <span>Print: {link.printStatus}</span>
-                  <span>Cut: {link.cutStatus}</span>
-                  {link.printedAt && <span>Printed {formatDate(link.printedAt)}</span>}
-                  {link.cutCompletedAt && <span>Cut {formatDate(link.cutCompletedAt)}</span>}
+                  <span>Status: {record.status}</span>
+                  {record.timestamp && <span>{formatDate(record.timestamp)}</span>}
+                  {record.note && <span>{record.note}</span>}
                 </div>
               </div>
             ))}

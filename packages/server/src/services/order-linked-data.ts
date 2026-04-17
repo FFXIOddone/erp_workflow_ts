@@ -6,31 +6,21 @@ import {
   formatLinkedFileChainSummary,
   getOrderFileChainSummary,
 } from './file-chain.js';
+import { buildLinkedDataEmptyStateWarnings } from './order-linked-data-empty-state.js';
+import {
+  LinkedAttachmentSummary,
+  LinkedShipmentSummary,
+  NormalizedLinkedRecord,
+  selectLatestAttachmentSummaries,
+  selectLatestShipmentSummaries,
+  selectNormalizedLinkedRecords,
+} from './order-linked-data-selectors.js';
 import {
   applyRoutingDefaults,
   buildInitialStationProgress,
   inferRoutingSource,
+  summarizeStationProgressCounts,
 } from '../lib/routing-defaults.js';
-
-export type LinkedShipmentSummary = {
-  id: string;
-  carrier: string;
-  trackingNumber: string | null;
-  status: string;
-  shipDate: Date | null;
-  estimatedDelivery: Date | null;
-  actualDelivery: Date | null;
-  packageCount: number;
-  createdByDisplayName: string | null;
-};
-
-export type LinkedAttachmentSummary = {
-  id: string;
-  fileName: string;
-  fileType: string;
-  uploadedAt: Date;
-  uploadedByDisplayName: string | null;
-};
 
 export type LinkedFileChainSummary = {
   totalFiles: number;
@@ -39,6 +29,7 @@ export type LinkedFileChainSummary = {
   unlinked: number;
   printComplete: number;
   cutComplete: number;
+  completedStationCount: number;
   chainStatus: string;
 };
 
@@ -68,6 +59,7 @@ export type OrderLinkedDataSummary = {
   proofApprovalCount: number;
   latestShipments: LinkedShipmentSummary[];
   latestAttachments: LinkedAttachmentSummary[];
+  normalizedLinks: NormalizedLinkedRecord[];
   fileChainSummary: LinkedFileChainSummary | null;
   fileChainLinks: LinkedFileChainLinkSummary[];
   latestFileChainLinks: LinkedFileChainLinkSummary[];
@@ -157,6 +149,9 @@ export async function getOrderLinkedDataSummary(orderId: string): Promise<OrderL
     select: {
       id: true,
       orderNumber: true,
+      customerName: true,
+      description: true,
+      createdAt: true,
       status: true,
       routing: true,
       stationProgress: {
@@ -172,7 +167,7 @@ export async function getOrderLinkedDataSummary(orderId: string): Promise<OrderL
     return null;
   }
 
-  const [shipmentCount, trackedShipmentCount, latestShipments, attachmentCount, latestAttachments, reprintRequestCount, timeEntryCount, proofApprovalCount, fileChainSummary] =
+  const [shipmentCount, trackedShipmentCount, latestShipments, attachmentCount, latestAttachments, proofApprovals, reprintRequestCount, timeEntryCount, proofApprovalCount, fileChainSummary] =
     await Promise.all([
       prisma.shipment.count({ where: { workOrderId: orderId } }),
       prisma.shipment.count({
@@ -210,37 +205,62 @@ export async function getOrderLinkedDataSummary(orderId: string): Promise<OrderL
           uploadedBy: { select: { displayName: true } },
         },
       }),
+      prisma.proofApproval.findMany({
+        where: { orderId },
+        orderBy: { requestedAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          status: true,
+          requestedAt: true,
+          respondedAt: true,
+          attachment: {
+            select: {
+              fileName: true,
+            },
+          },
+        },
+      }),
       prisma.reprintRequest.count({ where: { orderId } }),
       prisma.timeEntry.count({ where: { orderId } }),
       prisma.proofApproval.count({ where: { orderId } }),
       getOrderFileChainSummary(orderId),
     ]);
 
-  const completedStationCount = order.stationProgress.filter((entry) => entry.status === 'COMPLETED').length;
+  const latestShipmentSummaries = selectLatestShipmentSummaries(latestShipments);
+  const latestAttachmentSummaries = selectLatestAttachmentSummaries(latestAttachments);
   const linkedFileChain = formatLinkedFileChainSummary(fileChainSummary);
   const normalizedFileChain = linkedFileChain.fileChainSummary;
   const latestFileChainLinks = linkedFileChain.latestFileChainLinks;
   const fileChainLinks = linkedFileChain.fileChainLinks;
+  const normalizedLinks = selectNormalizedLinkedRecords({
+    shipments: latestShipments,
+    attachments: latestAttachments,
+    proofs: proofApprovals,
+    fileChainLinks,
+  });
 
-  const warnings: string[] = [];
-  if (order.routing.length === 0) {
-    warnings.push('Routing is empty and needs repair');
-  }
-  if (order.stationProgress.length === 0) {
-    warnings.push('Station progress is missing');
-  }
-  if (!normalizedFileChain || normalizedFileChain.totalFiles === 0) {
-    warnings.push('No file chain records are linked yet');
-  }
-  if (shipmentCount === 0 && order.status === 'SHIPPED') {
-    warnings.push('No shipment records are linked yet');
-  }
+  const stationProgressCounts = summarizeStationProgressCounts(order.routing, order.stationProgress, {
+    source: inferRoutingSource(order.orderNumber, order.customerName ?? order.description),
+    entryTimestamp: order.createdAt,
+  });
+  const completedStationCount = stationProgressCounts.completedStationCount;
+
+  const warnings = buildLinkedDataEmptyStateWarnings({
+    routingCount: order.routing.length,
+    stationProgressCount: order.stationProgress.length,
+    fileChainCount: normalizedFileChain?.totalFiles ?? 0,
+    shipmentCount,
+    attachmentCount,
+    proofApprovalCount,
+    reprintRequestCount,
+  });
 
   return {
     orderId: order.id,
     orderNumber: order.orderNumber,
     routingCount: order.routing.length,
-    stationProgressCount: order.stationProgress.length,
+    stationProgressCount: stationProgressCounts.stationProgressCount,
     completedStationCount,
     shipmentCount,
     trackedShipmentCount,
@@ -248,24 +268,9 @@ export async function getOrderLinkedDataSummary(orderId: string): Promise<OrderL
     reprintRequestCount,
     timeEntryCount,
     proofApprovalCount,
-    latestShipments: latestShipments.map((shipment) => ({
-      id: shipment.id,
-      carrier: shipment.carrier,
-      trackingNumber: shipment.trackingNumber,
-      status: shipment.status,
-      shipDate: shipment.shipDate,
-      estimatedDelivery: shipment.estimatedDelivery,
-      actualDelivery: shipment.actualDelivery,
-      packageCount: shipment.packages.length,
-      createdByDisplayName: shipment.createdBy?.displayName ?? null,
-    })),
-    latestAttachments: latestAttachments.map((attachment) => ({
-      id: attachment.id,
-      fileName: attachment.fileName,
-      fileType: attachment.fileType,
-      uploadedAt: attachment.uploadedAt,
-      uploadedByDisplayName: attachment.uploadedBy?.displayName ?? null,
-    })),
+    latestShipments: latestShipmentSummaries,
+    latestAttachments: latestAttachmentSummaries,
+    normalizedLinks,
     fileChainSummary: normalizedFileChain,
     fileChainLinks,
     latestFileChainLinks,

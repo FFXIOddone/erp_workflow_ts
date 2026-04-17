@@ -4,6 +4,7 @@ import { Printer, Clock, CheckCircle, AlertCircle, Layers, ChevronDown, ChevronU
 import { filterBySearchFields } from '@erp/shared';
 import { api } from '../lib/api';
 import { formatDateTime } from '../lib/date';
+import { LiveDataEmptyState, buildLiveDataEmptyCopy } from './LiveDataEmptyState';
 
 interface PrinterInfoCardProps {
   orderNumber: string;
@@ -73,15 +74,14 @@ export function PrinterInfoCard({ orderNumber }: PrinterInfoCardProps) {
   });
 
   const { data: unlinkedData, isLoading: loadingUnlinked } = useQuery({
-    queryKey: ['unlinked-print-jobs'],
+    queryKey: ['unlinked-jobs', orderNumber],
     queryFn: async () => {
-      const [printRes, fieryRes] = await Promise.all([
-        api.get('/equipment/thrive/unlinked-jobs', { params: { type: 'PRINT_JOB' } }),
-        api.get('/equipment/thrive/unlinked-jobs', { params: { type: 'FIERY_JOB' } }),
-      ]);
+      const response = await api.get('/equipment/thrive/unlinked-jobs', {
+        params: { type: 'PRINT_JOB,FIERY_JOB' },
+      });
       return {
-        printJobs: printRes.data.data.printJobs || [],
-        fieryJobs: fieryRes.data.data.fieryJobs || [],
+        printJobs: response.data.data.printJobs || [],
+        fieryJobs: response.data.data.fieryJobs || [],
       };
     },
     enabled: showLinkModal,
@@ -97,7 +97,7 @@ export function PrinterInfoCard({ orderNumber }: PrinterInfoCardProps) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['thrive-jobs', orderNumber] });
-      queryClient.invalidateQueries({ queryKey: ['unlinked-print-jobs'] });
+      queryClient.invalidateQueries({ queryKey: ['unlinked-jobs', orderNumber] });
       setShowLinkModal(false);
       setSearchQuery('');
     },
@@ -161,17 +161,19 @@ export function PrinterInfoCard({ orderNumber }: PrinterInfoCardProps) {
           <Printer className="h-5 w-5 text-primary-600" />
           <h2 className="text-lg font-semibold text-gray-900">Print Jobs</h2>
         </div>
-        <div className="text-center py-4 text-gray-400">
-          <Printer className="h-8 w-8 mx-auto mb-2 opacity-50" />
-          <p className="text-sm">No print jobs in queue</p>
-          <button
-            onClick={() => setShowLinkModal(true)}
-            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors"
-          >
-            <Link className="h-3.5 w-3.5" />
-            Link Print Job
-          </button>
-        </div>
+        <LiveDataEmptyState
+          icon={Printer}
+          {...buildLiveDataEmptyCopy('print jobs')}
+          action={(
+            <button
+              onClick={() => setShowLinkModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors"
+            >
+              <Link className="h-3.5 w-3.5" />
+              Link Print Job
+            </button>
+          )}
+        />
         {showLinkModal && <LinkJobModal />}
       </div>
     );
@@ -575,10 +577,10 @@ export function PrinterInfoCard({ orderNumber }: PrinterInfoCardProps) {
                 Loading available print jobs...
               </div>
             ) : totalFiltered === 0 ? (
-              <div className="text-center py-8 text-gray-400">
-                <Printer className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">{searchQuery ? 'No matching jobs found' : 'No unlinked print jobs available'}</p>
-              </div>
+              <LiveDataEmptyState
+                icon={Printer}
+                {...buildLiveDataEmptyCopy('print jobs', Boolean(searchQuery))}
+              />
             ) : (
               <div className="space-y-2">
                 {filteredPrint.map((job) => (

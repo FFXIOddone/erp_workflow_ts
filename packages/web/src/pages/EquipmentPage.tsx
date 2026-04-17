@@ -23,7 +23,8 @@ import {
   EQUIPMENT_STATUS_DISPLAY_NAMES, 
   EQUIPMENT_STATUS_COLORS,
   STATION_DISPLAY_NAMES,
-  PrintingMethod
+  PrintingMethod,
+  parseSearchQuery,
 } from '@erp/shared';
 
 interface Equipment {
@@ -70,12 +71,13 @@ export default function EquipmentPage() {
   const [includeRetired, setIncludeRetired] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
+  const normalizedSearch = parseSearchQuery(search).length > 0 ? search.trim() : '';
 
   const { data, isLoading } = useQuery({
-    queryKey: ['equipment', { search, status: statusFilter, station: stationFilter, includeRetired, page }],
+    queryKey: ['equipment', { search: normalizedSearch, status: statusFilter, station: stationFilter, includeRetired, page }],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (search) params.append('search', search);
+      if (normalizedSearch) params.append('search', normalizedSearch);
       if (statusFilter) params.append('status', statusFilter);
       if (stationFilter) params.append('station', stationFilter);
       if (includeRetired) params.append('includeRetired', 'true');
@@ -143,7 +145,7 @@ export default function EquipmentPage() {
     }
   };
 
-  const hasActiveFilters = search || statusFilter || stationFilter;
+  const hasActiveFilters = normalizedSearch || statusFilter || stationFilter;
 
   const clearFilters = () => {
     setSearch('');
@@ -263,7 +265,7 @@ export default function EquipmentPage() {
             Filters
             {hasActiveFilters && (
               <span className="bg-blue-600 text-white text-xs rounded-full px-1.5 py-0.5">
-                {[search, statusFilter, stationFilter].filter(Boolean).length}
+                {[normalizedSearch, statusFilter, stationFilter].filter(Boolean).length}
               </span>
             )}
           </button>

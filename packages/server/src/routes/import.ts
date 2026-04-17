@@ -6,7 +6,9 @@ import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError } from '../middleware/error-handler.js';
 import { importSpreadsheetOrders, parseProductionSpreadsheet } from '../services/spreadsheet-import.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { prisma } from '../db/client.js';
 
 export const importRouter = Router();
@@ -76,23 +78,25 @@ importRouter.post('/execute', upload.single('file'), async (req: AuthRequest, re
     const result = await importSpreadsheetOrders(req.file.path, userId, { dryRun: false });
 
     // Log activity
-    await logActivity({
-      action: ActivityAction.CREATE,
-      entityType: EntityType.WORK_ORDER,
-      entityId: 'batch-import',
-      entityName: 'Spreadsheet Import',
-      description: `Imported ${result.imported} orders from ${req.file.originalname} (${result.updated} updated, ${result.skipped} skipped, ${result.errors} errors)`,
-      details: {
-        totalRows: result.totalRows,
-        imported: result.imported,
-        updated: result.updated,
-        skipped: result.skipped,
-        errors: result.errors,
-        fileName: req.file.originalname,
-      },
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.CREATE,
+        entityType: EntityType.WORK_ORDER,
+        entityId: 'batch-import',
+        entityName: 'Spreadsheet Import',
+        description: `Imported ${result.imported} orders from ${req.file.originalname} (${result.updated} updated, ${result.skipped} skipped, ${result.errors} errors)`,
+        details: {
+          totalRows: result.totalRows,
+          imported: result.imported,
+          updated: result.updated,
+          skipped: result.skipped,
+          errors: result.errors,
+          fileName: req.file.originalname,
+        },
+        userId,
+        req,
+      }),
+    );
 
     // Save import history
     await prisma.importHistory.create({
@@ -110,11 +114,11 @@ importRouter.post('/execute', upload.single('file'), async (req: AuthRequest, re
 
     // Broadcast to refresh order lists
     if (result.imported > 0) {
-      broadcast({
+      broadcast(buildRouteBroadcastPayload({
         type: 'ORDERS_IMPORTED',
         payload: { count: result.imported },
         timestamp: new Date(),
-      });
+      }));
     }
 
     res.json({
@@ -159,29 +163,31 @@ importRouter.post('/from-path', async (req: AuthRequest, res: Response) => {
     });
 
     if (result.imported > 0 || result.updated > 0) {
-      await logActivity({
-        action: ActivityAction.CREATE,
-        entityType: EntityType.WORK_ORDER,
-        entityId: 'batch-import',
-        entityName: 'Spreadsheet Import (Server Path)',
-        description: `Imported ${result.imported} orders from ${path.basename(filePath)} (${result.updated} updated, ${result.skipped} skipped, ${result.errors} errors)`,
-        details: {
-          totalRows: result.totalRows,
-          imported: result.imported,
-          updated: result.updated,
-          skipped: result.skipped,
-          errors: result.errors,
-          filePath,
-        },
-        userId,
-        req,
-      });
+      await logActivity(
+        buildRouteActivityPayload({
+          action: ActivityAction.CREATE,
+          entityType: EntityType.WORK_ORDER,
+          entityId: 'batch-import',
+          entityName: 'Spreadsheet Import (Server Path)',
+          description: `Imported ${result.imported} orders from ${path.basename(filePath)} (${result.updated} updated, ${result.skipped} skipped, ${result.errors} errors)`,
+          details: {
+            totalRows: result.totalRows,
+            imported: result.imported,
+            updated: result.updated,
+            skipped: result.skipped,
+            errors: result.errors,
+            filePath,
+          },
+          userId,
+          req,
+        }),
+      );
 
-      broadcast({
+      broadcast(buildRouteBroadcastPayload({
         type: 'ORDERS_IMPORTED',
         payload: { count: result.imported },
         timestamp: new Date(),
-      });
+      }));
     }
   }
 

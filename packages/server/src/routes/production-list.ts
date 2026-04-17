@@ -29,7 +29,9 @@ import fs from 'fs';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { prisma } from '../db/client.js';
 import {
   ProductionListSyncSchema,
@@ -381,17 +383,19 @@ productionListRouter.post('/sync', upload.single('file'), async (req: AuthReques
     });
 
     // Log activity
-    await logActivity({
-      action: ActivityAction.CREATE,
-      entityType: EntityType.WORK_ORDER,
-      entityId: result.syncId,
-      description: `Production List sync: ${result.imported} imported, ${result.updated} updated, ${result.errors} errors`,
-      userId: req.userId!,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.CREATE,
+        entityType: EntityType.WORK_ORDER,
+        entityId: result.syncId,
+        description: `Production List sync: ${result.imported} imported, ${result.updated} updated, ${result.errors} errors`,
+        userId: req.userId!,
+        req,
+      }),
+    );
 
     // Broadcast real-time update
-    broadcast({
+    broadcast(buildRouteBroadcastPayload({
       type: 'PRODUCTION_LIST_SYNCED',
       payload: {
         syncId: result.syncId,
@@ -399,7 +403,7 @@ productionListRouter.post('/sync', upload.single('file'), async (req: AuthReques
         updated: result.updated,
         errors: result.errors,
       },
-    });
+    }));
 
     res.json({ success: true, data: result });
   } catch (err: any) {
@@ -482,13 +486,16 @@ productionListRouter.get('/export', async (req: AuthRequest, res: Response) => {
     });
 
     // Log activity
-    await logActivity({
-      action: ActivityAction.CREATE,
-      entityType: EntityType.WORK_ORDER,
-      description: `Exported Production List (${filename})`,
-      userId: req.userId!,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.CREATE,
+        entityType: EntityType.WORK_ORDER,
+        entityId: filename,
+        description: `Exported Production List (${filename})`,
+        userId: req.userId!,
+        req,
+      }),
+    );
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

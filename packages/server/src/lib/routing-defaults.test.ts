@@ -6,6 +6,7 @@ import {
   inferRoutingFromDescription,
   inferRoutingSource,
   resolveImportedRouting,
+  summarizeStationProgressCounts,
 } from './routing-defaults.js';
 
 describe('routing defaults', () => {
@@ -136,6 +137,37 @@ describe('routing defaults', () => {
         status: StationStatus.NOT_STARTED,
       },
     ]);
+  });
+
+  it('summarizes completed station counts from the same normalized routing', () => {
+    const entryTimestamp = new Date('2026-04-02T15:30:00.000Z');
+    const routing = applyRoutingDefaults([PrintingMethod.FLATBED], {
+      description: 'Dibond sign',
+    });
+
+    expect(
+      summarizeStationProgressCounts(routing, [
+        {
+          station: PrintingMethod.ORDER_ENTRY,
+          status: StationStatus.COMPLETED,
+        },
+        {
+          station: PrintingMethod.DESIGN,
+          status: StationStatus.IN_PROGRESS,
+        },
+        {
+          station: PrintingMethod.FLATBED,
+          status: StationStatus.COMPLETED,
+        },
+      ], {
+        source: 'manual',
+        entryTimestamp,
+      }),
+    ).toEqual({
+      routingCount: 12,
+      stationProgressCount: 3,
+      completedStationCount: 2,
+    });
   });
 
   it('detects woocommerce order sources', () => {

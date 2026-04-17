@@ -3,7 +3,9 @@ import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import {
   CreateInteractionSchema,
   UpdateInteractionSchema,
@@ -212,17 +214,20 @@ router.post('/', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.INTERACTION,
-    entityId: interaction.id,
-    description: `Added ${data.type} interaction for ${customer.name}`,
-    userId: req.userId,
-    details: { customerId: data.customerId, type: data.type },
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.INTERACTION,
+      entityId: interaction.id,
+      entityName: customer.name,
+      description: `Added ${data.type} interaction for ${customer.name}`,
+      userId: req.user!.id,
+      details: { customerId: data.customerId, type: data.type },
+      req,
+    }),
+  );
 
-  broadcast({ type: 'INTERACTION_CREATED', payload: interaction });
+  broadcast(buildRouteBroadcastPayload({ type: 'INTERACTION_CREATED', payload: interaction }));
 
   res.status(201).json({
     success: true,
@@ -257,17 +262,20 @@ router.put('/:id', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.INTERACTION,
-    entityId: id,
-    description: `Updated interaction for ${existing.customer.name}`,
-    userId: req.userId,
-    details: { customerId: existing.customerId },
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.INTERACTION,
+      entityId: id,
+      entityName: existing.customer.name,
+      description: `Updated interaction for ${existing.customer.name}`,
+      userId: req.user!.id,
+      details: { customerId: existing.customerId },
+      req,
+    }),
+  );
 
-  broadcast({ type: 'INTERACTION_UPDATED', payload: interaction });
+  broadcast(buildRouteBroadcastPayload({ type: 'INTERACTION_UPDATED', payload: interaction }));
 
   res.json({
     success: true,
@@ -305,17 +313,20 @@ router.post('/:id/complete-followup', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.INTERACTION,
-    entityId: id,
-    description: `Completed follow-up for ${existing.customer.name}`,
-    userId: req.userId,
-    details: { customerId: existing.customerId },
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.INTERACTION,
+      entityId: id,
+      entityName: existing.customer.name,
+      description: `Completed follow-up for ${existing.customer.name}`,
+      userId: req.user!.id,
+      details: { customerId: existing.customerId },
+      req,
+    }),
+  );
 
-  broadcast({ type: 'INTERACTION_UPDATED', payload: interaction });
+  broadcast(buildRouteBroadcastPayload({ type: 'INTERACTION_UPDATED', payload: interaction }));
 
   res.json({
     success: true,
@@ -338,16 +349,19 @@ router.delete('/:id', async (req: AuthRequest, res) => {
 
   await prisma.customerInteraction.delete({ where: { id } });
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.CUSTOMER,
-    entityId: existing.customerId,
-    description: `Deleted ${existing.type} interaction for ${existing.customer.name}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      entityType: EntityType.CUSTOMER,
+      entityId: existing.customerId,
+      entityName: existing.customer.name,
+      description: `Deleted ${existing.type} interaction for ${existing.customer.name}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'INTERACTION_DELETED', payload: { id, customerId: existing.customerId } });
+  broadcast(buildRouteBroadcastPayload({ type: 'INTERACTION_DELETED', payload: { id, customerId: existing.customerId } }));
 
   res.json({
     success: true,

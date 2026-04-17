@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import {
   UpdateCustomerCreditSchema,
   CreateCreditApprovalSchema,
@@ -116,16 +118,19 @@ router.patch('/customers/:id', async (req: AuthRequest, res) => {
     data: updateData,
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.CUSTOMER,
-    entityId: customerId,
-    description: `Updated credit settings for ${existing.name}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.CUSTOMER,
+      entityId: customerId,
+      entityName: existing.name,
+      description: `Updated credit settings for ${existing.name}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'CUSTOMER_CREDIT_UPDATED', payload: customer });
+  broadcast(buildRouteBroadcastPayload({ type: 'CUSTOMER_CREDIT_UPDATED', payload: customer }));
 
   res.json({ success: true, data: customer });
 });
@@ -153,16 +158,19 @@ router.post('/customers/:id/hold', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.CUSTOMER,
-    entityId: customerId,
-    description: `Put ${existing.name} on credit hold: ${reason || 'Credit limit exceeded'}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.CUSTOMER,
+      entityId: customerId,
+      entityName: existing.name,
+      description: `Put ${existing.name} on credit hold: ${reason || 'Credit limit exceeded'}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'CUSTOMER_ON_HOLD', payload: customer });
+  broadcast(buildRouteBroadcastPayload({ type: 'CUSTOMER_ON_HOLD', payload: customer }));
 
   res.json({ success: true, data: customer });
 });
@@ -193,16 +201,19 @@ router.post('/customers/:id/release', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.CUSTOMER,
-    entityId: customerId,
-    description: `Released ${existing.name} from credit hold`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.CUSTOMER,
+      entityId: customerId,
+      entityName: existing.name,
+      description: `Released ${existing.name} from credit hold`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'CUSTOMER_RELEASED', payload: customer });
+  broadcast(buildRouteBroadcastPayload({ type: 'CUSTOMER_RELEASED', payload: customer }));
 
   res.json({ success: true, data: customer });
 });
@@ -322,16 +333,19 @@ router.post('/approvals', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.OTHER,
-    entityId: approval.id,
-    description: `Requested $${data.requestedAmount} credit approval for ${customer.name}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.OTHER,
+      entityId: approval.id,
+      entityName: customer.name,
+      description: `Requested $${data.requestedAmount} credit approval for ${customer.name}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'CREDIT_APPROVAL_REQUESTED', payload: approval });
+  broadcast(buildRouteBroadcastPayload({ type: 'CREDIT_APPROVAL_REQUESTED', payload: approval }));
 
   res.status(201).json({ success: true, data: approval });
 });
@@ -390,16 +404,19 @@ router.post('/approvals/:id/process', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.OTHER,
-    entityId: approvalId,
-    description: `${data.status} credit approval for ${existing.customer.name}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.OTHER,
+      entityId: approvalId,
+      entityName: existing.customer.name,
+      description: `${data.status} credit approval for ${existing.customer.name}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'CREDIT_APPROVAL_PROCESSED', payload: approval });
+  broadcast(buildRouteBroadcastPayload({ type: 'CREDIT_APPROVAL_PROCESSED', payload: approval }));
 
   res.json({ success: true, data: approval });
 });

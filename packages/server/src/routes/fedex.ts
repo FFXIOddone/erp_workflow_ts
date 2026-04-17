@@ -8,6 +8,7 @@ import {
   resolveFedExLogFile,
   syncFedExShipmentRecords,
 } from '../services/fedex.js';
+import { normalizeListQuery } from '../lib/list-query.js';
 import {
   fetchFedExStatusPreview,
   isFedExApiConfigured,
@@ -68,9 +69,12 @@ function resolveFedExRecordFilters(req: AuthRequest): {
   fromDate: Date;
   toDate: Date;
 } {
-  const page = req.query.page ? Number(req.query.page) : 1;
-  const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 25;
-  const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+  const { page, pageSize, search } = normalizeListQuery({
+    page: req.query.page,
+    pageSize: req.query.pageSize,
+    search: req.query.search,
+    defaultPageSize: 25,
+  });
   const trackingNumber =
     typeof req.query.trackingNumber === 'string' ? req.query.trackingNumber.trim() : '';
   const fromDate = parseDateValue(req.query.fromDate);
@@ -78,9 +82,9 @@ function resolveFedExRecordFilters(req: AuthRequest): {
 
   if (fromDate && toDate) {
     return {
-      page: Number.isFinite(page) ? page : 1,
-      pageSize: Number.isFinite(pageSize) ? pageSize : 25,
-      search: search || undefined,
+      page,
+      pageSize,
+      search,
       trackingNumber: trackingNumber || undefined,
       fromDate,
       toDate,
@@ -89,9 +93,9 @@ function resolveFedExRecordFilters(req: AuthRequest): {
 
   const todayRange = getLocalDayRange();
   return {
-    page: Number.isFinite(page) ? page : 1,
-    pageSize: Number.isFinite(pageSize) ? pageSize : 25,
-    search: search || undefined,
+    page,
+    pageSize,
+    search,
     trackingNumber: trackingNumber || undefined,
     fromDate: fromDate ?? todayRange.fromDate,
     toDate: toDate ?? todayRange.toDate,

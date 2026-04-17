@@ -434,6 +434,7 @@ async function searchFileServerForSource(jobName: string): Promise<string | null
 
 // ─── TTL Cache for getAllFieryJobs ───────────────────
 let fieryJobsCache: { data: FieryJob[]; expiresAt: number } | null = null;
+let fieryJobsSnapshotPromise: Promise<FieryJob[]> | null = null;
 const FIERY_CACHE_TTL_MS = 30_000; // 30 seconds
 let fieryDownloadCache: { data: FieryDownloadFile[]; expiresAt: number } | null = null;
 const FIERY_DOWNLOAD_CACHE_TTL_MS = 10_000; // 10 seconds
@@ -471,6 +472,39 @@ function cloneFieryJob(job: FieryJob): FieryJob {
     thriveFilePath: null,
     thriveJobMatch: false,
   };
+}
+
+async function loadFieryJobsSnapshot(): Promise<FieryJob[]> {
+  if (fieryJobsCache && Date.now() < fieryJobsCache.expiresAt) {
+    return fieryJobsCache.data;
+  }
+
+  if (fieryJobsSnapshotPromise) {
+    return fieryJobsSnapshotPromise;
+  }
+
+  fieryJobsSnapshotPromise = (async () => {
+    const jdfFiles = await getAllJdfFiles();
+
+    // Parse JDF files in parallel (batches of 10 to avoid too many open file handles)
+    const BATCH_SIZE = 10;
+    const jobs: FieryJob[] = [];
+    for (let i = 0; i < jdfFiles.length; i += BATCH_SIZE) {
+      const batch = jdfFiles.slice(i, i + BATCH_SIZE);
+      const parsed = await Promise.all(batch.map((f) => parseJdfFile(f)));
+      for (const job of parsed) {
+        if (job) jobs.push(job);
+      }
+    }
+
+    // Cache the parsed JDF snapshot; Thrive enrichment is applied per call.
+    fieryJobsCache = { data: jobs, expiresAt: Date.now() + FIERY_CACHE_TTL_MS };
+    return jobs;
+  })().finally(() => {
+    fieryJobsSnapshotPromise = null;
+  });
+
+  return fieryJobsSnapshotPromise;
 }
 
 async function enrichFieryJobs(
@@ -537,28 +571,7 @@ export async function getAllFieryJobs(preFetchedPrintJobs?: Array<{ fileName: st
     ? buildThriveJobLookupFromData(preFetchedPrintJobs)
     : await buildThriveJobLookup();
 
-  // Return cached JDF parse if still valid, then re-apply the current Thrive lookup
-  // so callers with fresh pre-fetched queue data still get fast responses.
-  if (fieryJobsCache && Date.now() < fieryJobsCache.expiresAt) {
-    return enrichFieryJobs(fieryJobsCache.data, thriveLookup);
-  }
-
-  const jdfFiles = await getAllJdfFiles();
-
-  // Parse JDF files in parallel (batches of 10 to avoid too many open file handles)
-  const BATCH_SIZE = 10;
-  const jobs: FieryJob[] = [];
-  for (let i = 0; i < jdfFiles.length; i += BATCH_SIZE) {
-    const batch = jdfFiles.slice(i, i + BATCH_SIZE);
-    const parsed = await Promise.all(batch.map(f => parseJdfFile(f)));
-    for (const job of parsed) {
-      if (job) jobs.push(job);
-    }
-  }
-
-  // Cache the parsed JDF snapshot; Thrive enrichment is applied per call.
-  fieryJobsCache = { data: jobs, expiresAt: Date.now() + FIERY_CACHE_TTL_MS };
-
+  const jobs = await loadFieryJobsSnapshot();
   return enrichFieryJobs(jobs, thriveLookup);
 }
 
@@ -741,6 +754,46 @@ export function buildFieryCutJobRows(jobs: FieryJob[]): FieryCutJobRow[] {
     });
 }
 
+type ThriveCutJobIdentitySource = {
+  jobName?: string | null;
+  fileName?: string | null;
+  guid?: string | null;
+  workOrderNumber?: string | null;
+};
+
+function normalizeFieryCutIdentity(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? '';
+  return trimmed ? trimmed.toLowerCase() : null;
+}
+
+function buildFieryCutJobIdentitySet(jobs: FieryJob[]): Set<string> {
+  const identities = new Set<string>();
+
+  for (const row of buildFieryCutJobRows(jobs)) {
+    for (const candidate of [row.fileName, row.jobName, row.guid, row.workOrderNumber]) {
+      const identity = normalizeFieryCutIdentity(candidate);
+      if (identity) identities.add(identity);
+    }
+  }
+
+  return identities;
+}
+
+export function filterThriveCutJobsAgainstFieryJobs<T extends ThriveCutJobIdentitySource>(
+  cutJobs: T[],
+  fieryJobs: FieryJob[],
+): T[] {
+  const fieryCutIdentities = buildFieryCutJobIdentitySet(fieryJobs);
+
+  return cutJobs.filter((job) => {
+    const candidates = [job.fileName, job.jobName, job.guid, job.workOrderNumber];
+    return !candidates.some((candidate) => {
+      const identity = normalizeFieryCutIdentity(candidate);
+      return identity ? fieryCutIdentities.has(identity) : false;
+    });
+  });
+}
+
 /**
  * Get Fiery job summary statistics
  */
@@ -816,6 +869,7 @@ export const fieryService = {
   getAllFieryJobs,
   linkFieryJobsToOrders,
   buildFieryCutJobRows,
+  filterThriveCutJobsAgainstFieryJobs,
   getFierySummary,
   enrichFieryJobFromFileServer,
   config: FIERY_CONFIG,

@@ -247,6 +247,13 @@ export function useWebSocket() {
         scheduleInvalidation('orders', 'dashboard', 'shop-floor-orders', 'order-entry-orders', 'equipment-activity');
       };
 
+      const invalidateOrderDetailAndFileChain = (workOrderId: string) => {
+        scheduleInvalidation('file-chain', 'orders', 'equipment-activity');
+        void queryClient.invalidateQueries({ queryKey: ['file-chain', workOrderId] });
+        void queryClient.invalidateQueries({ queryKey: ['orders', workOrderId] });
+        void queryClient.invalidateQueries({ queryKey: ['orders', workOrderId, 'linked-data'] });
+      };
+
       switch (message.type) {
         case 'ORDER_CREATED' as WsMessageType:
           invalidateOrder();
@@ -265,8 +272,9 @@ export function useWebSocket() {
           break;
         case WsMessageType.FILE_CHAIN_UPDATED: {
           const fileChainPayload = message.payload as { workOrderId?: string; orderId?: string } | undefined;
-          if (fileChainPayload?.workOrderId || fileChainPayload?.orderId) {
-            scheduleInvalidation('file-chain', 'orders', 'equipment-activity');
+          const workOrderId = fileChainPayload?.workOrderId ?? fileChainPayload?.orderId ?? null;
+          if (workOrderId) {
+            invalidateOrderDetailAndFileChain(workOrderId);
           }
           break;
         }
@@ -355,6 +363,7 @@ export function useWebSocket() {
         case 'EQUIPMENT_LIVE_STATUS' as WsMessageType:
         case 'EQUIPMENT_CREATED' as WsMessageType:
         case 'EQUIPMENT_UPDATED' as WsMessageType:
+        case 'EQUIPMENT_REPAIRED' as WsMessageType:
         case 'EQUIPMENT_STATUS_CHANGED' as WsMessageType:
         case 'EQUIPMENT_DELETED' as WsMessageType:
         case 'EQUIPMENT_DOWN' as WsMessageType:

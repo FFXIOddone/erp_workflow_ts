@@ -5,6 +5,7 @@ import fs from 'fs';
 import { AuthRequest, authenticate } from '../middleware/auth.js';
 import { prisma } from '../db/client.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { AttachmentType } from '@prisma/client';
 
 export const uploadsRouter = Router();
@@ -151,7 +152,7 @@ uploadsRouter.post('/order/:orderId', upload.single('file'), async (req: AuthReq
     },
   });
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: order.id } }));
 
   res.status(201).json({ 
     success: true, 
@@ -263,7 +264,7 @@ uploadsRouter.delete('/:attachmentId', async (req: AuthRequest, res: Response) =
     },
   });
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { orderId: attachment.orderId } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: attachment.orderId } }));
 
   res.json({ success: true, message: 'File deleted successfully' });
 });
@@ -295,6 +296,6 @@ uploadsRouter.post('/order/:orderId/register', authenticate, async (req: AuthReq
     },
   });
 
-  broadcast({ type: 'ATTACHMENT_ADDED', payload: { orderId, attachment }, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'ATTACHMENT_ADDED', payload: { orderId, attachment }, timestamp: new Date() }));
   res.json({ success: true, data: attachment });
 });

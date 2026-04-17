@@ -28,7 +28,7 @@ export function LoginScreen() {
         );
       }
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Login failed');
+      if (!res.ok) throw new Error(data.error || data.message || 'Login failed');
       login(data.data.user, data.data.token);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');

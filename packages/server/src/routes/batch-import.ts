@@ -18,7 +18,9 @@ import { AuthRequest, authenticate } from '../middleware/auth.js';
 import { requireRole } from '../middleware/auth.js';
 import { prisma } from '../db/client.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { UserRole } from '@erp/shared';
 import { OrderStatus, InventoryStatus } from '@prisma/client';
@@ -500,14 +502,17 @@ batchImportRouter.post(
     importJobs.set(jobId, job);
 
     // Log activity
-    await logActivity({
-      action: ActivityAction.CREATE,
-      entityType: EntityType.OTHER,
-      entityId: jobId,
-      description: `Created ${entityType} import job from file: ${req.file.originalname}`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.CREATE,
+        entityType: EntityType.OTHER,
+        entityId: jobId,
+        entityName: req.file.originalname,
+        description: `Created ${entityType} import job from file: ${req.file.originalname}`,
+        userId,
+        req,
+      }),
+    );
 
     res.json({
       success: true,
@@ -712,17 +717,20 @@ batchImportRouter.post('/:jobId/start', async (req: AuthRequest, res: Response) 
   }
 
   // Log activity
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.OTHER,
-    entityId: jobId,
-    description: `Completed ${job.entityType} import: ${job.successCount} success, ${job.errorCount} errors`,
-    userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.OTHER,
+      entityId: jobId,
+      entityName: job.fileName,
+      description: `Completed ${job.entityType} import: ${job.successCount} success, ${job.errorCount} errors`,
+      userId,
+      req,
+    }),
+  );
 
   // Broadcast import completion
-  broadcast({
+  broadcast(buildRouteBroadcastPayload({
     type: 'IMPORT_COMPLETED',
     payload: {
       jobId,
@@ -730,7 +738,7 @@ batchImportRouter.post('/:jobId/start', async (req: AuthRequest, res: Response) 
       successCount: job.successCount,
       errorCount: job.errorCount,
     },
-  });
+  }));
 
   res.json({
     success: true,
@@ -807,14 +815,17 @@ batchImportRouter.delete('/:jobId', async (req: AuthRequest, res: Response) => {
   job.status = 'cancelled';
   importJobs.delete(jobId);
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.OTHER,
-    entityId: jobId,
-    description: `Cancelled ${job.entityType} import job`,
-    userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      entityType: EntityType.OTHER,
+      entityId: jobId,
+      entityName: job.fileName,
+      description: `Cancelled ${job.entityType} import job`,
+      userId,
+      req,
+    }),
+  );
 
   res.json({
     success: true,

@@ -4,6 +4,7 @@ import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError, ForbiddenError } from '../middleware/error-handler.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 
 export const notificationsRouter = Router();
 
@@ -143,11 +144,11 @@ export async function createNotification(params: CreateNotificationParams): Prom
   });
 
   // Broadcast to the specific user via WebSocket
-  broadcast({
+  broadcast(buildRouteBroadcastPayload({
     type: 'NOTIFICATION_CREATED',
     payload: notification,
     targetUserId: params.userId,
-  });
+  }));
 }
 
 /**

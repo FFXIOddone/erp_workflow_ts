@@ -33,7 +33,7 @@ import { useConfigStore } from '../stores/config';
 import { useAuthStore } from '../stores/auth';
 import { useWebSocket, type WsStatus } from '../lib/useWebSocket';
 import toast from 'react-hot-toast';
-import { PrintingMethod, inferRoutingFromOrderDetails, isDesignOnlyOrder } from '@erp/shared';
+import { PrintingMethod, getStationDisplayName, inferRoutingFromOrderDetails, isDesignOnlyOrder } from '@erp/shared';
 
 // ─── Types ────────────────────────────────────────────
 
@@ -198,6 +198,14 @@ interface RipFileValidation {
   fileName?: string;
   resolvedPath?: string;
 }
+
+interface RipSendTarget {
+  label: string;
+  validatePayload: Record<string, unknown>;
+  submitPayload: Record<string, unknown>;
+}
+
+type SendSelectionMode = 'auto' | 'multi' | 'manual';
 
 interface FieryDiagnostics {
   share: {
@@ -364,7 +372,6 @@ const PRIORITY_CONFIG: Record<number, { label: string; color: string; textColor:
 
 const HIDDEN_ATTACHMENT_TYPES = new Set(['EMAIL', 'INVOICE', 'PACKING_SLIP', 'SHIPMENT_LOG']);
 const PRINT_FILE_PATTERN = /\.(ai|eps|pdf|png|jpe?g|tiff?|psd)$/i;
-const AUTO_SEND_CANDIDATE_ID = '__auto__';
 
 // ─── Helpers ──────────────────────────────────────────
 
@@ -628,7 +635,8 @@ export function PrintingStation() {
   const [sendCandidates, setSendCandidates] = useState<SendCandidate[]>([]);
   const [sendCandidatesLoading, setSendCandidatesLoading] = useState(false);
   const [sendCandidatesError, setSendCandidatesError] = useState<string | null>(null);
-  const [selectedSendCandidateId, setSelectedSendCandidateId] = useState(AUTO_SEND_CANDIDATE_ID);
+  const [sendSelectionMode, setSendSelectionMode] = useState<SendSelectionMode>('auto');
+  const [selectedSendCandidateIds, setSelectedSendCandidateIds] = useState<string[]>([]);
   const [manualSourcePath, setManualSourcePath] = useState('');
   const [showManualPathFallback, setShowManualPathFallback] = useState(false);
   const [selectedHotfolderId, setSelectedHotfolderId] = useState('');
@@ -851,7 +859,8 @@ export function PrintingStation() {
     setSendCandidates([]);
     setSendCandidatesLoading(false);
     setSendCandidatesError(null);
-    setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+    setSendSelectionMode('auto');
+    setSelectedSendCandidateIds([]);
     setManualSourcePath('');
     setShowManualPathFallback(false);
     setSelectedHotfolderId('');
@@ -868,7 +877,8 @@ export function PrintingStation() {
       setSendCandidates([]);
       setSendCandidatesLoading(true);
       setSendCandidatesError(null);
-      setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+      setSendSelectionMode('auto');
+      setSelectedSendCandidateIds([]);
       setManualSourcePath('');
       setShowManualPathFallback(false);
       setSelectedHotfolderId('');
@@ -1169,10 +1179,63 @@ export function PrintingStation() {
   }, [filteredActiveRipJobs]);
 
   const autoSelectedSendCandidate = sendCandidates[0] || null;
-  const selectedSendCandidate =
-    selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID
-      ? autoSelectedSendCandidate
-      : sendCandidates.find((candidate) => candidate.id === selectedSendCandidateId) || null;
+  const selectedSendCandidates = useMemo(
+    () => sendCandidates.filter((candidate) => selectedSendCandidateIds.includes(candidate.id)),
+    [sendCandidates, selectedSendCandidateIds]
+  );
+
+  const buildSendTargets = useCallback((): RipSendTarget[] => {
+    if (!sendToRipOrder) return [];
+
+    if (sendSelectionMode === 'manual') {
+      const trimmedManualPath = manualSourcePath.trim();
+      return trimmedManualPath
+        ? [
+            {
+              label: 'Manual network path',
+              validatePayload: { filePath: trimmedManualPath },
+              submitPayload: { sourceFilePath: trimmedManualPath },
+            },
+          ]
+        : [];
+    }
+
+    if (sendSelectionMode === 'auto') {
+      return [
+        {
+          label: 'Auto-select best order file',
+          validatePayload: { workOrderId: sendToRipOrder.id },
+          submitPayload: { workOrderId: sendToRipOrder.id },
+        },
+      ];
+    }
+
+    const targets: RipSendTarget[] = [];
+    for (const candidate of selectedSendCandidates) {
+      if (candidate.attachmentId) {
+        targets.push({
+          label: candidate.label,
+          validatePayload: {
+            workOrderId: sendToRipOrder.id,
+            attachmentId: candidate.attachmentId,
+          },
+          submitPayload: {
+            workOrderId: sendToRipOrder.id,
+            attachmentId: candidate.attachmentId,
+          },
+        });
+        continue;
+      }
+      if (candidate.sourceFilePath) {
+        targets.push({
+          label: candidate.label,
+          validatePayload: { filePath: candidate.sourceFilePath },
+          submitPayload: { sourceFilePath: candidate.sourceFilePath },
+        });
+      }
+    }
+    return targets;
+  }, [manualSourcePath, selectedSendCandidates, sendSelectionMode, sendToRipOrder]);
 
   const sendHotfolderOptions = useMemo(() => {
     if (!sendToRipOrder) return filteredHotfolders;
@@ -1199,24 +1262,8 @@ export function PrintingStation() {
   useEffect(() => {
     if (!sendToRipOrder) return;
 
-    let payload: Record<string, unknown> | null = null;
-    if (selectedSendCandidateId === 'manual') {
-      const trimmedManualPath = manualSourcePath.trim();
-      if (!trimmedManualPath) {
-        setSendValidation(null);
-        return;
-      }
-      payload = { filePath: trimmedManualPath };
-    } else if (selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID) {
-      payload = { workOrderId: sendToRipOrder.id };
-    } else if (selectedSendCandidate?.attachmentId) {
-      payload = {
-        workOrderId: sendToRipOrder.id,
-        attachmentId: selectedSendCandidate.attachmentId,
-      };
-    } else if (selectedSendCandidate?.sourceFilePath) {
-      payload = { filePath: selectedSendCandidate.sourceFilePath };
-    } else {
+    const targets = buildSendTargets();
+    if (targets.length === 0) {
       setSendValidation(null);
       return;
     }
@@ -1225,34 +1272,59 @@ export function PrintingStation() {
     const timeoutId = window.setTimeout(
       async () => {
         try {
-          const validation = await fetchJson<RipFileValidation>('/rip-queue/validate-file', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          });
-          if (!cancelled) setSendValidation(validation);
+          const validations = await Promise.all(
+            targets.map((target) =>
+              fetchJson<RipFileValidation>('/rip-queue/validate-file', {
+                method: 'POST',
+                body: JSON.stringify(target.validatePayload),
+              })
+            )
+          );
+          if (cancelled) return;
+
+          if (sendSelectionMode === 'multi' && validations.length > 1) {
+            const failed = validations.filter((validation) => !validation.valid);
+            const totalSize = validations.reduce((sum, validation) => sum + (validation.size || 0), 0);
+            setSendValidation(
+              failed.length === 0
+                ? {
+                    valid: true,
+                    fileName: `${validations.length} files selected`,
+                    size: totalSize,
+                  }
+                : {
+                    valid: false,
+                    fileName: `${validations.length} files selected`,
+                    size: totalSize,
+                    error: `${failed.length} of ${validations.length} selected files failed validation`,
+                  }
+            );
+          } else {
+            setSendValidation(validations[0] || null);
+          }
         } catch (err: any) {
           if (!cancelled) {
             setSendValidation({ valid: false, error: err.message || 'Validation failed' });
           }
         }
       },
-      selectedSendCandidateId === 'manual' ? 250 : 0
+      sendSelectionMode === 'manual' ? 250 : 0
     );
 
     return () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [fetchJson, manualSourcePath, selectedSendCandidate, selectedSendCandidateId, sendToRipOrder]);
+  }, [buildSendTargets, fetchJson, sendSelectionMode, sendToRipOrder]);
 
   const canSendToRip =
     Boolean(sendToRipOrder) &&
     Boolean(selectedHotfolderId) &&
-    (selectedSendCandidateId === 'manual'
+    (sendSelectionMode === 'manual'
       ? Boolean(manualSourcePath.trim())
-      : selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID
-        ? true
-        : Boolean(selectedSendCandidate)) &&
+      : sendSelectionMode === 'multi'
+        ? selectedSendCandidateIds.length > 0
+        : true) &&
     Boolean(sendValidation?.valid);
 
   const handleSendToRip = useCallback(async () => {
@@ -1261,33 +1333,79 @@ export function PrintingStation() {
       toast.error('Select a printer hotfolder first');
       return;
     }
+    setSendCandidatesError(null);
 
-    const payload: Record<string, unknown> = {
-      workOrderId: sendToRipOrder.id,
-      hotfolderId: selectedHotfolderId,
-      copies: sendCopies,
-      notes: sendNotes || undefined,
+    const targets = buildSendTargets();
+    if (targets.length === 0) {
+      toast.error(
+        sendSelectionMode === 'multi'
+          ? 'Choose one or more linked files first'
+          : 'Choose a source file first'
+      );
+      return;
+    }
+
+    const isBatch = sendSelectionMode === 'multi' && targets.length > 1;
+    const submitTarget = async (target: RipSendTarget) => {
+      await fetchJson('/rip-queue/jobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          workOrderId: sendToRipOrder.id,
+          hotfolderId: selectedHotfolderId,
+          copies: sendCopies,
+          notes: sendNotes || undefined,
+          ...target.submitPayload,
+        }),
+      });
     };
 
-    if (selectedSendCandidateId === 'manual') {
-      payload.sourceFilePath = manualSourcePath.trim();
-    } else if (selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID) {
-      // Let the server pick the best accessible file linked to this work order.
-    } else if (selectedSendCandidate?.attachmentId) {
-      payload.attachmentId = selectedSendCandidate.attachmentId;
-    } else if (selectedSendCandidate?.sourceFilePath) {
-      payload.sourceFilePath = selectedSendCandidate.sourceFilePath;
-    } else {
-      toast.error('Choose a source file first');
+    if (isBatch) {
+      setSendingBatchRip(true);
+      try {
+        const failures: Array<{ label: string; error: string }> = [];
+        let submittedCount = 0;
+
+        for (const target of targets) {
+          try {
+            await submitTarget(target);
+            submittedCount += 1;
+          } catch (err: any) {
+            failures.push({ label: target.label, error: err.message || 'Failed to send to RIP' });
+          }
+        }
+
+        if (submittedCount > 0) {
+          fetchPrintingOperations();
+        }
+
+        if (failures.length === 0) {
+          toast.success(
+            `Submitted ${submittedCount} file${submittedCount === 1 ? '' : 's'} to RIP`
+          );
+          closeSendToRipModal();
+        } else if (submittedCount > 0) {
+          toast.error(
+            `Submitted ${submittedCount} file${submittedCount === 1 ? '' : 's'}; ${failures.length} failed${failures[0]?.error ? ` — ${failures[0].error}` : ''}`
+          );
+          setSendCandidatesError(
+            failures
+              .map((failure) => `${failure.label}: ${failure.error}`)
+              .join(' | ')
+          );
+        } else {
+          toast.error(
+            failures[0]?.error || 'Failed to send selected files to RIP'
+          );
+        }
+      } finally {
+        setSendingBatchRip(false);
+      }
       return;
     }
 
     setSendingToRip(true);
     try {
-      await fetchJson('/rip-queue/jobs', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
+      await submitTarget(targets[0]);
       toast.success(`Submitted ${sendToRipOrder.orderNumber} to RIP`);
       closeSendToRipModal();
       fetchPrintingOperations();
@@ -1298,12 +1416,11 @@ export function PrintingStation() {
     }
   }, [
     closeSendToRipModal,
+    buildSendTargets,
     fetchJson,
     fetchPrintingOperations,
-    manualSourcePath,
     selectedHotfolderId,
-    selectedSendCandidate,
-    selectedSendCandidateId,
+    sendSelectionMode,
     sendCopies,
     sendNotes,
     sendToRipOrder,
@@ -1550,7 +1667,7 @@ export function PrintingStation() {
               <div className="flex items-center gap-1 flex-wrap mb-3">
                 {routingDisplay.map((st, idx) => {
                   const stStatus = getStationStatus(order, st);
-                  const label = ALL_STATION_LABELS[st] || st.replace(/_/g, ' ');
+                  const label = ALL_STATION_LABELS[st] || getStationDisplayName(st);
                   return (
                     <div key={st} className="flex items-center">
                       {idx > 0 && <div className="w-4 h-0.5 bg-gray-200 mx-0.5" />}
@@ -2109,11 +2226,12 @@ export function PrintingStation() {
                         <div className="space-y-2">
                           <button
                             onClick={() => {
-                              setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+                              setSendSelectionMode('auto');
+                              setSelectedSendCandidateIds([]);
                               setShowManualPathFallback(false);
                             }}
                             className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
-                              selectedSendCandidateId === AUTO_SEND_CANDIDATE_ID
+                              sendSelectionMode === 'auto'
                                 ? 'border-indigo-400 bg-indigo-50'
                                 : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                             }`}
@@ -2137,27 +2255,73 @@ export function PrintingStation() {
 
                           {sendCandidates.length > 0 && (
                             <div className="space-y-2">
-                              <p className="text-xs font-medium uppercase tracking-wide text-gray-500 px-1">
-                                Choose a specific linked file
-                              </p>
+                              <div className="flex items-center justify-between gap-3 px-1">
+                                <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                                  Choose one or more linked files
+                                </p>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSendSelectionMode('multi');
+                                      setSelectedSendCandidateIds(sendCandidates.map((candidate) => candidate.id));
+                                      setShowManualPathFallback(false);
+                                    }}
+                                    className="text-xs font-medium text-indigo-700 hover:text-indigo-800"
+                                  >
+                                    Select all
+                                  </button>
+                                  {selectedSendCandidateIds.length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSendSelectionMode('multi');
+                                        setSelectedSendCandidateIds([]);
+                                      }}
+                                      className="text-xs font-medium text-gray-600 hover:text-gray-800"
+                                    >
+                                      Clear
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              {selectedSendCandidateIds.length > 0 && (
+                                <p className="px-1 text-xs text-indigo-700">
+                                  {selectedSendCandidateIds.length} linked file
+                                  {selectedSendCandidateIds.length === 1 ? '' : 's'} selected and will
+                                  be sent sequentially.
+                                </p>
+                              )}
                               {sendCandidates.map((candidate) => (
                                 <button
                                   key={candidate.id}
                                   onClick={() => {
-                                    setSelectedSendCandidateId(candidate.id);
+                                    setSendSelectionMode('multi');
+                                    setSelectedSendCandidateIds((current) =>
+                                      current.includes(candidate.id)
+                                        ? current.filter((id) => id !== candidate.id)
+                                        : [...current, candidate.id]
+                                    );
                                     setShowManualPathFallback(false);
                                   }}
                                   className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
-                                    selectedSendCandidateId === candidate.id
+                                    selectedSendCandidateIds.includes(candidate.id)
                                       ? 'border-indigo-400 bg-indigo-50'
                                       : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                                   }`}
                                 >
                                   <div className="flex items-center justify-between gap-3">
                                     <div className="min-w-0">
-                                      <p className="text-sm font-medium text-gray-900 truncate">
-                                        {candidate.label}
-                                      </p>
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        {selectedSendCandidateIds.includes(candidate.id) ? (
+                                          <CheckCircle className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                                        ) : (
+                                          <Circle className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                        )}
+                                        <p className="text-sm font-medium text-gray-900 truncate">
+                                          {candidate.label}
+                                        </p>
+                                      </div>
                                       <p className="text-xs text-gray-500 truncate">
                                         {candidate.detail}
                                       </p>
@@ -2174,7 +2338,8 @@ export function PrintingStation() {
                           {!showManualPathFallback && (
                             <button
                               onClick={() => {
-                                setSelectedSendCandidateId('manual');
+                                setSendSelectionMode('manual');
+                                setSelectedSendCandidateIds([]);
                                 setShowManualPathFallback(true);
                               }}
                               className="text-sm text-indigo-700 hover:text-indigo-800 font-medium"
@@ -2187,9 +2352,9 @@ export function PrintingStation() {
                         {showManualPathFallback && (
                           <div className="space-y-2">
                             <button
-                              onClick={() => setSelectedSendCandidateId('manual')}
+                              onClick={() => setSendSelectionMode('manual')}
                               className={`w-full text-left rounded-lg border px-3 py-3 transition-colors ${
-                                selectedSendCandidateId === 'manual'
+                                sendSelectionMode === 'manual'
                                   ? 'border-indigo-400 bg-indigo-50'
                                   : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                               }`}
@@ -2207,7 +2372,7 @@ export function PrintingStation() {
                               </div>
                             </button>
 
-                            {selectedSendCandidateId === 'manual' && (
+                            {sendSelectionMode === 'manual' && (
                               <input
                                 type="text"
                                 value={manualSourcePath}
@@ -2217,10 +2382,11 @@ export function PrintingStation() {
                               />
                             )}
 
-                            {selectedSendCandidateId === 'manual' && sendCandidates.length > 0 && (
+                            {sendSelectionMode === 'manual' && sendCandidates.length > 0 && (
                               <button
                                 onClick={() => {
-                                  setSelectedSendCandidateId(AUTO_SEND_CANDIDATE_ID);
+                                  setSendSelectionMode('auto');
+                                  setSelectedSendCandidateIds([]);
                                   setShowManualPathFallback(false);
                                 }}
                                 className="text-sm text-gray-600 hover:text-gray-800"
@@ -2478,15 +2644,19 @@ export function PrintingStation() {
                   </button>
                   <button
                     onClick={handleSendToRip}
-                    disabled={!canSendToRip || sendingToRip}
+                    disabled={!canSendToRip || sendingToRip || sendingBatchRip}
                     className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
                   >
-                    {sendingToRip ? (
+                    {sendingToRip || sendingBatchRip ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                       <Send className="w-4 h-4" />
                     )}
-                    Send to RIP
+                    {sendSelectionMode === 'multi' && selectedSendCandidateIds.length > 0
+                      ? `Send ${selectedSendCandidateIds.length} File${
+                          selectedSendCandidateIds.length === 1 ? '' : 's'
+                        } to RIP`
+                      : 'Send to RIP'}
                   </button>
                 </div>
               </div>

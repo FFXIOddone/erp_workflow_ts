@@ -30,18 +30,20 @@ import { prisma } from '../db/client.js';
 import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError, BadRequestError } from '../middleware/error-handler.js';
 import { broadcast } from '../ws/server.js';
-import { createNotification, notifyAdminsAndManagers } from './notifications.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
+import { notifyAdminsAndManagers, createNotification } from './notifications.js';
 import {
   sendOrderCreatedEmail,
   sendOrderStatusChangedEmail,
   sendOrderAssignedEmail,
 } from '../services/email.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
-import { triggerEmail } from '../services/email-automation.js';
 import { bomAutomationService } from '../services/bom-automation.js';
-import { ensureShipmentRecordForWorkOrder } from '../services/shipment-linking.js';
 import { resolveCustomerId } from '../lib/customer-matching.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
+import { buildCursorOrderBy, buildListOrderBy, normalizeListQuery } from '../lib/list-query.js';
+import { buildLinkedDataRepairRouteActivityPayload } from '../lib/linked-data-repair-route-activity.js';
+import { buildWorkOrderRouteActivityPayload } from '../lib/work-order-route-activity.js';
 import { resolveEffectivePriority } from '../lib/customer-priority.js';
 import { updateStreak, checkAchievements } from '../services/gamification.js';
 import {
@@ -49,12 +51,21 @@ import {
   buildInitialStationProgress,
   inferRoutingSource,
 } from '../lib/routing-defaults.js';
+import { saveStationProgressTransition } from '../lib/station-flow.js';
+import { applyOrderCompletionMutation } from '../services/order-completion.js';
 import { recordRoutingOutcome, type RoutingOptimizationContext } from '../services/routing-optimization.js';
 import {
   getOrderLinkedDataSummary,
   repairOrderLinkedDataIntegrity,
 } from '../services/order-linked-data.js';
 import { createPlaceholderPrintCutLinkRow } from '../services/file-chain.js';
+import {
+  buildOrderAssignedNotification,
+  buildOrderStatusChangedNotification,
+} from '../services/order-notifications.js';
+import { buildProofStatusChangedPayload } from '../services/proof-broadcast.js';
+import { applyOrderStatusTransitionEffects } from '../services/order-status-transition.js';
+import { triggerEmail } from '../services/email-automation.js';
 
 export const ordersRouter = Router();
 const MATERIAL_DEDUCTION_STATIONS = ['ROLL_TO_ROLL', 'FLATBED', 'SCREEN_PRINT', 'CUT', 'FABRICATION', 'INSTALLATION'];
@@ -96,6 +107,37 @@ function withEffectivePriority<T extends OrderWithCustomerPreference>(order: T) 
   };
 }
 
+async function handleLinkedDataRepairRequest(
+  req: AuthRequest,
+  res: Response,
+  orderIds?: unknown,
+) {
+  if (orderIds !== undefined && (!Array.isArray(orderIds) || orderIds.some((id) => typeof id !== 'string'))) {
+    throw BadRequestError('orderIds must be an array of order id strings');
+  }
+
+  const result = await repairOrderLinkedDataIntegrity({
+    orderIds: orderIds as string[] | undefined,
+    actorUserId: req.userId!,
+  });
+
+  await logActivity(
+    buildLinkedDataRepairRouteActivityPayload({
+      description: `Linked data repair scanned ${result.scanned} order(s), updated ${result.routingUpdated} routing record(s), backfilled ${result.stationProgressBackfilled} station progress row(s), created ${result.fileChainsCreated} file chain placeholder(s), and created ${result.shipmentsCreated} shipment placeholder(s)`,
+      req,
+      details: {
+        scanned: result.scanned,
+        routingUpdated: result.routingUpdated,
+        stationProgressBackfilled: result.stationProgressBackfilled,
+        fileChainsCreated: result.fileChainsCreated,
+        shipmentsCreated: result.shipmentsCreated,
+      },
+    }),
+  );
+
+  res.json({ success: true, data: result });
+}
+
 // All routes require authentication
 ordersRouter.use(authenticate);
 
@@ -118,7 +160,7 @@ async function deductMaterialsOnStationCompleteIfNeeded(orderId: string, station
         },
       });
 
-      broadcast({ type: 'INVENTORY_UPDATED', payload: { orderId } });
+      broadcast(buildRouteBroadcastPayload({ type: 'INVENTORY_UPDATED', payload: { orderId } }));
     }
   } catch (err) {
     console.warn(`Material deduction warning for order ${orderId}:`, err);
@@ -204,11 +246,11 @@ async function completeDesignOnlyOrderIfNeeded(orderId: string, userId: string):
     }
   });
 
-  broadcast({
+  broadcast(buildRouteBroadcastPayload({
     type: 'ORDER_UPDATED',
     payload: { orderId, status: 'COMPLETED' },
     timestamp: new Date(),
-  });
+  }));
 
   return true;
 }
@@ -246,7 +288,7 @@ async function autoAdvanceNextStationIfNeeded(orderId: string, station: string, 
       startedAt: new Date(),
     },
   });
-  broadcast({ type: 'STATION_UPDATED', payload: { orderId, station: nextStation, status: 'IN_PROGRESS' }, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'STATION_UPDATED', payload: { orderId, station: nextStation, status: 'IN_PROGRESS' }, timestamp: new Date() }));
 }
 
 async function autoCompleteParentStationIfNeeded(orderId: string, station: string, userId: string): Promise<void> {
@@ -287,7 +329,7 @@ async function autoCompleteParentStationIfNeeded(orderId: string, station: strin
       details: { station: parentStation, autoCompleted: true },
     },
   });
-  broadcast({ type: 'STATION_UPDATED', payload: { orderId, station: parentStation, status: 'COMPLETED' }, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'STATION_UPDATED', payload: { orderId, station: parentStation, status: 'COMPLETED' }, timestamp: new Date() }));
 }
 
 // GET /orders/active-time - Get user's active (running) time entry
@@ -386,11 +428,16 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
     lightweight,
   } = filters;
 
-  const limitParam = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : undefined;
-  const pageSize =
-    Number.isFinite(limitParam) && (limitParam ?? 0) > 0
-      ? Math.min(limitParam as number, 500)
-      : filters.pageSize;
+  const { page: normalizedPage, pageSize: normalizedPageSize, search: normalizedSearch } =
+    normalizeListQuery({
+      page,
+      pageSize: filters.pageSize,
+      limit: req.query.limit,
+      search,
+      defaultPageSize: filters.pageSize,
+      maxPageSize: 500,
+    });
+  const pageSize = normalizedPageSize;
   const includeLineItems = req.query.includeLineItems === 'true';
   const includeLineItemCompletions = req.query.includeLineItemCompletions === 'true';
   const includeRevisionRequests = req.query.includeRevisionRequests === 'true';
@@ -455,8 +502,8 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
     }
   }
 
-  if (search) {
-    const searchWhere = buildTokenizedSearchWhere(search, [
+  if (normalizedSearch) {
+    const searchWhere = buildTokenizedSearchWhere(normalizedSearch, [
       'orderNumber',
       'customerName',
       'description',
@@ -547,15 +594,11 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
     const limit = Math.min(pageSize, 100);
     const cursor = filters.cursor;
     const cursorWhere = cursor ? { ...where, id: { lt: cursor } } : where;
-    const orderByArray = [
-      { [sortBy]: sortOrder },
-      { id: sortOrder },
-    ];
 
     const orders = await prisma.workOrder.findMany({
       where: cursorWhere,
       include: orderInclude as any,
-      orderBy: orderByArray as any,
+      orderBy: buildCursorOrderBy(sortBy, sortOrder) as any,
       take: limit + 1,
     });
 
@@ -580,8 +623,8 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
     prisma.workOrder.findMany({
       where,
       include: orderInclude as any,
-      orderBy: { [sortBy]: sortOrder } as any,
-      skip: (page - 1) * pageSize,
+      orderBy: buildListOrderBy(sortBy, sortOrder) as any,
+      skip: (normalizedPage - 1) * pageSize,
       take: pageSize,
     }),
     prisma.workOrder.count({ where }),
@@ -593,7 +636,7 @@ ordersRouter.get('/', async (req: AuthRequest, res: Response) => {
     data: {
       items: enrichedOrders,
       total,
-      page,
+      page: normalizedPage,
       pageSize,
       totalPages: Math.ceil(total / pageSize),
     },
@@ -642,19 +685,22 @@ ordersRouter.post('/bulk/status', async (req: AuthRequest, res: Response) => {
 
     for (const order of ordersToUpdate) {
       if (order.assignedToId && order.assignedToId !== userId) {
-        await createNotification({
-          userId: order.assignedToId,
-          type: 'ORDER_STATUS_CHANGED',
-          title: 'Order Status Changed',
-          message: `Order ${order.orderNumber} status changed to ${status}`,
-          relatedOrderId: order.id,
-        });
+        await createNotification(
+          buildOrderStatusChangedNotification({
+            userId: order.assignedToId,
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            toStatus: status,
+            title: 'Order Status Changed',
+            message: `Order ${order.orderNumber} status changed to ${status}`,
+          }),
+        );
       }
     }
   });
 
   for (const order of ordersToUpdate) {
-    broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
+    broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: order.id } }));
   }
 
   res.json({
@@ -714,18 +760,20 @@ ordersRouter.post('/bulk/assign', async (req: AuthRequest, res: Response) => {
     });
 
     if (assignedToId && assignedToId !== userId) {
-      await createNotification({
-        userId: assignedToId,
-        type: 'ORDER_ASSIGNED',
-        title: 'Orders Assigned to You',
-        message: `${ordersToUpdate.length} order(s) have been assigned to you`,
-        relatedOrderId: ordersToUpdate[0].id,
-      });
+      await createNotification(
+        buildOrderAssignedNotification({
+          userId: assignedToId,
+          orderId: ordersToUpdate[0].id,
+          orderNumber: ordersToUpdate[0].orderNumber,
+          title: 'Orders Assigned to You',
+          message: `${ordersToUpdate.length} order(s) have been assigned to you`,
+        }),
+      );
     }
   });
 
   for (const order of ordersToUpdate) {
-    broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
+    broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: order.id } }));
   }
 
   res.json({
@@ -777,7 +825,7 @@ ordersRouter.post('/bulk/priority', async (req: AuthRequest, res: Response) => {
   });
 
   for (const order of ordersToUpdate) {
-    broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
+    broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: order.id } }));
   }
 
   res.json({
@@ -829,7 +877,7 @@ ordersRouter.post('/bulk/cancel', async (req: AuthRequest, res: Response) => {
   });
 
   for (const order of ordersToCancel) {
-    broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
+    broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: order.id } }));
   }
 
   res.json({
@@ -906,7 +954,7 @@ ordersRouter.post('/bulk/station-status', async (req: AuthRequest, res: Response
   }
 
   for (const order of orders) {
-    broadcast({ type: 'STATION_UPDATED', payload: { orderId: order.id, station, status }, timestamp: new Date() });
+    broadcast(buildRouteBroadcastPayload({ type: 'STATION_UPDATED', payload: { orderId: order.id, station, status }, timestamp: new Date() }));
   }
 
   res.json({
@@ -1009,7 +1057,7 @@ ordersRouter.post('/bulk/multi-station-status', async (req: AuthRequest, res: Re
   }
 
   for (const { orderId, station, status } of allBroadcasts) {
-    broadcast({ type: 'STATION_UPDATED', payload: { orderId, station, status }, timestamp: new Date() });
+    broadcast(buildRouteBroadcastPayload({ type: 'STATION_UPDATED', payload: { orderId, station, status }, timestamp: new Date() }));
   }
 
   res.json({
@@ -1070,7 +1118,7 @@ ordersRouter.post('/bulk/claim', async (req: AuthRequest, res: Response) => {
   });
 
   for (const order of orders) {
-    broadcast({ type: 'STATION_UPDATED', payload: { orderId: order.id, station, status: 'IN_PROGRESS' }, timestamp: new Date() });
+    broadcast(buildRouteBroadcastPayload({ type: 'STATION_UPDATED', payload: { orderId: order.id, station, status: 'IN_PROGRESS' }, timestamp: new Date() }));
   }
 
   res.json({
@@ -1134,11 +1182,11 @@ ordersRouter.post('/auto-advance-installations', async (req: AuthRequest, res: R
   });
 
   for (const job of dueJobs) {
-    broadcast({
+    broadcast(buildRouteBroadcastPayload({
       type: 'STATION_UPDATED',
       payload: { orderId: job.workOrderId, station: 'INSTALLATION', status: 'IN_PROGRESS' },
       timestamp: now,
-    });
+    }));
   }
 
   res.json({
@@ -1336,18 +1384,17 @@ ordersRouter.post('/', async (req: AuthRequest, res: Response) => {
     console.error('Failed to create placeholder chain:', err);
   }
 
-  broadcast({ type: 'ORDER_CREATED', payload: order, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_CREATED', payload: order, timestamp: new Date() }));
 
-  logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: order.id,
-    entityName: order.orderNumber,
-    description: `Created order #${order.orderNumber} for ${order.customerName}`,
-    details: { customerName: order.customerName, priority: order.priority, lineItemCount: order.lineItems.length },
-    userId,
-    req,
-  });
+  logActivity(
+    buildWorkOrderRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      workOrder: order,
+      description: `Created order #${order.orderNumber} for ${order.customerName}`,
+      details: { customerName: order.customerName, priority: order.priority, lineItemCount: order.lineItems.length },
+      req,
+    }),
+  );
 
   notifyAdminsAndManagers({
     type: 'ORDER_CREATED',
@@ -1562,43 +1609,42 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     });
   }
 
-  broadcast({ type: 'ORDER_UPDATED', payload: order, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: order, timestamp: new Date() }));
 
   if (data.status && data.status !== existing.status) {
-    logActivity({
-      action: ActivityAction.STATUS_CHANGE,
-      entityType: EntityType.WORK_ORDER,
-      entityId: order.id,
-      entityName: order.orderNumber,
-      description: `Changed order #${order.orderNumber} status from ${existing.status} to ${data.status}`,
-      details: { fromStatus: existing.status, toStatus: data.status },
-      userId,
-      req,
-    });
+    logActivity(
+      buildWorkOrderRouteActivityPayload({
+        action: ActivityAction.STATUS_CHANGE,
+        workOrder: order,
+        description: `Changed order #${order.orderNumber} status from ${existing.status} to ${data.status}`,
+        details: { fromStatus: existing.status, toStatus: data.status },
+        req,
+      }),
+    );
   }
 
   if (data.assignedToId !== undefined && data.assignedToId !== existing.assignedToId) {
-    logActivity({
-      action: data.assignedToId ? ActivityAction.ASSIGN : ActivityAction.UNASSIGN,
-      entityType: EntityType.WORK_ORDER,
-      entityId: order.id,
-      entityName: order.orderNumber,
-      description: data.assignedToId ? `Assigned order #${order.orderNumber} to user` : `Unassigned order #${order.orderNumber}`,
-      details: { previousAssignee: existing.assignedToId, newAssignee: data.assignedToId },
-      userId,
-      req,
-    });
+    logActivity(
+      buildWorkOrderRouteActivityPayload({
+        action: data.assignedToId ? ActivityAction.ASSIGN : ActivityAction.UNASSIGN,
+        workOrder: order,
+        description: data.assignedToId ? `Assigned order #${order.orderNumber} to user` : `Unassigned order #${order.orderNumber}`,
+        details: { previousAssignee: existing.assignedToId, newAssignee: data.assignedToId },
+        req,
+      }),
+    );
   }
 
   if (data.status && data.status !== existing.status && order.assignedToId) {
-    createNotification({
-      userId: order.assignedToId,
-      type: 'ORDER_STATUS_CHANGED',
-      title: 'Order Status Updated',
-      message: `Order #${order.orderNumber} status changed to ${data.status}`,
-      link: `/orders/${order.id}`,
-      data: { orderId: order.id, fromStatus: existing.status, toStatus: data.status },
-    }).catch((err) => console.error('Failed to create notification:', err));
+    createNotification(
+      buildOrderStatusChangedNotification({
+        userId: order.assignedToId,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        fromStatus: existing.status,
+        toStatus: data.status,
+      }),
+    ).catch((err) => console.error('Failed to create notification:', err));
 
     const assignedUser = await prisma.user.findUnique({
       where: { id: order.assignedToId },
@@ -1622,14 +1668,13 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
   }
 
   if (data.assignedToId && data.assignedToId !== existing.assignedToId) {
-    createNotification({
-      userId: data.assignedToId,
-      type: 'ORDER_ASSIGNED',
-      title: 'Order Assigned to You',
-      message: `Order #${order.orderNumber} has been assigned to you`,
-      link: `/orders/${order.id}`,
-      data: { orderId: order.id, orderNumber: order.orderNumber },
-    }).catch((err) => console.error('Failed to create notification:', err));
+    createNotification(
+      buildOrderAssignedNotification({
+        userId: data.assignedToId,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+      }),
+    ).catch((err) => console.error('Failed to create notification:', err));
 
     const assignedUser = await prisma.user.findUnique({
       where: { id: data.assignedToId },
@@ -1647,54 +1692,13 @@ ordersRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     }
   }
 
-  if (data.status && data.status !== existing.status && order.customerId) {
-    const customer = await prisma.customer.findUnique({
-      where: { id: order.customerId },
-      select: { id: true, name: true, email: true },
+  if (data.status && data.status !== existing.status) {
+    await applyOrderStatusTransitionEffects({
+      order,
+      previousStatus: existing.status,
+      userId,
+      req,
     });
-    if (customer?.email) {
-      const orderContext = {
-        order: {
-          id: order.id,
-          orderNumber: order.orderNumber,
-          description: order.description,
-          status: order.status,
-          dueDate: order.dueDate,
-          customerName: order.customerName,
-        },
-        customer: {
-          id: customer.id,
-          name: customer.name,
-          email: customer.email,
-        },
-      };
-
-      triggerEmail(EmailTrigger.ORDER_STATUS_CHANGED, orderContext).catch((err) =>
-        console.error('Failed to trigger ORDER_STATUS_CHANGED email:', err),
-      );
-
-      if (data.status === 'COMPLETED') {
-        triggerEmail(EmailTrigger.ORDER_COMPLETED, orderContext).catch((err) =>
-          console.error('Failed to trigger ORDER_COMPLETED email:', err),
-        );
-      } else if (data.status === 'SHIPPED') {
-        triggerEmail(EmailTrigger.ORDER_SHIPPED, orderContext).catch((err) =>
-          console.error('Failed to trigger ORDER_SHIPPED email:', err),
-        );
-      }
-    }
-  }
-
-  if (data.status === 'SHIPPED') {
-    try {
-      await ensureShipmentRecordForWorkOrder(order, {
-        createdById: userId,
-        shipDate: new Date(),
-        notes: `Auto-created from SHIPPED order ${order.orderNumber}`,
-      });
-    } catch (err) {
-      console.warn(`Failed to auto-create shipment record for order ${order.orderNumber}:`, err);
-    }
   }
 
   res.json({ success: true, data: order });
@@ -1744,11 +1748,11 @@ ordersRouter.post('/:id/installation-notes', async (req: AuthRequest, res: Respo
     },
   });
 
-  broadcast({
+  broadcast(buildRouteBroadcastPayload({
     type: 'ORDER_UPDATED',
     payload: { orderId: req.params.id },
     timestamp: new Date(),
-  });
+  }));
 
   res.json({ success: true, data: updatedOrder });
 });
@@ -1756,7 +1760,7 @@ ordersRouter.post('/:id/installation-notes', async (req: AuthRequest, res: Respo
 // DELETE /orders/:id
 ordersRouter.delete('/:id', async (req: AuthRequest, res: Response) => {
   await prisma.workOrder.delete({ where: { id: req.params.id } });
-  broadcast({ type: 'ORDER_DELETED', payload: { id: req.params.id }, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_DELETED', payload: { id: req.params.id }, timestamp: new Date() }));
   res.json({ success: true, message: 'Order deleted' });
 });
 
@@ -1834,25 +1838,24 @@ ordersRouter.post('/:id/routing', async (req: AuthRequest, res: Response) => {
     return { order, routingOutcome };
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: result.order.id,
-    entityName: result.order.orderNumber,
-    description: `Routing updated and recommendation ${result.routingOutcome.wasAccepted ? 'accepted' : 'rejected'}`,
-    details: {
-      routing,
-      predictionId: result.routingOutcome.prediction.id,
-      decisionId: result.routingOutcome.decision.id,
-      wasAccepted: result.routingOutcome.wasAccepted,
-      recommendedRoute: result.routingOutcome.recommendation.suggestion.suggestedRoute,
-      actualRoute: routing,
-    },
-    userId,
-    req,
-  });
+  await logActivity(
+    buildWorkOrderRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      workOrder: result.order,
+      description: `Routing updated and recommendation ${result.routingOutcome.wasAccepted ? 'accepted' : 'rejected'}`,
+      details: {
+        routing,
+        predictionId: result.routingOutcome.prediction.id,
+        decisionId: result.routingOutcome.decision.id,
+        wasAccepted: result.routingOutcome.wasAccepted,
+        recommendedRoute: result.routingOutcome.recommendation.suggestion.suggestedRoute,
+        actualRoute: routing,
+      },
+      req,
+    }),
+  );
 
-  broadcast({ type: 'ORDER_UPDATED', payload: result.order, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: result.order, timestamp: new Date() }));
   res.json({ success: true, data: result.order });
 });
 
@@ -1863,33 +1866,16 @@ ordersRouter.post('/:id/stations/:station/start', async (req: AuthRequest, res: 
   const station = req.params.station;
   const startedAt = new Date();
 
-  const progress = await prisma.stationProgress.upsert({
-    where: { orderId_station: { orderId, station: station as never } },
-    update: {
-      status: 'IN_PROGRESS',
-      startedAt,
-      completedAt: null,
-      completedById: null,
-    },
-    create: {
-      orderId,
-      station: station as never,
-      status: 'IN_PROGRESS',
-      startedAt,
-    },
+  const progress = await saveStationProgressTransition({
+    orderId,
+    station: station as PrintingMethod,
+    userId,
+    status: 'IN_PROGRESS',
+    description: `Station ${station} started`,
+    eventType: 'STATION_STATUS_CHANGED',
+    mode: 'upsert',
+    startedAt,
   });
-
-  await prisma.workEvent.create({
-    data: {
-      orderId,
-      eventType: 'STATION_STATUS_CHANGED',
-      description: `Station ${station} started`,
-      userId,
-      details: { station, status: 'IN_PROGRESS' },
-    },
-  });
-
-  broadcast({ type: 'STATION_UPDATED', payload: { orderId, station, status: 'IN_PROGRESS' }, timestamp: startedAt });
   res.json({ success: true, data: progress });
 });
 
@@ -1898,28 +1884,19 @@ ordersRouter.post('/:id/stations/:station/complete', async (req: AuthRequest, re
   const userId = req.userId!;
   const station = req.params.station;
 
-  const progress = await prisma.stationProgress.update({
-    where: { orderId_station: { orderId: req.params.id, station: station as never } },
-    data: {
-      status: 'COMPLETED',
-      completedAt: new Date(),
-      completedById: userId,
-    },
-  });
-
-  await prisma.workEvent.create({
-    data: {
-      orderId: req.params.id,
-      eventType: 'STATION_COMPLETED',
-      description: `Station ${station} completed`,
-      userId,
-      details: { station },
-    },
+  const progress = await saveStationProgressTransition({
+    orderId: req.params.id,
+    station: station as PrintingMethod,
+    userId,
+    status: 'COMPLETED',
+    description: `Station ${station} completed`,
+    eventType: 'STATION_COMPLETED',
+    mode: 'update',
+    completedAt: new Date(),
   });
 
   await deductMaterialsOnStationCompleteIfNeeded(req.params.id, station, userId);
 
-  broadcast({ type: 'STATION_UPDATED', payload: { orderId: req.params.id, station, status: 'COMPLETED' }, timestamp: new Date() });
   const designOnlyCompleted = isDesignCompletionStation(station)
     ? await completeDesignOnlyOrderIfNeeded(req.params.id, userId)
     : false;
@@ -1954,7 +1931,7 @@ ordersRouter.post('/:id/stations/:station/complete', async (req: AuthRequest, re
               details: { station: parentStation, autoCompleted: true },
             },
           });
-          broadcast({ type: 'STATION_UPDATED', payload: { orderId: req.params.id, station: parentStation, status: 'COMPLETED' }, timestamp: new Date() });
+          broadcast(buildRouteBroadcastPayload({ type: 'STATION_UPDATED', payload: { orderId: req.params.id, station: parentStation, status: 'COMPLETED' }, timestamp: new Date() }));
         }
       }
     }
@@ -1983,26 +1960,15 @@ ordersRouter.post('/:id/stations/:station/uncomplete', async (req: AuthRequest, 
   const userId = req.userId!;
   const station = req.params.station;
 
-  const progress = await prisma.stationProgress.update({
-    where: { orderId_station: { orderId: req.params.id, station: station as never } },
-    data: {
-      status: 'NOT_STARTED',
-      completedAt: null,
-      completedById: null,
-    },
+  const progress = await saveStationProgressTransition({
+    orderId: req.params.id,
+    station: station as PrintingMethod,
+    userId,
+    status: 'NOT_STARTED',
+    description: `Station ${station} marked incomplete`,
+    eventType: 'STATION_UNCOMPLETED',
+    mode: 'update',
   });
-
-  await prisma.workEvent.create({
-    data: {
-      orderId: req.params.id,
-      eventType: 'STATION_UNCOMPLETED',
-      description: `Station ${station} marked incomplete`,
-      userId,
-      details: { station },
-    },
-  });
-
-  broadcast({ type: 'STATION_UPDATED', payload: { orderId: req.params.id, station, status: 'NOT_STARTED' }, timestamp: new Date() });
   res.json({ success: true, data: progress });
 });
 
@@ -2041,132 +2007,28 @@ ordersRouter.post('/:id/complete', async (req: AuthRequest, res: Response) => {
     estimatedShipDate = parsedDate;
   }
 
-  const order = await prisma.workOrder.findUnique({
-    where: { id: orderId },
-    include: { stationProgress: true },
+  const result = await applyOrderCompletionMutation({
+    orderId,
+    userId,
+    requestedByName: req.user?.displayName ?? null,
+    requestValidation,
+    estimatedShipDate,
+    notes,
   });
-  if (!order) throw NotFoundError('Order not found');
-  if (order.status === 'COMPLETED' || order.status === 'CANCELLED') {
-    throw BadRequestError(`Order is already ${order.status.toLowerCase()}`);
-  }
 
-  if (requestValidation) {
-    await prisma.workEvent.create({
-      data: {
-        orderId,
-        eventType: 'NOTE_ADDED',
-        description: 'Order completion validation requested',
-        userId,
-        details: {
-          requestedById: userId,
-          requestedByName: req.user?.displayName ?? null,
-          estimatedShipDate: estimatedShipDate?.toISOString() ?? null,
-          notes: notes ?? null,
-        },
-      },
-    });
-
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.WORK_ORDER,
-      entityId: orderId,
-      userId,
-      description: `Completion validation requested for order ${order.orderNumber}`,
-      details: {
-        estimatedShipDate: estimatedShipDate?.toISOString() ?? null,
-        notes: notes ?? null,
-      },
-    });
-
-    await notifyAdminsAndManagers({
-      type: 'ORDER_COMPLETION_VALIDATION_REQUESTED',
-      title: 'Order Completion Validation Requested',
-      message: `${req.user?.displayName ?? 'A user'} requested completion validation for order ${order.orderNumber}.`,
-      relatedOrderId: orderId,
-      data: {
-        orderId,
-        orderNumber: order.orderNumber,
-        requestedById: userId,
-        requestedByName: req.user?.displayName ?? null,
-        estimatedShipDate: estimatedShipDate?.toISOString() ?? null,
-        notes: notes ?? null,
-      },
-    });
-
-    broadcast({
-      type: 'ORDER_UPDATED',
-      payload: { orderId, validationRequested: true },
-      timestamp: new Date(),
-    });
-
+  if (result.validationRequested) {
     return res.json({
       success: true,
       data: {
-        orderId,
-        orderNumber: order.orderNumber,
+        orderId: result.orderId,
+        orderNumber: result.orderNumber,
         validationRequested: true,
-        estimatedShipDate: estimatedShipDate?.toISOString() ?? null,
+        estimatedShipDate: result.estimatedShipDate,
       },
     });
   }
 
-  // Mark all station progress as COMPLETED
-  await prisma.stationProgress.updateMany({
-    where: { orderId, status: { not: 'COMPLETED' } },
-    data: { status: 'COMPLETED', completedAt: new Date(), completedById: userId },
-  });
-
-  // Update order status
-  const updated = await prisma.workOrder.update({
-    where: { id: orderId },
-    data: { status: 'COMPLETED' },
-    include: {
-      stationProgress: true,
-      lineItems: true,
-      createdBy: { select: { id: true, displayName: true } },
-      assignedTo: { select: { id: true, displayName: true } },
-    },
-  });
-
-  // Create work event
-  await prisma.workEvent.create({
-    data: {
-      orderId,
-      eventType: 'STATUS_CHANGED',
-      description: 'Order marked complete',
-      userId,
-      details: { previousStatus: order.status, newStatus: 'COMPLETED' },
-    },
-  });
-
-  // Log activity
-  await logActivity({
-    action: ActivityAction.STATUS_CHANGE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: orderId,
-    userId,
-    description: `Order ${order.orderNumber} marked complete`,
-    details: { previousStatus: order.status, newStatus: 'COMPLETED' },
-  });
-
-  // Trigger email automation
-  try {
-    await triggerEmail(EmailTrigger.ORDER_COMPLETED, {
-      order: {
-        id: orderId,
-        orderNumber: order.orderNumber,
-        description: order.description || '',
-        status: 'COMPLETED',
-        dueDate: order.dueDate,
-        customerName: order.customerName,
-      },
-    });
-  } catch (err) {
-    console.warn('Email trigger warning:', err);
-  }
-
-  broadcast({ type: 'ORDER_UPDATED', payload: updated, timestamp: new Date() });
-  res.json({ success: true, data: updated });
+  res.json({ success: true, data: result.updatedOrder });
 });
 
 // POST /orders/:id/time - Log time
@@ -2394,7 +2256,7 @@ ordersRouter.post('/:id/attachments', async (req: AuthRequest, res: Response) =>
     },
   });
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { orderId: req.params.id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: req.params.id } }));
 
   res.status(201).json({ success: true, data: attachment });
 });
@@ -2423,7 +2285,7 @@ ordersRouter.delete('/:id/attachments/:attachmentId', async (req: AuthRequest, r
     },
   });
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { orderId: req.params.id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: req.params.id } }));
 
   res.json({ success: true, message: 'Attachment deleted' });
 });
@@ -2541,15 +2403,14 @@ ordersRouter.post('/:id/link', async (req: AuthRequest, res: Response) => {
   });
 
   // Log the linking activity
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: order.id,
-    entityName: order.orderNumber,
-    description: `Linked temp order ${order.orderNumber} to QuickBooks order ${qbOrderNumber}${syncedLineItems > 0 ? ` (synced ${syncedLineItems} line items)` : ''}`,
-    userId,
-    req,
-  });
+  await logActivity(
+    buildWorkOrderRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      workOrder: order,
+      description: `Linked temp order ${order.orderNumber} to QuickBooks order ${qbOrderNumber}${syncedLineItems > 0 ? ` (synced ${syncedLineItems} line items)` : ''}`,
+      req,
+    }),
+  );
 
   // Log event
   await prisma.workEvent.create({
@@ -2561,7 +2422,7 @@ ordersRouter.post('/:id/link', async (req: AuthRequest, res: Response) => {
     },
   });
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { orderId: req.params.id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: req.params.id } }));
 
   res.json({ 
     success: true, 
@@ -2622,17 +2483,16 @@ ordersRouter.post('/:id/sync-line-items', async (req: AuthRequest, res: Response
 
   await prisma.lineItem.createMany({ data: lineItemData });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: order.id,
-    entityName: order.orderNumber,
-    description: `Re-synced ${lineItemData.length} line items from QuickBooks order ${order.quickbooksOrderNum}`,
-    userId,
-    req,
-  });
+  await logActivity(
+    buildWorkOrderRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      workOrder: order,
+      description: `Re-synced ${lineItemData.length} line items from QuickBooks order ${order.quickbooksOrderNum}`,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { orderId: order.id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: order.id } }));
 
   res.json({
     success: true,
@@ -2676,17 +2536,16 @@ ordersRouter.post('/:id/unlink', async (req: AuthRequest, res: Response) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: order.id,
-    entityName: order.orderNumber,
-    description: `Unlinked order from QuickBooks order ${previousQBNum}`,
-    userId,
-    req,
-  });
+  await logActivity(
+    buildWorkOrderRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      workOrder: order,
+      description: `Unlinked order from QuickBooks order ${previousQBNum}`,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { orderId: req.params.id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderId: req.params.id } }));
 
   res.json({ success: true, data: updatedOrder });
 });
@@ -2758,10 +2617,10 @@ ordersRouter.put('/revision-requests/:revisionId/resolve', async (req: AuthReque
       data: { status: 'COMPLETED', completedAt: new Date(), completedById: userId },
     });
     await completeDesignOnlyOrderIfNeeded(revision.orderId, userId);
-    broadcast({ type: 'STATION_UPDATED', payload: { orderId: revision.orderId, station: 'DESIGN', status: 'COMPLETED' }, timestamp: new Date() });
+    broadcast(buildRouteBroadcastPayload({ type: 'STATION_UPDATED', payload: { orderId: revision.orderId, station: 'DESIGN', status: 'COMPLETED' }, timestamp: new Date() }));
   }
 
-  broadcast({ type: 'REVISION_RESOLVED', payload: { orderId: revision.orderId, revision }, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'REVISION_RESOLVED', payload: { orderId: revision.orderId, revision }, timestamp: new Date() }));
   res.json({ success: true, data: revision });
 });
 
@@ -2817,11 +2676,16 @@ ordersRouter.post('/:id/proof-status', async (req: AuthRequest, res: Response) =
       create: { orderId: id, station: 'DESIGN', status: 'IN_PROGRESS', startedAt: new Date() },
     });
 
-    broadcast({
+    broadcast(buildRouteBroadcastPayload({
       type: 'PROOF_STATUS_CHANGED',
-      payload: { orderId: id, orderNumber: order.orderNumber, status: 'SENT', revision: nextRevision },
+      payload: buildProofStatusChangedPayload({
+        orderId: id,
+        orderNumber: order.orderNumber,
+        status: 'SENT',
+        revision: nextRevision,
+      }),
       timestamp: new Date(),
-    });
+    }));
 
     return res.json({ success: true, data: proof });
   }
@@ -2852,11 +2716,15 @@ ordersRouter.post('/:id/proof-status', async (req: AuthRequest, res: Response) =
       },
     });
 
-    broadcast({
+    broadcast(buildRouteBroadcastPayload({
       type: 'PROOF_STATUS_CHANGED',
-      payload: { orderId: id, orderNumber: order.orderNumber, status: 'APPROVED' },
+      payload: buildProofStatusChangedPayload({
+        orderId: id,
+        orderNumber: order.orderNumber,
+        status: 'APPROVED',
+      }),
       timestamp: new Date(),
-    });
+    }));
 
     return res.json({ success: true, data: { status: 'APPROVED' } });
   }
@@ -2870,11 +2738,11 @@ ordersRouter.post('/:id/proof-status', async (req: AuthRequest, res: Response) =
     });
     const designOnlyCompleted = await completeDesignOnlyOrderIfNeeded(id, userId);
 
-    broadcast({
+    broadcast(buildRouteBroadcastPayload({
       type: 'STATION_COMPLETED',
       payload: { orderId: id, orderNumber: order.orderNumber, station: 'DESIGN' },
       timestamp: new Date(),
-    });
+    }));
 
     return res.json({ success: true, data: { status: 'COMPLETED', designOnly: designOnlyCompleted } });
   }
@@ -2934,11 +2802,11 @@ ordersRouter.post('/:id/line-items/:lineItemId/station-complete', async (req: Au
       create: { orderId: id, station, status: 'COMPLETED', completedAt: new Date(), completedById: userId },
     });
 
-    broadcast({
+    broadcast(buildRouteBroadcastPayload({
       type: 'STATION_COMPLETED',
       payload: { orderId: id, station, autoCompleted: true },
       timestamp: new Date(),
-    });
+    }));
   }
 
   res.json({ success: true, data: { completion, allCompleted } });
@@ -3014,15 +2882,15 @@ ordersRouter.post('/:id/shipping-qc', async (req: AuthRequest, res: Response) =>
   const allPassed = Array.isArray(checks) && checks.every((c: any) => c.passed);
 
   // Store as activity log with details (lightweight approach — no QC checklist model needed)
-  await logActivity({
-    action: 'QC_CHECK',
-    entityType: EntityType.WORK_ORDER,
-    entityId: id,
-    entityName: order.orderNumber,
-    description: allPassed ? 'Shipping QC passed' : 'Shipping QC incomplete',
-    details: { checks, allPassed },
-    userId,
-  });
+  await logActivity(
+    buildWorkOrderRouteActivityPayload({
+      action: 'QC_CHECK',
+      workOrder: { id, orderNumber: order.orderNumber },
+      description: allPassed ? 'Shipping QC passed' : 'Shipping QC incomplete',
+      details: { checks, allPassed },
+      req,
+    }),
+  );
 
   await prisma.workEvent.create({
     data: {
@@ -3038,7 +2906,7 @@ ordersRouter.post('/:id/shipping-qc', async (req: AuthRequest, res: Response) =>
     },
   });
 
-  broadcast({
+  broadcast(buildRouteBroadcastPayload({
     type: 'STATION_COMPLETED',
     payload: {
       orderId: id,
@@ -3047,7 +2915,7 @@ ordersRouter.post('/:id/shipping-qc', async (req: AuthRequest, res: Response) =>
       allPassed,
     },
     timestamp: new Date(),
-  });
+  }));
 
   res.json({ success: true, data: { allPassed, checks } });
 });
@@ -3125,28 +2993,37 @@ ordersRouter.post('/batch/fix-printing-routing', async (req: AuthRequest, res: R
       }
 
       // Log activity
-      await logActivity({
-        action: 'ROUTING_FIXED',
-        entityType: EntityType.WORK_ORDER,
-        entityId: order.id,
-        entityName: order.orderNumber,
-        description: `Added missing printing stations (${newRouting.join(', ')})`,
-        userId,
-      });
+      await logActivity(
+        buildWorkOrderRouteActivityPayload({
+          action: 'ROUTING_FIXED',
+          workOrder: order,
+          description: `Added missing printing stations (${newRouting.join(', ')})`,
+          req,
+        }),
+      );
 
       return { orderId: order.id, orderNumber: order.orderNumber, newRouting };
     })
   );
 
   // Broadcast update
-  broadcast({
+  broadcast(buildRouteBroadcastPayload({
     type: 'ORDERS_UPDATED',
     payload: updated.map((u) => ({ id: u.orderId, routing: u.newRouting })),
     timestamp: new Date(),
-  });
+  }));
 
   res.json({ success: true, data: { fixed: updated.length, orders: updated } });
 });
+
+// POST /orders/:id/repair-linked-data - Repair routing, file chains, and shipment scaffolding for one order
+ordersRouter.post(
+  '/:id/repair-linked-data',
+  requireRole(UserRole.ADMIN, UserRole.MANAGER),
+  async (req: AuthRequest, res: Response) => {
+    await handleLinkedDataRepairRequest(req, res, [req.params.id]);
+  },
+);
 
 // POST /orders/batch/repair-linked-data - Repair routing, file chains, and shipment scaffolding
 ordersRouter.post(
@@ -3154,32 +3031,6 @@ ordersRouter.post(
   requireRole(UserRole.ADMIN, UserRole.MANAGER),
   async (req: AuthRequest, res: Response) => {
     const { orderIds } = req.body ?? {};
-
-    if (orderIds !== undefined && (!Array.isArray(orderIds) || orderIds.some((id) => typeof id !== 'string'))) {
-      throw BadRequestError('orderIds must be an array of order id strings');
-    }
-
-    const result = await repairOrderLinkedDataIntegrity({
-      orderIds,
-      actorUserId: req.userId!,
-    });
-
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.WORK_ORDER,
-      entityId: 'system',
-      description: `Linked data repair scanned ${result.scanned} order(s), updated ${result.routingUpdated} routing record(s), backfilled ${result.stationProgressBackfilled} station progress row(s), created ${result.fileChainsCreated} file chain placeholder(s), and created ${result.shipmentsCreated} shipment placeholder(s)`,
-      userId: req.userId!,
-      req,
-      details: {
-        scanned: result.scanned,
-        routingUpdated: result.routingUpdated,
-        stationProgressBackfilled: result.stationProgressBackfilled,
-        fileChainsCreated: result.fileChainsCreated,
-        shipmentsCreated: result.shipmentsCreated,
-      },
-    });
-
-    res.json({ success: true, data: result });
+    await handleLinkedDataRepairRequest(req, res, orderIds);
   },
 );

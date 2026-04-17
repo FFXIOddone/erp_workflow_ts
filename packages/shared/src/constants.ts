@@ -41,6 +41,10 @@ export const STATION_DISPLAY_NAMES: Record<string, string> = {
   COMPLETE_DESIGN_ONLY: 'Complete - Design Only',
 };
 
+export function getStationDisplayName(station: string): string {
+  return STATION_DISPLAY_NAMES[station] || station.replace(/_/g, ' ');
+}
+
 /** Maps sub-stations to their parent station */
 export const SUB_STATION_PARENTS: Record<string, string> = {
   // Design

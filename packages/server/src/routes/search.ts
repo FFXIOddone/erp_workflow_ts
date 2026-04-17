@@ -17,6 +17,7 @@ import { AuthRequest, authenticate } from '../middleware/auth.js';
 import { prisma } from '../db/client.js';
 import { BadRequestError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 export const searchRouter = Router();
@@ -517,14 +518,17 @@ searchRouter.get('/', async (req: AuthRequest, res: Response) => {
   const took = Date.now() - startTime;
 
   // Log search activity
-  await logActivity({
-    action: ActivityAction.VIEW,
-    entityType: EntityType.OTHER,
-    entityId: 'global-search',
-    description: `Search: "${q}" (${totalCount} results in ${took}ms)`,
-    userId: req.userId!,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.VIEW,
+      entityType: EntityType.OTHER,
+      entityId: 'global-search',
+      entityName: 'Global Search',
+      description: `Search: "${q}" (${totalCount} results in ${took}ms)`,
+      userId: req.userId!,
+      req,
+    }),
+  );
 
   const response: SearchResponse = {
     query: q,

@@ -195,7 +195,7 @@ export function ShippingPanel({ workOrderId, orderNumber }: ShippingPanelProps) 
         </div>
       ) : shipments?.length === 0 ? (
         <p className="text-sm text-gray-500 text-center py-4">
-          No shipments linked to this order yet
+          No shipment records are linked yet.
         </p>
       ) : (
         <div className="space-y-3">

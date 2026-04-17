@@ -12,6 +12,7 @@ import { applyRoutingDefaults, buildInitialStationProgress } from '../lib/routin
 import { ensureOrderFolder } from '../lib/folder-utils.js';
 import { broadcast } from '../ws/server.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { WorkOrderReferenceSelect } from '../lib/dto-selects.js';
 
 // Track last poll time in memory (also persisted in QBPollLog)
 let lastPollTime: Date | null = null;
@@ -312,7 +313,7 @@ async function processQBOrder(params: ProcessQBOrderParams): Promise<boolean> {
         })),
       } : undefined,
     },
-    select: { id: true, orderNumber: true, customerName: true },
+    select: WorkOrderReferenceSelect,
   });
 
   // Create network folder (non-blocking)

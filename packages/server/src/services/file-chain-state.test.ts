@@ -40,6 +40,7 @@ describe('file chain state normalization', () => {
     const state = deriveFileChainLinkState({
       status: 'PRINTING',
       printStartedAt: '2026-04-06T11:00:00.000Z',
+      printFileName: 'file.pdf',
       ripJob: {
         status: 'PRINTING',
         rippedAt: '2026-04-06T10:45:00.000Z',
@@ -52,8 +53,29 @@ describe('file chain state normalization', () => {
       ripStatus: 'COMPLETED',
       printStatus: 'IN_PROGRESS',
       cutStatus: 'PENDING',
+      hasPrintFile: true,
+      hasCutFile: false,
       rippedAt: '2026-04-06T10:45:00.000Z',
       printedAt: '2026-04-06T11:00:00.000Z',
+    });
+  });
+
+  it('keeps cut-only zcc links out of the RIP and print stages', () => {
+    const state = deriveFileChainLinkState({
+      status: 'CUT_PENDING',
+      printFileName: 'job.zcc',
+      cutFileName: 'job.zcc',
+      cutStartedAt: null,
+      cutCompletedAt: null,
+    });
+
+    expect(state).toMatchObject({
+      effectiveStatus: 'CUT_PENDING',
+      ripStatus: 'PENDING',
+      printStatus: 'PENDING',
+      cutStatus: 'PENDING',
+      hasPrintFile: false,
+      hasCutFile: true,
     });
   });
 
@@ -83,6 +105,30 @@ describe('file chain state normalization', () => {
       printComplete: 1,
       cutComplete: 1,
       chainStatus: 'RIPPING',
+    });
+  });
+
+  it('counts print completion only for printable files and cut completion only for cut files', () => {
+    const summary = summarizeFileChainLinks([
+      {
+        status: 'PRINTED',
+        printFileName: 'alpha.pdf',
+        cutFileName: 'alpha.zcc',
+        printCompletedAt: '2026-04-06T10:00:00.000Z',
+        cutStartedAt: '2026-04-06T10:05:00.000Z',
+        cutCompletedAt: '2026-04-06T10:08:00.000Z',
+      },
+      {
+        status: 'CUT_PENDING',
+        printFileName: 'beta.zcc',
+        cutFileName: 'beta.zcc',
+      },
+    ]);
+
+    expect(summary).toMatchObject({
+      printComplete: 1,
+      cutComplete: 1,
+      chainStatus: 'CUT_PENDING',
     });
   });
 

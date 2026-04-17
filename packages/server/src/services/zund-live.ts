@@ -26,6 +26,7 @@ import {
 } from './zund-stats.js';
 import { normalizeJobName, extractIdentifiers, extractCutId } from './zund-match.js';
 import { prisma } from '../db/client.js';
+import { buildWorkOrderNumberWhere, WORK_ORDER_REFERENCE_SELECT } from '../lib/work-order-reference.js';
 import { TtlCache } from '../lib/ttl-cache.js';
 
 // Cache Zund live data and queue scans to avoid redundant network I/O
@@ -278,6 +279,48 @@ export interface ZundQueueFile {
   status: ZundLiveJobStatus;
   zccData: ZccParsed;
   busyInfo: BusyInfo | null;
+}
+
+export interface ZundQueueSnapshot {
+  files: ZundQueueFile[];
+  scannedLimit: number;
+  fileNames: Set<string>;
+  normalizedNames: Set<string>;
+  cutIds: Set<string>;
+}
+
+export function buildZundQueueSnapshot(files: ZundQueueFile[], scannedLimit: number): ZundQueueSnapshot {
+  const fileNames = new Set<string>();
+  const normalizedNames = new Set<string>();
+  const cutIds = new Set<string>();
+
+  for (const file of files) {
+    fileNames.add(file.fileName);
+
+    const jobName = file.zccData.jobName || file.fileName.replace(/\.zcc$/i, '');
+    const normalizedName = normalizeJobName(jobName);
+    if (normalizedName) {
+      normalizedNames.add(normalizedName);
+    }
+
+    const cutId = extractCutId(jobName) || extractCutId(file.fileName);
+    if (cutId) {
+      cutIds.add(cutId.toLowerCase());
+    }
+  }
+
+  return {
+    files,
+    scannedLimit,
+    fileNames,
+    normalizedNames,
+    cutIds,
+  };
+}
+
+export async function getZundQueueSnapshot(limit = 200): Promise<ZundQueueSnapshot> {
+  const files = await scanZundQueueFiles(limit);
+  return buildZundQueueSnapshot(files, limit);
 }
 
 async function isQueueFolderAccessible(folderPath: string, label: string): Promise<boolean> {
@@ -536,24 +579,9 @@ const woCache = new Map<string, { id: string; orderNumber: string; customerName:
 async function findWorkOrder(orderNumber: string): Promise<{ id: string; orderNumber: string; customerName: string } | null> {
   if (woCache.has(orderNumber)) return woCache.get(orderNumber)!;
 
-  const where: any = {};
-  if (orderNumber.length === 4) {
-    where.OR = [
-      { orderNumber },
-      { orderNumber: `WO${orderNumber}` },
-      { orderNumber: { endsWith: orderNumber } },
-    ];
-  } else {
-    where.OR = [
-      { orderNumber },
-      { orderNumber: `WO${orderNumber}` },
-      { orderNumber: { contains: orderNumber } },
-    ];
-  }
-
   const found = await prisma.workOrder.findFirst({
-    where,
-    select: { id: true, orderNumber: true, customerName: true },
+    where: buildWorkOrderNumberWhere(orderNumber),
+    select: WORK_ORDER_REFERENCE_SELECT,
     orderBy: { createdAt: 'desc' },
   });
 
@@ -733,7 +761,7 @@ async function fetchZundLiveData(
     statsOnly ? Promise.resolve(emptyResult) : withTimeout((async (): Promise<SourceResult> => {
       const srcJobs: ZundLiveJob[] = [];
       const srcNames = new Map<string, true>();
-      const queueFiles = await scanZundQueueFiles(zccLimit * 2);
+      const queueFiles = (await getZundQueueSnapshot(zccLimit * 2)).files;
       for (const qf of queueFiles) {
         const jobName = qf.zccData.jobName || qf.fileName.replace(/\.zcc$/i, '');
         const normalized = normalizeJobName(jobName);

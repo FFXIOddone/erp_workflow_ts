@@ -4,7 +4,9 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import {
   CreateMaterialUsageSchema,
   UpdateMaterialUsageSchema,
@@ -298,24 +300,26 @@ router.post('/', async (req: AuthRequest, res) => {
   // Update job cost
   await updateJobCost(data.workOrderId);
 
-  await logActivity({
-    action: ActivityAction.RECORD_MATERIAL,
-    entityType: EntityType.MATERIAL_USAGE,
-    entityId: material.id,
-    entityName: `${item.sku} - ${item.name}`,
-    description: `Recorded ${data.quantity} ${data.unit} of ${item.name} for order ${workOrder.orderNumber}`,
-    details: {
-      quantity: data.quantity,
-      unit: data.unit,
-      totalCost,
-    },
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.RECORD_MATERIAL,
+      entityType: EntityType.MATERIAL_USAGE,
+      entityId: material.id,
+      entityName: `${item.sku} - ${item.name}`,
+      description: `Recorded ${data.quantity} ${data.unit} of ${item.name} for order ${workOrder.orderNumber}`,
+      details: {
+        quantity: data.quantity,
+        unit: data.unit,
+        totalCost,
+      },
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
   const serializedMaterial = serializeMaterialUsage(material as unknown as MaterialUsageResponse);
 
-  broadcast({ type: 'MATERIAL_RECORDED', payload: serializedMaterial });
+  broadcast(buildRouteBroadcastPayload({ type: 'MATERIAL_RECORDED', payload: serializedMaterial }));
 
   res.status(201).json({ success: true, data: serializedMaterial });
 });
@@ -368,19 +372,22 @@ router.put('/:id', async (req: AuthRequest, res) => {
   // Update job cost
   await updateJobCost(existing.workOrderId);
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.MATERIAL_USAGE,
-    entityId: material.id,
-    description: `Updated material usage for order ${existing.workOrder.orderNumber}`,
-    details: data,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.MATERIAL_USAGE,
+      entityId: material.id,
+      entityName: material.itemMaster?.name ?? existing.workOrder.orderNumber,
+      description: `Updated material usage for order ${existing.workOrder.orderNumber}`,
+      details: data,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
   const serializedMaterial = serializeMaterialUsage(material as unknown as MaterialUsageResponse);
 
-  broadcast({ type: 'MATERIAL_UPDATED', payload: serializedMaterial });
+  broadcast(buildRouteBroadcastPayload({ type: 'MATERIAL_UPDATED', payload: serializedMaterial }));
 
   res.json({ success: true, data: serializedMaterial });
 });
@@ -406,16 +413,19 @@ router.delete('/:id', async (req: AuthRequest, res) => {
   // Update job cost
   await updateJobCost(existing.workOrderId);
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.MATERIAL_USAGE,
-    entityId: id,
-    description: `Deleted material usage (${existing.itemMaster.name}) from order ${existing.workOrder.orderNumber}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      entityType: EntityType.MATERIAL_USAGE,
+      entityId: id,
+      entityName: existing.itemMaster.name,
+      description: `Deleted material usage (${existing.itemMaster.name}) from order ${existing.workOrder.orderNumber}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'MATERIAL_DELETED', payload: { id, workOrderId: existing.workOrderId } });
+  broadcast(buildRouteBroadcastPayload({ type: 'MATERIAL_DELETED', payload: { id, workOrderId: existing.workOrderId } }));
 
   res.json({ success: true, message: 'Material usage record deleted' });
 });
@@ -558,17 +568,20 @@ router.post('/order/:workOrderId/from-bom', async (req: AuthRequest, res) => {
   // Update job cost
   await updateJobCost(workOrderId);
 
-  await logActivity({
-    action: ActivityAction.RECORD_MATERIAL,
-    entityType: EntityType.MATERIAL_USAGE,
-    entityName: workOrder.orderNumber,
-    description: `Added ${serializedMaterials.length} materials from BOM for order ${workOrder.orderNumber}`,
-    details: { bomCount: boms.length, multiplier },
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.RECORD_MATERIAL,
+      entityType: EntityType.MATERIAL_USAGE,
+      entityId: workOrderId,
+      entityName: workOrder.orderNumber,
+      description: `Added ${serializedMaterials.length} materials from BOM for order ${workOrder.orderNumber}`,
+      details: { bomCount: boms.length, multiplier },
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'MATERIALS_BULK_ADDED', payload: { workOrderId, count: serializedMaterials.length } });
+  broadcast(buildRouteBroadcastPayload({ type: 'MATERIALS_BULK_ADDED', payload: { workOrderId, count: serializedMaterials.length } }));
 
   res.status(201).json({ 
     success: true, 
@@ -636,18 +649,20 @@ router.post('/order/:workOrderId/apply-bom-suggestions', async (req: AuthRequest
   await createBOMFromSuggestions(workOrderId, normalizedMaterials, req.userId!);
   await updateJobCost(workOrderId);
 
-  await logActivity({
-    action: ActivityAction.RECORD_MATERIAL,
-    entityType: EntityType.MATERIAL_USAGE,
-    entityId: workOrderId,
-    entityName: workOrder.orderNumber,
-    description: `Applied ${normalizedMaterials.length} BOM suggestions to order ${workOrder.orderNumber}`,
-    details: { count: normalizedMaterials.length },
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.RECORD_MATERIAL,
+      entityType: EntityType.MATERIAL_USAGE,
+      entityId: workOrderId,
+      entityName: workOrder.orderNumber,
+      description: `Applied ${normalizedMaterials.length} BOM suggestions to order ${workOrder.orderNumber}`,
+      details: { count: normalizedMaterials.length },
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'MATERIALS_BULK_ADDED', payload: { workOrderId, count: normalizedMaterials.length } });
+  broadcast(buildRouteBroadcastPayload({ type: 'MATERIALS_BULK_ADDED', payload: { workOrderId, count: normalizedMaterials.length } }));
 
   res.status(201).json({
     success: true,

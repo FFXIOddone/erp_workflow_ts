@@ -1,10 +1,13 @@
 import { Router, Response } from 'express';
-import { promises as fs } from 'fs';
 import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
+import { WorkOrderReferenceSelect } from '../lib/dto-selects.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
+import { withTimeout } from '../lib/with-timeout.js';
 import {
   pollPrinterStatus,
   checkDeviceConnectivity,
@@ -29,6 +32,7 @@ import {
   getAvailableZunds,
   isZundStatsAccessible,
 } from '../services/zund-stats.js';
+import { probeRemotePathAccessible } from '../services/equipment-reachability.js';
 import { pollHPEWS } from '../services/hp-ews.js';
 import { pollHPLEDM } from '../services/hp-ledm.js';
 import { pollVUTEk, isVUTEkIP } from '../services/vutek.js';
@@ -36,10 +40,16 @@ import { pollVUTEkInk, forceRefreshVUTEkInk } from '../services/vutek-ink.js';
 import {
   getAllFieryJobs,
   buildFieryCutJobRows,
+  filterThriveCutJobsAgainstFieryJobs,
   linkFieryJobsToOrders,
   type FieryJob,
   type FieryJobLinked,
 } from '../services/fiery.js';
+import {
+  buildEquipmentRepairBroadcastPayload,
+  equipmentIdentityChanged,
+  getEquipmentIdentitySnapshot,
+} from '../lib/equipment-repair-broadcast.js';
 import {
   CreateEquipmentSchema,
   UpdateEquipmentSchema,
@@ -59,32 +69,6 @@ import {
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 const router = Router();
-const REMOTE_SHARE_REACHABILITY_TIMEOUT_MS = 3000;
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timeout: ${label} (${ms}ms)`)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
-async function isRemotePathAccessible(path: string, label: string): Promise<boolean> {
-  try {
-    await withTimeout(fs.access(path), REMOTE_SHARE_REACHABILITY_TIMEOUT_MS, label);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // All routes require authentication
 router.use(authenticate);
@@ -237,7 +221,7 @@ router.get('/live-status', async (req: AuthRequest, res: Response) => {
     setLastPollTime(now);
     lastEquipmentPollTime = now;
     const statusArray = Array.from(results.entries()).map(([id, s]) => ({ ...s, equipmentId: id }));
-    broadcast({ type: 'EQUIPMENT_LIVE_STATUS', payload: statusArray, timestamp: new Date() });
+    broadcast(buildRouteBroadcastPayload({ type: 'EQUIPMENT_LIVE_STATUS', payload: statusArray, timestamp: new Date() }));
 
     // Persist to EquipmentDataCache for cold-start hydration (fire-and-forget)
     Promise.allSettled(
@@ -316,6 +300,10 @@ router.post('/vutek/ink/refresh', async (_req: AuthRequest, res) => {
 router.put('/:id/connectivity', async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const { ipAddress, connectionType, snmpCommunity } = req.body;
+  const existing = await prisma.equipment.findUnique({ where: { id } });
+  if (!existing) {
+    throw NotFoundError('Equipment not found');
+  }
 
   const updated = await prisma.equipment.update({
     where: { id },
@@ -352,6 +340,15 @@ router.put('/:id/connectivity', async (req: AuthRequest, res: Response) => {
     }
   }
 
+  if (equipmentIdentityChanged(existing, updated)) {
+    broadcast(
+      buildEquipmentRepairBroadcastPayload(updated, {
+        previousIdentity: getEquipmentIdentitySnapshot(existing),
+        reason: 'connectivity update changed equipment identity',
+      })
+    );
+  }
+
   res.json({ success: true, data: updated });
 });
 
@@ -367,6 +364,12 @@ router.post('/bulk-assign-ips', async (req: AuthRequest, res: Response) => {
   const results = [];
   for (const a of assignments) {
     try {
+      const existing = await prisma.equipment.findUnique({ where: { id: a.equipmentId } });
+      if (!existing) {
+        results.push({ equipmentId: a.equipmentId, success: false, error: 'Equipment not found' });
+        continue;
+      }
+
       const updated = await prisma.equipment.update({
         where: { id: a.equipmentId },
         data: {
@@ -376,6 +379,14 @@ router.post('/bulk-assign-ips', async (req: AuthRequest, res: Response) => {
         },
       });
       results.push({ equipmentId: a.equipmentId, success: true, name: updated.name });
+      if (equipmentIdentityChanged(existing, updated)) {
+        broadcast(
+          buildEquipmentRepairBroadcastPayload(updated, {
+            previousIdentity: getEquipmentIdentitySnapshot(existing),
+            reason: 'bulk IP assignment changed equipment identity',
+          })
+        );
+      }
     } catch (err: any) {
       results.push({ equipmentId: a.equipmentId, success: false, error: err.message });
     }
@@ -682,10 +693,12 @@ router.get('/:id/live-detail', async (req: AuthRequest, res: Response) => {
 
       // Probe 6: VUTEk
       if (ip && isVUTEkIP(ip)) {
+        const fieryJobsPromise = getAllFieryJobs();
+
         probes.push(
           (async () => {
             try {
-              const vutekData = await pollVUTEk();
+              const vutekData = await pollVUTEk(await fieryJobsPromise);
               if (vutekData.available) {
                 (result as any).vutek = vutekData;
               }
@@ -699,7 +712,7 @@ router.get('/:id/live-detail', async (req: AuthRequest, res: Response) => {
         probes.push(
           (async () => {
             try {
-              const fieryJobs = await getAllFieryJobs();
+              const fieryJobs = await fieryJobsPromise;
               const linked = await linkFieryJobsToOrders(fieryJobs);
               // Most recent first, limit to 50
               const sorted = linked
@@ -782,16 +795,19 @@ router.post('/', async (req: AuthRequest, res) => {
     data,
   });
 
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.OTHER,
-    entityId: equipment.id,
-    description: `Created equipment: ${equipment.name}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.OTHER,
+      entityId: equipment.id,
+      entityName: equipment.name,
+      description: `Created equipment: ${equipment.name}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'EQUIPMENT_CREATED', payload: equipment });
+  broadcast(buildRouteBroadcastPayload({ type: 'EQUIPMENT_CREATED', payload: equipment }));
 
   res.status(201).json({ success: true, data: equipment });
 });
@@ -811,16 +827,27 @@ router.put('/:id', async (req: AuthRequest, res) => {
     data,
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.OTHER,
-    entityId: equipment.id,
-    description: `Updated equipment: ${equipment.name}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.OTHER,
+      entityId: equipment.id,
+      entityName: equipment.name,
+      description: `Updated equipment: ${equipment.name}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'EQUIPMENT_UPDATED', payload: equipment });
+  broadcast(buildRouteBroadcastPayload({ type: 'EQUIPMENT_UPDATED', payload: equipment }));
+  if (equipmentIdentityChanged(existing, equipment)) {
+    broadcast(
+      buildEquipmentRepairBroadcastPayload(equipment, {
+        previousIdentity: getEquipmentIdentitySnapshot(existing),
+        reason: 'equipment row identity changed',
+      })
+    );
+  }
 
   res.json({ success: true, data: equipment });
 });
@@ -844,16 +871,19 @@ router.put('/:id/status', async (req: AuthRequest, res) => {
     data: { status },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.OTHER,
-    entityId: equipment.id,
-    description: `Changed equipment status: ${existing.status} → ${status}${reason ? ` (${reason})` : ''}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.OTHER,
+      entityId: equipment.id,
+      entityName: equipment.name,
+      description: `Changed equipment status: ${existing.status} → ${status}${reason ? ` (${reason})` : ''}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'EQUIPMENT_STATUS_CHANGED', payload: equipment });
+  broadcast(buildRouteBroadcastPayload({ type: 'EQUIPMENT_STATUS_CHANGED', payload: equipment }));
 
   res.json({ success: true, data: equipment });
 });
@@ -869,16 +899,19 @@ router.delete('/:id', async (req: AuthRequest, res) => {
 
   await prisma.equipment.delete({ where: { id } });
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.OTHER,
-    entityId: id,
-    description: `Deleted equipment: ${existing.name}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      entityType: EntityType.OTHER,
+      entityId: id,
+      entityName: existing.name,
+      description: `Deleted equipment: ${existing.name}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'EQUIPMENT_DELETED', payload: { id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'EQUIPMENT_DELETED', payload: { id } }));
 
   res.json({ success: true, message: 'Equipment deleted' });
 });
@@ -959,14 +992,17 @@ router.post('/:equipmentId/schedules', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.OTHER,
-    entityId: schedule.id,
-    description: `Created maintenance schedule "${schedule.taskName}" for ${equipment.name}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.OTHER,
+      entityId: schedule.id,
+      entityName: schedule.taskName,
+      description: `Created maintenance schedule "${schedule.taskName}" for ${equipment.name}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
   res.status(201).json({ success: true, data: schedule });
 });
@@ -992,14 +1028,17 @@ router.put('/schedules/:id', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.OTHER,
-    entityId: schedule.id,
-    description: `Updated maintenance schedule "${schedule.taskName}"`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.OTHER,
+      entityId: schedule.id,
+      entityName: schedule.taskName,
+      description: `Updated maintenance schedule "${schedule.taskName}"`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
   res.json({ success: true, data: schedule });
 });
@@ -1015,14 +1054,17 @@ router.delete('/schedules/:id', async (req: AuthRequest, res) => {
 
   await prisma.maintenanceSchedule.delete({ where: { id } });
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.OTHER,
-    entityId: id,
-    description: `Deleted maintenance schedule "${existing.taskName}"`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      entityType: EntityType.OTHER,
+      entityId: id,
+      entityName: existing.taskName,
+      description: `Deleted maintenance schedule "${existing.taskName}"`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
   res.json({ success: true, message: 'Maintenance schedule deleted' });
 });
@@ -1163,14 +1205,17 @@ router.post('/:equipmentId/logs', async (req: AuthRequest, res) => {
     });
   }
 
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.OTHER,
-    entityId: log.id,
-    description: `Logged maintenance "${log.taskName}" for ${equipment.name}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.OTHER,
+      entityId: log.id,
+      entityName: equipment.name,
+      description: `Logged maintenance "${log.taskName}" for ${equipment.name}`,
+      userId: req.userId!,
+      req,
+    }),
+  );
 
   res.status(201).json({ success: true, data: log });
 });
@@ -1308,16 +1353,19 @@ router.post('/:equipmentId/downtime', async (req: AuthRequest, res) => {
     data: { status: 'DOWN' },
   });
 
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.OTHER,
-    entityId: event.id,
-    description: `Reported downtime for ${equipment.name}: ${data.reason}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.OTHER,
+      entityId: event.id,
+      entityName: equipment.name,
+      description: `Reported downtime for ${equipment.name}: ${data.reason}`,
+      userId: req.userId!,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'EQUIPMENT_DOWN', payload: { equipment, event } });
+  broadcast(buildRouteBroadcastPayload({ type: 'EQUIPMENT_DOWN', payload: { equipment, event } }));
 
   res.status(201).json({ success: true, data: event });
 });
@@ -1395,16 +1443,19 @@ router.post('/downtime/:id/resolve', async (req: AuthRequest, res) => {
     });
   }
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.OTHER,
-    entityId: event.id,
-    description: `Resolved downtime for ${existing.equipment.name}: ${data.resolution}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.OTHER,
+      entityId: event.id,
+      entityName: existing.equipment.name,
+      description: `Resolved downtime for ${existing.equipment.name}: ${data.resolution}`,
+      userId: req.userId!,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'EQUIPMENT_RESTORED', payload: { equipment: existing.equipment, event } });
+  broadcast(buildRouteBroadcastPayload({ type: 'EQUIPMENT_RESTORED', payload: { equipment: existing.equipment, event } }));
 
   res.json({ success: true, data: event });
 });
@@ -1420,21 +1471,23 @@ router.delete('/downtime/:id', async (req: AuthRequest, res) => {
 
   await prisma.downtimeEvent.delete({ where: { id } });
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.OTHER,
-    entityId: id,
-    description: `Deleted downtime event`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      entityType: EntityType.OTHER,
+      entityId: id,
+      description: `Deleted downtime event`,
+      userId: req.userId!,
+      req,
+    }),
+  );
 
   res.json({ success: true, message: 'Downtime event deleted' });
 });
 
 // ============ Zund Live Data ============
 
-import { getZundLiveData, scanZundQueueFiles, type ZundLiveJob } from '../services/zund-live.js';
+import { getZundLiveData, getZundQueueSnapshot, type ZundLiveJob } from '../services/zund-live.js';
 
 // GET /equipment/zund/cut-queue - Unified cut queue from ALL Zund sources (both machines)
 router.get('/zund/cut-queue', async (req: AuthRequest, res) => {
@@ -1523,14 +1576,23 @@ router.get('/zund/:zundId/live', async (req: AuthRequest, res) => {
 
 // ============ Thrive RIP Integration ============
 
-import { thriveService, parseJobInfo } from '../services/thrive.js';
+import { thriveService } from '../services/thrive.js';
 import { zundMatchService, normalizeJobName, extractCutId } from '../services/zund-match.js';
+import {
+  buildThriveJobsResponse,
+  buildThriveMachineResponse,
+} from '../services/equipment-queue.js';
 import {
   clearManualCutFileLinkForOrder,
   syncManualJobLinksToPrintCutLinks,
 } from '../services/file-chain.js';
 import { deriveFileChainLinkState } from '../services/file-chain-state.js';
-import { buildWorkOrderThriveMatchContext } from '../services/workorder-equipment-matching.js';
+import {
+  buildWorkOrderThriveMatchContext,
+  extractWorkOrderNumber,
+  matchesWorkOrderNumber,
+  matchesWorkOrderText,
+} from '../services/workorder-equipment-matching.js';
 
 // GET /equipment/thrive/config - Get Thrive equipment configuration
 router.get('/thrive/config', async (_req, res) => {
@@ -1554,15 +1616,7 @@ router.get('/thrive/jobs', async (_req, res) => {
 
     res.json({
       success: true,
-      data: {
-        printJobs: linkedJobs,
-        cutJobs,
-        summary: {
-          totalPrintJobs: printJobs.length,
-          totalCutJobs: cutJobs.length,
-          linkedToWorkOrders: linkedJobs.filter((j) => j.workOrder).length,
-        },
-      },
+      data: buildThriveJobsResponse(printJobs, cutJobs, linkedJobs),
     });
   } catch (error: any) {
     console.error('Error fetching Thrive jobs:', error);
@@ -1608,20 +1662,6 @@ router.get('/thrive/machine/:ip', async (req: AuthRequest, res) => {
     // Link to work orders
     const linkedJobs = await thriveService.linkJobsToWorkOrders(allJobs);
 
-    // Flatten { job, workOrder } into the shape the frontend expects
-    const flatPrintJobs = linkedJobs.map(({ job, workOrder }: any) => ({
-      ...job,
-      workOrder: workOrder
-        ? {
-            id: workOrder.id,
-            orderNumber: workOrder.orderNumber,
-            title: workOrder.description || workOrder.orderNumber,
-            status: workOrder.status,
-            customerName: workOrder.customerName,
-          }
-        : undefined,
-    }));
-
     // Build cut rows from Fiery jobs with real ZCC files.
     // These are the only cut records we want to surface on the machine page.
     let cutJobs: any[] = [];
@@ -1634,17 +1674,7 @@ router.get('/thrive/machine/:ip', async (req: AuthRequest, res) => {
 
     res.json({
       success: true,
-      data: {
-        machine: { id: machine.id, name: machine.name, ip: machine.ip },
-        printJobs: flatPrintJobs,
-        cutJobs,
-        summary: {
-          totalPrintJobs: allJobs.length,
-          totalCutJobs: cutJobs.length,
-          linkedToWorkOrders: flatPrintJobs.filter((j: any) => j.workOrder).length,
-          printers: machine.printers.map((p) => p.name),
-        },
-      },
+      data: buildThriveMachineResponse(machine, allJobs, linkedJobs, cutJobs),
     });
   } catch (error: any) {
     console.error('Error fetching Thrive machine jobs:', error);
@@ -1705,12 +1735,14 @@ router.get('/thrive/queue/:printer', async (req, res) => {
 router.get('/thrive/cuts', async (req, res) => {
   try {
     const allCuts: any[] = [];
+    const fieryJobs = await getAllFieryJobs().catch(() => []);
 
     for (const machine of thriveService.config.machines) {
       if (machine.cutterPath) {
         const cuts = await thriveService.scanCutFolder(machine.cutterPath);
+        const filteredCuts = filterThriveCutJobsAgainstFieryJobs(cuts, fieryJobs);
         allCuts.push(
-          ...cuts.map((cut) => ({
+          ...filteredCuts.map((cut) => ({
             ...cut,
             sourceMachine: machine.name,
           }))
@@ -1759,7 +1791,7 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
       : [];
     const dismissedSet = new Set(dismissedLinks.map((d) => `${d.jobType}:${d.jobIdentifier}`));
 
-    // Filter by work order number — use parseJobInfo (same as file chain system)
+    // Filter by work order number using the shared work-order matcher.
     const {
       bareNumber,
       matchingPrintJobs,
@@ -1788,18 +1820,12 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
       // ─── Zund Queue Files ───
       (async () => {
         try {
-          const allQueueFiles = await scanZundQueueFiles(100);
+          const allQueueFiles = (await getZundQueueSnapshot(100)).files;
           return allQueueFiles
             .filter((f) => {
               const name = f.zccData.jobName || f.fileName;
               const orderId = f.zccData.orderId || '';
-              const parsedFromName = parseJobInfo(name);
-              const parsedFromFile = parseJobInfo(f.fileName);
-              if (
-                parsedFromName.workOrderNumber === bareNumber ||
-                parsedFromFile.workOrderNumber === bareNumber
-              )
-                return true;
+              if (matchesWorkOrderText(name, orderNumber) || matchesWorkOrderText(f.fileName, orderNumber)) return true;
               const normalizedOrderId = orderId.trim().toLowerCase();
               if (
                 normalizedOrderId &&
@@ -1865,12 +1891,14 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
                 `findJobByCutId ${zundCutId}`,
               ).catch(() => null);
               if (thriveLogEntry) {
-                const woInfo = parseJobInfo(
-                  thriveLogEntry.sourceFilePath ||
-                    thriveLogEntry.fileName ||
-                    thriveLogEntry.customizedName
-                );
-                if (woInfo.workOrderNumber === bareNumber) {
+                if (
+                  matchesWorkOrderText(
+                    thriveLogEntry.sourceFilePath ||
+                      thriveLogEntry.fileName ||
+                      thriveLogEntry.customizedName,
+                    orderNumber
+                  )
+                ) {
                   seenZundJobs.add(zj.jobId);
                   matched.push({ ...zj, matchedVia: `CutID match via Thrive print log` });
                   continue;
@@ -1895,9 +1923,10 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
           ).catch(() => []);
           return allFieryJobs
             .filter((fj) => {
-              if (fj.workOrderNumber === orderNumber || fj.workOrderNumber === `WO${bareNumber}`)
+              if (matchesWorkOrderNumber(fj.workOrderNumber, orderNumber))
                 return true;
-              if (fj.jobName.includes(orderNumber) || fj.jobName.includes(bareNumber)) return true;
+              if (matchesWorkOrderText(fj.jobName, orderNumber) || matchesWorkOrderText(fj.fileName, orderNumber))
+                return true;
               const normalizedFiery = normalizeJobName(fj.jobName);
               for (const printNorm of normalizedPrintNames) {
                 if (
@@ -1911,9 +1940,9 @@ router.get('/thrive/workorder/:orderNumber', async (req, res) => {
             })
             .map((fj) => {
               let matchedVia = 'Fiery RIP';
-              if (fj.workOrderNumber === orderNumber || fj.workOrderNumber === `WO${bareNumber}`) {
+              if (matchesWorkOrderNumber(fj.workOrderNumber, orderNumber)) {
                 matchedVia = 'WO number from Thrive path';
-              } else if (fj.jobName.includes(orderNumber) || fj.jobName.includes(bareNumber)) {
+              } else if (matchesWorkOrderText(fj.jobName, orderNumber) || matchesWorkOrderText(fj.fileName, orderNumber)) {
                 matchedVia = 'Order number in job name';
               } else {
                 matchedVia = 'Cross-reference with Thrive print job';
@@ -2278,7 +2307,7 @@ router.get('/thrive/trace-file', async (req, res) => {
         ],
       },
       include: {
-        workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+        workOrder: { select: WorkOrderReferenceSelect },
       },
       take: 20,
       orderBy: { createdAt: 'desc' },
@@ -2316,7 +2345,7 @@ router.get('/thrive/status', async (_req, res) => {
   const status: Record<string, { online: boolean; error?: string }> = {};
 
   for (const machine of thriveService.config.machines) {
-    const reachable = await isRemotePathAccessible(machine.share, `access ${machine.id}`);
+    const reachable = await probeRemotePathAccessible(machine.share, `access ${machine.id}`);
     if (reachable) {
       status[machine.id] = { online: true };
     } else {
@@ -2326,7 +2355,7 @@ router.get('/thrive/status', async (_req, res) => {
 
   for (const zund of thriveService.config.zundMachines) {
     if (zund.statisticsPath) {
-      const reachable = await isRemotePathAccessible(zund.statisticsPath, `access ${zund.id}`);
+      const reachable = await probeRemotePathAccessible(zund.statisticsPath, `access ${zund.id}`);
       if (reachable) {
         status[zund.id] = { online: true };
       } else {
@@ -2336,7 +2365,7 @@ router.get('/thrive/status', async (_req, res) => {
   }
 
   if (thriveService.config.fiery.exportPath) {
-    const reachable = await isRemotePathAccessible(thriveService.config.fiery.exportPath, 'access fiery');
+    const reachable = await probeRemotePathAccessible(thriveService.config.fiery.exportPath, 'access fiery');
     if (reachable) {
       status['fiery'] = { online: true };
     } else {
@@ -2398,8 +2427,8 @@ router.post('/thrive/workorder/:orderNumber/link-job', async (req: AuthRequest, 
 
   await syncManualJobLinksToPrintCutLinks({ workOrderId: order.id });
 
-  broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: order.id } });
-  broadcast({ type: 'ORDER_UPDATED', payload: { id: order.id, orderNumber } });
+  broadcast(buildRouteBroadcastPayload({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: order.id } }));
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { id: order.id, orderNumber } }));
 
   res.json({ success: true, data: link });
 });
@@ -2422,8 +2451,8 @@ router.delete('/thrive/workorder/:orderNumber/link-job/:linkId', async (req: Aut
 
   await prisma.manualJobLink.delete({ where: { id: linkId } });
 
-  broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } });
-  broadcast({ type: 'ORDER_UPDATED', payload: { id: link.workOrderId, orderNumber } });
+  broadcast(buildRouteBroadcastPayload({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } }));
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { id: link.workOrderId, orderNumber } }));
 
   res.json({ success: true, data: { message: 'Job unlinked' } });
 });
@@ -2481,7 +2510,7 @@ router.post('/thrive/workorder/:orderNumber/dismiss-job', async (req: AuthReques
     },
   });
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { id: order.id, orderNumber } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { id: order.id, orderNumber } }));
 
   res.json({ success: true, data: dismissed });
 });
@@ -2494,7 +2523,7 @@ router.delete(
 
     await prisma.dismissedJobLink.delete({ where: { id: dismissId } });
 
-    broadcast({ type: 'ORDER_UPDATED', payload: { orderNumber: req.params.orderNumber } });
+    broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { orderNumber: req.params.orderNumber } }));
 
     res.json({ success: true, data: { message: 'Job restored' } });
   }
@@ -2595,11 +2624,11 @@ router.post('/thrive/barcode-scan', authenticate, async (req: AuthRequest, res) 
           });
 
           await syncManualJobLinksToPrintCutLinks({ workOrderId: order.id });
-          broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: order.id } });
-          broadcast({
+          broadcast(buildRouteBroadcastPayload({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: order.id } }));
+          broadcast(buildRouteBroadcastPayload({
             type: 'ORDER_UPDATED',
             payload: { id: order.id, orderNumber: order.orderNumber },
-          });
+          }));
         }
       }
     }
@@ -2617,15 +2646,19 @@ router.post('/thrive/barcode-scan', authenticate, async (req: AuthRequest, res) 
     },
   });
 
-  await logActivity({
-    userId: req.userId!,
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: workOrderId ?? 'none',
-    description: matched
-      ? `Barcode scan linked CutID ${parsedCutId} to ${orderNumber}${orientation ? ` (${orientation}°)` : ''}`
-      : `Barcode scan recorded CutID ${parsedCutId ?? rawBarcode.trim()} — no order match found`,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      userId: req.userId!,
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: workOrderId ?? 'none',
+      entityName: orderNumber ?? parsedCutId ?? rawBarcode.trim(),
+      description: matched
+        ? `Barcode scan linked CutID ${parsedCutId} to ${orderNumber}${orientation ? ` (${orientation}°)` : ''}`
+        : `Barcode scan recorded CutID ${parsedCutId ?? rawBarcode.trim()} — no order match found`,
+      req,
+    }),
+  );
 
   res.json({
     success: true,
@@ -2643,7 +2676,14 @@ router.post('/thrive/barcode-scan', authenticate, async (req: AuthRequest, res) 
 
 // GET /equipment/thrive/unlinked-jobs - Get all current jobs NOT linked to any work order
 router.get('/thrive/unlinked-jobs', async (req: AuthRequest, res) => {
-  const jobType = req.query.type as string | undefined;
+  const requestedJobTypes = new Set(
+    String(Array.isArray(req.query.type) ? req.query.type.join(',') : req.query.type ?? '')
+      .split(',')
+      .map((type) => type.trim().toUpperCase())
+      .filter(Boolean),
+  );
+  const wantsJobType = (jobType: string) =>
+    requestedJobTypes.size === 0 || requestedJobTypes.has(jobType);
 
   try {
     const { printJobs, cutJobs } = await thriveService.getAllJobs();
@@ -2686,7 +2726,7 @@ router.get('/thrive/unlinked-jobs', async (req: AuthRequest, res) => {
       fieryJobs?: any[];
     } = {};
 
-    if (!jobType || jobType === 'PRINT_JOB') {
+    if (wantsJobType('PRINT_JOB')) {
       // Return print jobs that have no WO# auto-match AND aren't manually linked
       result.printJobs = printJobs
         .filter((j) => !j.workOrderNumber && !linkedPrintGuids.has(j.jobGuid))
@@ -2701,7 +2741,7 @@ router.get('/thrive/unlinked-jobs', async (req: AuthRequest, res) => {
         }));
     }
 
-    if (!jobType || jobType === 'CUT_JOB') {
+    if (wantsJobType('CUT_JOB')) {
       result.cutJobs = cutJobs
         .filter((j) => {
           const cutId = extractCutId(j.jobName || '') || extractCutId(j.fileName || '');
@@ -2725,9 +2765,9 @@ router.get('/thrive/unlinked-jobs', async (req: AuthRequest, res) => {
         }));
     }
 
-    if (!jobType || jobType === 'ZUND_QUEUE') {
+    if (wantsJobType('ZUND_QUEUE')) {
       try {
-        const allQueueFiles = await scanZundQueueFiles(200);
+        const allQueueFiles = (await getZundQueueSnapshot(200)).files;
         result.zundQueueFiles = allQueueFiles
           .filter((f) => {
             const cutId = extractCutId(f.zccData.jobName || '') || extractCutId(f.fileName || '');
@@ -2750,7 +2790,7 @@ router.get('/thrive/unlinked-jobs', async (req: AuthRequest, res) => {
       }
     }
 
-    if (!jobType || jobType === 'FIERY_JOB') {
+    if (wantsJobType('FIERY_JOB')) {
       try {
         const allFieryJobs = await getAllFieryJobs();
         result.fieryJobs = allFieryJobs
@@ -2907,12 +2947,12 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
             // Fallback: CutID lookup in Thrive print history logs
             const thriveLogEntry = await thriveService.findJobByCutId(zundCutId);
             if (thriveLogEntry) {
-              const woInfo = parseJobInfo(
+              const woInfo = extractWorkOrderNumber(
                 thriveLogEntry.sourceFilePath ||
                   thriveLogEntry.fileName ||
                   thriveLogEntry.customizedName
               );
-              if (woInfo.workOrderNumber === bareNumber) {
+              if (matchesWorkOrderNumber(woInfo, orderNumber)) {
                 matched = true;
               }
             }
@@ -2998,11 +3038,9 @@ router.get('/workorder/:orderNumber/activity', async (req, res) => {
           const ewsData = getAllCachedEWSData();
           for (const [equipmentId, ews] of ewsData.entries()) {
             for (const job of ews.jobs ?? []) {
-              const jobOrderNumber =
-                job.workOrderNumber?.replace(/^WO/i, '') ||
-                parseJobInfo(job.name).workOrderNumber?.replace(/^WO/i, '');
-
-              if (jobOrderNumber !== bareNumber) continue;
+              if (!matchesWorkOrderNumber(job.workOrderNumber, orderNumber) && !matchesWorkOrderText(job.name, orderNumber)) {
+                continue;
+              }
 
               const jobStatus = job.status.toUpperCase();
               const completionStatus = job.completionStatus.toUpperCase();
@@ -3245,15 +3283,17 @@ router.post('/:id/launch-rdp', async (req: AuthRequest, res: Response) => {
     // Launch mstsc.exe detached — don't wait for it
     exec(`mstsc /v:${ip}`, { windowsHide: false });
 
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.EQUIPMENT,
-      entityId: equipment.id,
-      entityName: equipment.name,
-      description: `Launched Remote Desktop session to ${ip}`,
-      userId: req.userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.EQUIPMENT,
+        entityId: equipment.id,
+        entityName: equipment.name,
+        description: `Launched Remote Desktop session to ${ip}`,
+        userId: req.userId!,
+        req,
+      }),
+    );
 
     res.json({ success: true, message: `RDP session launched to ${ip}` });
   } catch (err: any) {
@@ -3300,15 +3340,17 @@ router.post('/:id/launch-vnc', async (req: AuthRequest, res: Response) => {
     if (vncExe) {
       exec(`"${vncExe}" ${ip}`, { windowsHide: false });
 
-      await logActivity({
-        action: ActivityAction.UPDATE,
-        entityType: EntityType.EQUIPMENT,
-        entityId: equipment.id,
-        entityName: equipment.name,
-        description: `Launched VNC remote display session to ${ip}`,
-        userId: req.userId,
-        req,
-      });
+      await logActivity(
+        buildRouteActivityPayload({
+          action: ActivityAction.UPDATE,
+          entityType: EntityType.EQUIPMENT,
+          entityId: equipment.id,
+          entityName: equipment.name,
+          description: `Launched VNC remote display session to ${ip}`,
+          userId: req.userId!,
+          req,
+        }),
+      );
 
       res.json({ success: true, message: `VNC session launched to ${ip}`, viewer: vncExe });
     } else {
@@ -3803,15 +3845,17 @@ async function logIppJob(
   result: any
 ) {
   const jobId = result?.['job-attributes-tag']?.['job-id'] || '?';
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.EQUIPMENT,
-    entityId: equipment.id,
-    entityName: equipment.name,
-    description: `Sent IPP print job "${jobName}" (${(file.size / 1024).toFixed(0)} KB) to ${ip} — Job #${jobId}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.EQUIPMENT,
+      entityId: equipment.id,
+      entityName: equipment.name,
+      description: `Sent IPP print job "${jobName}" (${(file.size / 1024).toFixed(0)} KB) to ${ip} — Job #${jobId}`,
+      userId: req.userId!,
+      req,
+    }),
+  );
 }
 
 /** Categorize a Windows service by name pattern for UI grouping */

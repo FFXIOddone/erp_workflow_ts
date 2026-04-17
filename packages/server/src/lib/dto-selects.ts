@@ -76,6 +76,15 @@ export const OrderSummarySelect = {
   status: true,
 } satisfies Prisma.WorkOrderSelect;
 
+/**
+ * Work order reference data for nested relations and linked rows
+ */
+export const WorkOrderReferenceSelect = {
+  id: true,
+  orderNumber: true,
+  customerName: true,
+} satisfies Prisma.WorkOrderSelect;
+
 // ============ Customer Selects ============
 
 /**

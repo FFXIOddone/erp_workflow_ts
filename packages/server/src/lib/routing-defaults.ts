@@ -30,6 +30,17 @@ export interface InitialStationProgressEntry {
   completedAt?: Date | null;
 }
 
+export interface StationProgressLike {
+  station: string;
+  status: StationStatus | string | null | undefined;
+}
+
+const PRINTING_METHOD_VALUES = new Set<string>(Object.values(PrintingMethod));
+
+function isPrintingMethod(value: string): value is PrintingMethod {
+  return PRINTING_METHOD_VALUES.has(value);
+}
+
 const PRINTING_STATIONS = new Set<PrintingMethod>([
   PrintingMethod.ROLL_TO_ROLL,
   PrintingMethod.FLATBED,
@@ -287,4 +298,44 @@ export function buildInitialStationProgress(
       status: StationStatus.NOT_STARTED,
     };
   });
+}
+
+export function summarizeStationProgressCounts(
+  routing: readonly string[],
+  stationProgress: readonly StationProgressLike[],
+  options?: {
+    source?: RoutingSource;
+    entryTimestamp?: Date;
+  },
+): {
+  routingCount: number;
+  stationProgressCount: number;
+  completedStationCount: number;
+} {
+  const normalizedRouting = routing.filter(isPrintingMethod);
+  const initialProgress = buildInitialStationProgress(normalizedRouting, options);
+  const completedStations = new Set(
+    stationProgress
+      .filter(
+        (entry): entry is StationProgressLike & { station: PrintingMethod } =>
+          isPrintingMethod(entry.station) && normalizeStationStatus(entry.status) === StationStatus.COMPLETED,
+      )
+      .map((entry) => entry.station),
+  );
+
+  return {
+    routingCount: initialProgress.length,
+    stationProgressCount: stationProgress.length,
+    completedStationCount: initialProgress.filter(
+      (entry) =>
+        entry.status === StationStatus.COMPLETED || completedStations.has(entry.station),
+    ).length,
+  };
+}
+
+function normalizeStationStatus(status: StationStatus | string | null | undefined): StationStatus | null {
+  if (status === StationStatus.COMPLETED || status === StationStatus.IN_PROGRESS || status === StationStatus.NOT_STARTED) {
+    return status;
+  }
+  return null;
 }

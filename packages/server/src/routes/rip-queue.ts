@@ -27,7 +27,10 @@ import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { prisma } from '../db/client.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
+import { WorkOrderReferenceSelect } from '../lib/dto-selects.js';
 import {
   getAvailableHotfolders,
   getHotfoldersWithEquipment,
@@ -478,7 +481,7 @@ ripQueueRouter.post('/jobs', async (req: AuthRequest, res: Response) => {
   // Verify work order exists
   const workOrder = await prisma.workOrder.findUnique({
     where: { id: workOrderId },
-    select: { id: true, orderNumber: true, customerName: true },
+    select: WorkOrderReferenceSelect,
   });
   if (!workOrder) throw NotFoundError('Work order not found');
 
@@ -522,21 +525,23 @@ ripQueueRouter.post('/jobs', async (req: AuthRequest, res: Response) => {
   }
 
   // Log activity
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: result.ripJobId!,
-    entityName: `RIP Job → ${hotfolder.name}`,
-    description: `Sent ${displayFileName} to ${hotfolder.name} (WO ${workOrder.orderNumber})`,
-    userId: req.userId!,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: result.ripJobId!,
+      entityName: `RIP Job → ${hotfolder.name}`,
+      description: `Sent ${displayFileName} to ${hotfolder.name} (WO ${workOrder.orderNumber})`,
+      userId: req.userId!,
+      req,
+    }),
+  );
 
   // Fetch the created job for response
   const ripJob = await prisma.ripJob.findUnique({
     where: { id: result.ripJobId! },
     include: {
-      workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+      workOrder: { select: WorkOrderReferenceSelect },
       equipment: { select: { id: true, name: true, station: true } },
       createdBy: { select: { id: true, username: true, displayName: true } },
     },
@@ -592,26 +597,28 @@ ripQueueRouter.put('/jobs/:id/status', async (req: AuthRequest, res: Response) =
     where: { id },
     data: updateData,
     include: {
-      workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+      workOrder: { select: WorkOrderReferenceSelect },
       equipment: { select: { id: true, name: true, station: true } },
       createdBy: { select: { id: true, username: true, displayName: true } },
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: job.id,
-    description: `RIP job status → ${status} (WO ${job.workOrder.orderNumber})`,
-    userId: req.userId!,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: job.id,
+      description: `RIP job status → ${status} (WO ${job.workOrder.orderNumber})`,
+      userId: req.userId!,
+      req,
+    }),
+  );
 
-  broadcast({
+  broadcast(buildRouteBroadcastPayload({
     type: 'RIP_JOB_STATUS_CHANGED',
     payload: { ...job, previousStatus: existing.status },
     timestamp: new Date(),
-  });
+  }));
 
   res.json({ success: true, data: job });
 });
@@ -663,12 +670,12 @@ ripQueueRouter.put('/jobs/:id/settings', async (req: AuthRequest, res: Response)
     where: { id },
     data: updateData,
     include: {
-      workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+      workOrder: { select: WorkOrderReferenceSelect },
       equipment: { select: { id: true, name: true, station: true } },
     },
   });
 
-  broadcast({ type: 'RIP_JOB_UPDATED', payload: job, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'RIP_JOB_UPDATED', payload: job, timestamp: new Date() }));
   res.json({ success: true, data: job });
 });
 
@@ -699,16 +706,18 @@ ripQueueRouter.delete('/jobs/:id', async (req: AuthRequest, res: Response) => {
     await prisma.ripJob.delete({ where: { id } });
   }
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: id,
-    description: `RIP job cancelled/deleted (WO ${existing.workOrder.orderNumber})`,
-    userId: req.userId!,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: id,
+      description: `RIP job cancelled/deleted (WO ${existing.workOrder.orderNumber})`,
+      userId: req.userId!,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'RIP_JOB_DELETED', payload: { id }, timestamp: new Date() });
+  broadcast(buildRouteBroadcastPayload({ type: 'RIP_JOB_DELETED', payload: { id }, timestamp: new Date() }));
   res.json({ success: true });
 });
 
@@ -781,7 +790,7 @@ ripQueueRouter.get('/dashboard', async (_req: AuthRequest, res: Response) => {
     prisma.ripJob.findMany({
       where: { status: { in: ['PRINTED', 'COMPLETED'] }, printCompletedAt: { gte: today } },
       include: {
-        workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+        workOrder: { select: WorkOrderReferenceSelect },
         equipment: { select: { id: true, name: true } },
       },
       orderBy: { printCompletedAt: 'desc' },
@@ -935,27 +944,30 @@ ripQueueRouter.post('/batches/hh-global', async (req: AuthRequest, res: Response
     }
 
     // Log activity
-    await logActivity({
-      userId: req.user!.id,
-      entityType: EntityType.OTHER,
-      entityId: '',
-      action: ActivityAction.CREATE,
-      description: `Submitted ${batches.length} HH Global batches to RIP`,
-      details: {
-        batchesSubmitted: batches.length,
-        jobsCreated: totalJobsCreated,
-      },
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        userId: req.user!.id,
+        entityType: EntityType.OTHER,
+        entityId: '',
+        action: ActivityAction.CREATE,
+        description: `Submitted ${batches.length} HH Global batches to RIP`,
+        details: {
+          batchesSubmitted: batches.length,
+          jobsCreated: totalJobsCreated,
+        },
+        req,
+      }),
+    );
 
     // Broadcast update
-    broadcast({
+    broadcast(buildRouteBroadcastPayload({
       type: 'RIP_BATCH_SUBMITTED',
       payload: {
         batchesSubmitted: batches.length,
         jobsCreated: totalJobsCreated,
         timestamp: new Date(),
       },
-    });
+    }));
 
     res.json({
       success: true,

@@ -19,6 +19,7 @@ export interface ActivityLogParams {
 export async function logActivity(params: ActivityLogParams): Promise<void> {
   try {
     const { action, entityType, entityId, entityName, description, details, userId, req } = params;
+    const normalizedUserId = normalizeActivityUserId(userId);
 
     await prisma.activityLog.create({
       data: {
@@ -28,7 +29,7 @@ export async function logActivity(params: ActivityLogParams): Promise<void> {
         entityName,
         description,
         details: details ? (details as Prisma.InputJsonValue) : undefined,
-        userId,
+        ...(normalizedUserId ? { userId: normalizedUserId } : {}),
         ipAddress: req ? getClientIp(req) : undefined,
         userAgent: req ? req.headers['user-agent'] : undefined,
       },
@@ -51,6 +52,20 @@ function getClientIp(req: Request): string | undefined {
     return forwarded[0];
   }
   return req.socket?.remoteAddress;
+}
+
+export function normalizeActivityUserId(userId?: string): string | undefined {
+  if (!userId) {
+    return undefined;
+  }
+
+  const trimmed = userId.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'system') {
+    return undefined;
+  }
+
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidPattern.test(trimmed) ? trimmed : undefined;
 }
 
 /**

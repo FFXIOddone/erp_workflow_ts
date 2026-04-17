@@ -14,7 +14,9 @@ import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, ForbiddenError } from '../middleware/error-handler.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { QuoteStatus, POStatus, UserRole } from '@erp/shared';
 
 export const bulkRouter = Router();
@@ -119,19 +121,22 @@ bulkRouter.post('/quotes/status', async (req: AuthRequest, res: Response) => {
 
   // Log activity for each quote
   for (const quote of quotesToUpdate) {
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.QUOTE,
-      entityId: quote.id,
-      description: `Bulk status change: ${quote.status} → ${status}`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.QUOTE,
+        entityId: quote.id,
+        entityName: quote.quoteNumber,
+        description: `Bulk status change: ${quote.status} → ${status}`,
+        userId,
+        req,
+      }),
+    );
   }
 
   // Broadcast updates
   for (const quote of quotesToUpdate) {
-    broadcast({ type: 'QUOTE_UPDATED', payload: { quoteId: quote.id } });
+    broadcast(buildRouteBroadcastPayload({ type: 'QUOTE_UPDATED', payload: { quoteId: quote.id } }));
   }
 
   res.json({
@@ -187,19 +192,22 @@ bulkRouter.post('/quotes/assign', async (req: AuthRequest, res: Response) => {
 
   // Log activity
   for (const quote of quotesToUpdate) {
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.QUOTE,
-      entityId: quote.id,
-      description: `Bulk assignment: Assigned to ${assignee.displayName}`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.QUOTE,
+        entityId: quote.id,
+        entityName: quote.quoteNumber,
+        description: `Bulk assignment: Assigned to ${assignee.displayName}`,
+        userId,
+        req,
+      }),
+    );
   }
 
   // Broadcast updates
   for (const quote of quotesToUpdate) {
-    broadcast({ type: 'QUOTE_UPDATED', payload: { quoteId: quote.id } });
+    broadcast(buildRouteBroadcastPayload({ type: 'QUOTE_UPDATED', payload: { quoteId: quote.id } }));
   }
 
   res.json({
@@ -260,19 +268,22 @@ bulkRouter.post('/quotes/delete', async (req: AuthRequest, res: Response) => {
 
   // Log activity
   for (const quote of quotesToDelete) {
-    await logActivity({
-      action: permanent ? ActivityAction.DELETE : ActivityAction.UPDATE,
-      entityType: EntityType.QUOTE,
-      entityId: quote.id,
-      description: permanent ? `Bulk deleted quote ${quote.quoteNumber}` : `Bulk expired quote ${quote.quoteNumber}`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: permanent ? ActivityAction.DELETE : ActivityAction.UPDATE,
+        entityType: EntityType.QUOTE,
+        entityId: quote.id,
+        entityName: quote.quoteNumber,
+        description: permanent ? `Bulk deleted quote ${quote.quoteNumber}` : `Bulk expired quote ${quote.quoteNumber}`,
+        userId,
+        req,
+      }),
+    );
   }
 
   // Broadcast updates
   for (const quote of quotesToDelete) {
-    broadcast({ type: permanent ? 'QUOTE_DELETED' : 'QUOTE_UPDATED', payload: { quoteId: quote.id } });
+    broadcast(buildRouteBroadcastPayload({ type: permanent ? 'QUOTE_DELETED' : 'QUOTE_UPDATED', payload: { quoteId: quote.id } }));
   }
 
   res.json({
@@ -342,19 +353,22 @@ bulkRouter.post('/purchase-orders/status', async (req: AuthRequest, res: Respons
 
   // Log activity
   for (const po of posToUpdate) {
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.PURCHASE_ORDER,
-      entityId: po.id,
-      description: `Bulk status change: ${po.status} → ${status}`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.PURCHASE_ORDER,
+        entityId: po.id,
+        entityName: po.poNumber,
+        description: `Bulk status change: ${po.status} → ${status}`,
+        userId,
+        req,
+      }),
+    );
   }
 
   // Broadcast updates
   for (const po of posToUpdate) {
-    broadcast({ type: 'PURCHASE_ORDER_UPDATED', payload: { purchaseOrderId: po.id } });
+    broadcast(buildRouteBroadcastPayload({ type: 'PURCHASE_ORDER_UPDATED', payload: { purchaseOrderId: po.id } }));
   }
 
   res.json({
@@ -415,19 +429,22 @@ bulkRouter.post('/purchase-orders/cancel', async (req: AuthRequest, res: Respons
 
   // Log activity
   for (const po of posToCancel) {
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.PURCHASE_ORDER,
-      entityId: po.id,
-      description: `Bulk cancelled: ${po.status} → CANCELLED${reason ? ` (${reason})` : ''}`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.PURCHASE_ORDER,
+        entityId: po.id,
+        entityName: po.poNumber,
+        description: `Bulk cancelled: ${po.status} → CANCELLED${reason ? ` (${reason})` : ''}`,
+        userId,
+        req,
+      }),
+    );
   }
 
   // Broadcast updates
   for (const po of posToCancel) {
-    broadcast({ type: 'PURCHASE_ORDER_UPDATED', payload: { purchaseOrderId: po.id } });
+    broadcast(buildRouteBroadcastPayload({ type: 'PURCHASE_ORDER_UPDATED', payload: { purchaseOrderId: po.id } }));
   }
 
   res.json({
@@ -496,19 +513,22 @@ bulkRouter.post('/inventory/adjust', async (req: AuthRequest, res: Response) => 
 
   // Log activity
   if (results.length > 0) {
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.INVENTORY_ITEM,
-      entityId: 'bulk',
-      description: `Bulk inventory adjustment: ${results.length} item(s) updated`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.INVENTORY_ITEM,
+        entityId: 'bulk',
+        entityName: 'Bulk Inventory Adjustment',
+        description: `Bulk inventory adjustment: ${results.length} item(s) updated`,
+        userId,
+        req,
+      }),
+    );
   }
 
   // Broadcast updates
   for (const result of results) {
-    broadcast({ type: 'INVENTORY_UPDATED', payload: { itemId: result.itemId } });
+    broadcast(buildRouteBroadcastPayload({ type: 'INVENTORY_UPDATED', payload: { itemId: result.itemId } }));
   }
 
   res.json({
@@ -577,19 +597,22 @@ bulkRouter.post('/inventory/set', async (req: AuthRequest, res: Response) => {
 
   // Log activity
   if (results.length > 0) {
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.INVENTORY_ITEM,
-      entityId: 'bulk',
-      description: `Bulk inventory set: ${results.length} item(s) quantity updated`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.INVENTORY_ITEM,
+        entityId: 'bulk',
+        entityName: 'Bulk Inventory Set',
+        description: `Bulk inventory set: ${results.length} item(s) quantity updated`,
+        userId,
+        req,
+      }),
+    );
   }
 
   // Broadcast updates
   for (const result of results) {
-    broadcast({ type: 'INVENTORY_UPDATED', payload: { itemId: result.itemId } });
+    broadcast(buildRouteBroadcastPayload({ type: 'INVENTORY_UPDATED', payload: { itemId: result.itemId } }));
   }
 
   res.json({
@@ -653,19 +676,22 @@ bulkRouter.post('/customers/archive', async (req: AuthRequest, res: Response) =>
 
   // Log activity
   for (const customer of customersToUpdate) {
-    await logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.CUSTOMER,
-      entityId: customer.id,
-      description: `Bulk ${archive ? 'archived' : 'unarchived'} customer`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.CUSTOMER,
+        entityId: customer.id,
+        entityName: customer.name,
+        description: `Bulk ${archive ? 'archived' : 'unarchived'} customer`,
+        userId,
+        req,
+      }),
+    );
   }
 
   // Broadcast updates
   for (const customer of customersToUpdate) {
-    broadcast({ type: 'CUSTOMER_UPDATED', payload: { customerId: customer.id } });
+    broadcast(buildRouteBroadcastPayload({ type: 'CUSTOMER_UPDATED', payload: { customerId: customer.id } }));
   }
 
   res.json({

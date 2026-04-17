@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildFieryCutJobRows, type FieryJob } from './fiery.js';
+import {
+  buildFieryCutJobRows,
+  filterThriveCutJobsAgainstFieryJobs,
+  type FieryJob,
+} from './fiery.js';
 
 describe('buildFieryCutJobRows', () => {
   it('only includes Fiery jobs with real ZCC files and a usable link', () => {
@@ -88,5 +92,58 @@ describe('buildFieryCutJobRows', () => {
       customerName: 'Pribusin',
       companyBrand: undefined,
     });
+  });
+
+  it('filters Thrive cut rows that are already represented by linked Fiery jobs', () => {
+    const fieryJobs: FieryJob[] = [
+      {
+        jobId: 'job-3',
+        jobName: 'Linked Cut File',
+        fileName: 'linked-cut.jdf',
+        timestamp: null,
+        dimensions: { widthIn: 24, heightIn: 36 },
+        media: {
+          vutekMedia: 'Duratrans',
+          brand: null,
+          description: 'Duratrans',
+          type: null,
+        },
+        inks: [],
+        previewUrl: null,
+        rtlUrl: null,
+        hasZccCutFile: true,
+        zccFileName: 'linked-cut.zcc',
+        workOrderNumber: '64524',
+        customerName: 'Pribusin',
+        thriveFilePath: null,
+        thriveJobMatch: true,
+      },
+    ];
+
+    const cuts = [
+      {
+        jobName: 'Linked Cut File',
+        fileName: 'linked-cut.zcc',
+        guid: 'job-3',
+        workOrderNumber: '64524',
+      },
+      {
+        jobName: 'Unlinked Thrive Cut',
+        fileName: 'unlinked-cut.zcc',
+        guid: 'job-99',
+        workOrderNumber: '99999',
+      },
+    ];
+
+    const filtered = filterThriveCutJobsAgainstFieryJobs(cuts, fieryJobs);
+
+    expect(filtered).toEqual([
+      {
+        jobName: 'Unlinked Thrive Cut',
+        fileName: 'unlinked-cut.zcc',
+        guid: 'job-99',
+        workOrderNumber: '99999',
+      },
+    ]);
   });
 });

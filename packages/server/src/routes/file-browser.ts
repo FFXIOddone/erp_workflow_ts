@@ -7,6 +7,7 @@ import { prisma } from '../db/client.js';
 import { NotFoundError, BadRequestError } from '../middleware/error-handler.js';
 import { extractWoNumber, sanitizeFolderName, findWoFolder, getOrCreateOrderFolder, FILE_CATEGORIES } from '../lib/folder-utils.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 
 export const fileBrowserRouter = Router();
 
@@ -592,7 +593,7 @@ fileBrowserRouter.put('/orders/:orderId/link-folder', async (req: AuthRequest, r
     select: { id: true, orderNumber: true, networkFolderPath: true },
   });
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { id: order.id, orderNumber: order.orderNumber } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { id: order.id, orderNumber: order.orderNumber } }));
 
   res.json({
     success: true,
@@ -616,7 +617,7 @@ fileBrowserRouter.delete('/orders/:orderId/link-folder', async (req: AuthRequest
     select: { id: true, orderNumber: true },
   });
 
-  broadcast({ type: 'ORDER_UPDATED', payload: { id: order.id, orderNumber: order.orderNumber } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ORDER_UPDATED', payload: { id: order.id, orderNumber: order.orderNumber } }));
 
   res.json({ success: true, data: { orderId: order.id, message: 'Folder unlinked' } });
 });

@@ -21,7 +21,7 @@ import {
   Undo2,
   Printer,
 } from 'lucide-react';
-import { scoreSearchText } from '@erp/shared';
+import { getStationDisplayName, scoreSearchText } from '@erp/shared';
 import {
   openZundCutQueue,
   openExternalPath,
@@ -915,7 +915,7 @@ export function ProductionStation() {
   };
 
   const getStationBadge = (sp: StationProgress) => {
-    const label = STATION_LABELS[sp.station] || sp.station.replace(/_/g, ' ');
+    const label = STATION_LABELS[sp.station] || getStationDisplayName(sp.station);
     const colors =
       sp.status === 'COMPLETED'
         ? 'bg-green-100 text-green-700'

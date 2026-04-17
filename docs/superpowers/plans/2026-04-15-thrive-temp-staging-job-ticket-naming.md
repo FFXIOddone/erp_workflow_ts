@@ -1,12 +1,12 @@
-# Thrive Temp Staging and Job-Ticket Naming
+# Thrive Temp Staging and Smart File Naming
 
 AGENT-AUTO | COMPLETE
 
 ## Goal
-Keep Fiery/Vutek on the JDF/JMF path, and make Thrive-only sends stage a renamed copy of the source PDF into the hotfolder so the file name carries the job-ticket context we need for record keeping and linkage.
+Keep Fiery/Vutek on the JDF/JMF path, and make Thrive-only sends stage a renamed copy of the source PDF into the hotfolder using Fiery's Smart File Name Job Submission metadata so the file name itself carries the job-ticket context we need for record keeping and linkage.
 
 ## Tasks
-- [x] Define a stable Thrive filename convention that encodes WO, customer, and job description.
+- [x] Define a stable Thrive filename convention that encodes Smart File Name metadata in `_#JMD#_` order.
 - [x] Add a Thrive-only temp staging helper that renames the file before copying it into the hotfolder.
 - [x] Extend Thrive parsing so the new filename convention recovers the same metadata.
 - [x] Add tests covering the naming helper, parser round-trip, and temp cleanup behavior.

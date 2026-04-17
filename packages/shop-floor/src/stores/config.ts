@@ -68,6 +68,10 @@ function shouldResetApiUrl(apiUrl: string): boolean {
   );
 }
 
+function normalizeApiUrl(apiUrl: string): string {
+  return apiUrl.trim().replace(/\/+$/, '');
+}
+
 function getDefaultApiUrl(): string {
   // In browser dev mode, use the same host as the page so LAN clients
   // can reach the API on the ERP machine instead of their own localhost.
@@ -86,7 +90,7 @@ function getDefaultApiUrl(): string {
 }
 
 const defaultConfig: AppConfig = {
-  apiUrl: getDefaultApiUrl(),
+  apiUrl: normalizeApiUrl(getDefaultApiUrl()),
   networkDrivePath: '',
   macNetworkDrivePath: '',
   hotfolders: [],
@@ -102,7 +106,10 @@ export const useConfigStore = create<ConfigState>()(
       activeStation: null,
       isConfigured: false,
       setApiUrl: (apiUrl) =>
-        set((s) => ({ config: { ...s.config, apiUrl }, isConfigured: true })),
+        set((s) => ({
+          config: { ...s.config, apiUrl: normalizeApiUrl(apiUrl) },
+          isConfigured: true,
+        })),
       setNetworkDrivePath: (networkDrivePath) =>
         set((s) => ({ config: { ...s.config, networkDrivePath } })),
       setMacNetworkDrivePath: (macNetworkDrivePath) =>
@@ -126,21 +133,27 @@ export const useConfigStore = create<ConfigState>()(
     }),
     {
       name: 'shop-floor-config',
-      version: 6,
+      version: 7,
       migrate: (persisted: any, version: number) => {
         const state = persisted?.state ?? persisted;
-        const apiUrl = state?.config?.apiUrl || '';
-        // Fix bad API URLs from earlier versions
-        if (version < 6 && shouldResetApiUrl(apiUrl)) {
+        const apiUrl = normalizeApiUrl(state?.config?.apiUrl || '');
+        // Fix bad API URLs from earlier versions and normalize any older persisted values.
+        if (shouldResetApiUrl(apiUrl)) {
           return {
             ...state,
             config: {
               ...state?.config,
-              apiUrl: getDefaultApiUrl(),
+              apiUrl: normalizeApiUrl(getDefaultApiUrl()),
             },
           };
         }
-        return state;
+        return {
+          ...state,
+          config: {
+            ...state?.config,
+            apiUrl: apiUrl || normalizeApiUrl(getDefaultApiUrl()),
+          },
+        };
       },
     },
   ),

@@ -25,7 +25,9 @@ import {
 } from '../services/file-chain.js';
 import { getZundWatcherStatus } from '../services/zund-watcher.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 
 const router = Router();
 router.use(authenticate);
@@ -108,16 +110,19 @@ router.post('/links', async (req: AuthRequest, res) => {
     status,
   });
 
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: workOrderId,
-    description: `Added file to chain: ${printFileName}`,
-    userId: req.userId!,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: workOrderId,
+      entityName: printFileName,
+      description: `Added file to chain: ${printFileName}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId } });
+  broadcast(buildRouteBroadcastPayload({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId } }));
   res.status(201).json({ success: true, data: link });
 });
 
@@ -142,16 +147,19 @@ router.put('/links/:id/cut-file', async (req: AuthRequest, res) => {
     userId: req.userId!,
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: link.workOrderId,
-    description: `Manually linked cut file: ${cutFileName}`,
-    userId: req.userId!,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: link.workOrderId,
+      entityName: cutFileName,
+      description: `Manually linked cut file: ${cutFileName}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } });
+  broadcast(buildRouteBroadcastPayload({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } }));
   res.json({ success: true, data: link });
 });
 
@@ -164,16 +172,19 @@ router.put('/links/:id/cut-file', async (req: AuthRequest, res) => {
 router.put('/links/:id/confirm', async (req: AuthRequest, res) => {
   const link = await confirmPrintCutLink(req.params.id, req.userId!);
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: link.workOrderId,
-    description: `Confirmed file chain link: ${link.cutFileName}`,
-    userId: req.userId!,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: link.workOrderId,
+      entityName: link.cutFileName ?? undefined,
+      description: `Confirmed file chain link: ${link.cutFileName}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } });
+  broadcast(buildRouteBroadcastPayload({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } }));
   res.json({ success: true, data: link });
 });
 
@@ -184,16 +195,19 @@ router.put('/links/:id/confirm', async (req: AuthRequest, res) => {
 router.put('/links/:id/dismiss', async (req: AuthRequest, res) => {
   const link = await dismissPrintCutLink(req.params.id, req.userId!);
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: link.workOrderId,
-    description: `Dismissed file chain link suggestion`,
-    userId: req.userId!,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: link.workOrderId,
+      entityName: link.cutFileName ?? undefined,
+      description: `Dismissed file chain link suggestion`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } });
+  broadcast(buildRouteBroadcastPayload({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } }));
   res.json({ success: true, data: link });
 });
 
@@ -212,7 +226,7 @@ router.put('/links/:id/status', async (req: AuthRequest, res) => {
 
   const link = await updatePrintCutLinkStatus(req.params.id, status, extra);
 
-  broadcast({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } });
+  broadcast(buildRouteBroadcastPayload({ type: 'FILE_CHAIN_UPDATED', payload: { workOrderId: link.workOrderId } }));
   res.json({ success: true, data: link });
 });
 
@@ -239,14 +253,17 @@ router.get('/trace', async (req: AuthRequest, res) => {
 router.post('/sync', async (req: AuthRequest, res) => {
   const result = await runAutoLinkingCycle();
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.WORK_ORDER,
-    entityId: 'system',
-    description: `File chain sync: ${result.linksCreated} created, ${result.linksUpdated} updated, ${result.errors.length} errors`,
-    userId: req.userId!,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.WORK_ORDER,
+      entityId: 'system',
+      entityName: 'File Chain Sync',
+      description: `File chain sync: ${result.linksCreated} created, ${result.linksUpdated} updated, ${result.errors.length} errors`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
   res.json({ success: true, data: result });
 });

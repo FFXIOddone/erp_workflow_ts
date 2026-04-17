@@ -5,7 +5,10 @@ import fs from 'fs';
 import { AuthRequest, authenticate } from '../middleware/auth.js';
 import { prisma } from '../db/client.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
+import { WorkOrderReferenceSelect } from '../lib/dto-selects.js';
 import { UploadDocumentSchema, UpdateDocumentSchema, DocumentFilterSchema, splitSearchTerms } from '@erp/shared';
 import { DocumentCategory } from '@prisma/client';
 
@@ -210,7 +213,7 @@ documentsRouter.get('/:id', async (req: AuthRequest, res: Response) => {
     include: {
       uploadedBy: { select: { id: true, displayName: true } },
       customer: { select: { id: true, name: true } },
-      order: { select: { id: true, orderNumber: true, customerName: true } },
+      order: { select: WorkOrderReferenceSelect },
       quote: { select: { id: true, quoteNumber: true, customerName: true } },
       vendor: { select: { id: true, name: true } },
       subcontractor: { select: { id: true, name: true } },
@@ -292,16 +295,19 @@ documentsRouter.post('/', upload.single('file'), async (req: AuthRequest, res: R
       },
     });
 
-    await logActivity({
-      action: ActivityAction.CREATE,
-      entityType: EntityType.OTHER,
-      entityId: document.id,
-      description: `Uploaded document: ${document.name}`,
-      userId,
-      req,
-    });
+    await logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.CREATE,
+        entityType: EntityType.OTHER,
+        entityId: document.id,
+        entityName: document.name,
+        description: `Uploaded document: ${document.name}`,
+        userId,
+        req,
+      }),
+    );
 
-    broadcast({ type: 'DOCUMENT_UPLOADED', payload: document });
+    broadcast(buildRouteBroadcastPayload({ type: 'DOCUMENT_UPLOADED', payload: document }));
 
     res.status(201).json({ success: true, data: document });
   } catch (error) {
@@ -367,16 +373,19 @@ documentsRouter.post('/:id/version', upload.single('file'), async (req: AuthRequ
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.OTHER,
-    entityId: newDoc.id,
-    description: `Uploaded version ${newDoc.version} of document: ${newDoc.name}`,
-    userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.OTHER,
+      entityId: newDoc.id,
+      entityName: newDoc.name,
+      description: `Uploaded version ${newDoc.version} of document: ${newDoc.name}`,
+      userId,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'DOCUMENT_UPDATED', payload: newDoc });
+  broadcast(buildRouteBroadcastPayload({ type: 'DOCUMENT_UPDATED', payload: newDoc }));
 
   res.status(201).json({ success: true, data: newDoc });
 });
@@ -395,16 +404,19 @@ documentsRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.OTHER,
-    entityId: document.id,
-    description: `Updated document: ${document.name}`,
-    userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.OTHER,
+      entityId: document.id,
+      entityName: document.name,
+      description: `Updated document: ${document.name}`,
+      userId,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'DOCUMENT_UPDATED', payload: document });
+  broadcast(buildRouteBroadcastPayload({ type: 'DOCUMENT_UPDATED', payload: document }));
 
   res.json({ success: true, data: document });
 });
@@ -458,16 +470,19 @@ documentsRouter.delete('/:id', async (req: AuthRequest, res: Response) => {
     await prisma.document.delete({ where: { id } });
   }
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.OTHER,
-    entityId: id,
-    description: `Deleted document: ${document.name}${deleteVersions ? ' (and all versions)' : ''}`,
-    userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      entityType: EntityType.OTHER,
+      entityId: id,
+      entityName: document.name,
+      description: `Deleted document: ${document.name}${deleteVersions ? ' (and all versions)' : ''}`,
+      userId,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'DOCUMENT_DELETED', payload: { id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'DOCUMENT_DELETED', payload: { id } }));
 
   res.json({ success: true, message: 'Document deleted' });
 });

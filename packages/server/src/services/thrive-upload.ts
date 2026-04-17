@@ -7,8 +7,12 @@ export interface CopyThriveFileToHotfolderParams {
   sourceFilePath: string;
   hotfolderPath: string;
   workOrderNumber?: string | null;
+  companyName?: string | null;
   customerName?: string | null;
   jobDescription?: string | null;
+  copies?: number | null;
+  magnification?: number | null;
+  rotation?: number | null;
 }
 
 export interface CopyThriveFileToHotfolderResult {
@@ -49,13 +53,24 @@ async function resolveUniqueDestinationPath(filePath: string): Promise<string> {
 
 /**
  * Thrive-only upload flow.
- * Stage the file in a temp directory with a ticket-style name, copy it into the
- * Thrive hotfolder, and clean up the temp files once the copy completes.
+ * Stage the file in a temp directory with Fiery's Smart File Name Job Submission
+ * convention, copy it into the Thrive hotfolder, and clean up the temp files once
+ * the copy completes.
  */
 export async function copyThriveFileToHotfolder(
   params: CopyThriveFileToHotfolderParams,
 ): Promise<CopyThriveFileToHotfolderResult> {
-  const { sourceFilePath, hotfolderPath, workOrderNumber, customerName, jobDescription } = params;
+  const {
+    sourceFilePath,
+    hotfolderPath,
+    workOrderNumber,
+    companyName,
+    customerName,
+    jobDescription,
+    copies,
+    magnification,
+    rotation,
+  } = params;
 
   const validation = await validateSourceFile(sourceFilePath);
   if (!validation.valid) {
@@ -70,9 +85,13 @@ export async function copyThriveFileToHotfolder(
 
   const ticketName = buildThriveJobTicketName({
     workOrderNumber,
+    companyName,
     customerName,
     sourceFileName: sourceFilePath,
     jobDescription,
+    copies,
+    magnification,
+    rotation,
   });
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'erp-thrive-'));

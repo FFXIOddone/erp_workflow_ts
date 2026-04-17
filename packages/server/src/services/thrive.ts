@@ -152,6 +152,7 @@ export interface ThriveJob {
   fileName: string;
   cutId?: string | null;
   workOrderNumber?: string;
+  companyName?: string | null;
   status: string;
   statusCode: number;
   createTime: string;
@@ -173,6 +174,7 @@ export interface ThriveCutJob {
   fileName: string;
   filePath?: string;
   workOrderNumber?: string;
+  companyName?: string | null;
   device: string;
   printer: string;
   media: string;
@@ -186,8 +188,12 @@ export interface ThriveCutJob {
 export interface ParsedJobInfo {
   workOrderNumber: string | null;
   customerName: string | null;
+  companyName: string | null;
   companyBrand: 'PORT_CITY_SIGNS' | 'WILDE_SIGNS' | null;
   jobDescription: string | null;
+  copies: number | null;
+  magnification: number | null;
+  rotation: number | null;
   isSafariPath: boolean;
 }
 
@@ -195,55 +201,111 @@ function normalizeThriveTicketSegment(value: string | null | undefined): string 
   return normalizeWhitespace(String(value ?? '').replace(/[<>:"/\\|?*\x00-\x1F]+/g, ' '));
 }
 
+function normalizeThriveMetadataSegment(value: string | null | undefined): string {
+  return normalizeWhitespace(String(value ?? '').replace(/[;<>:"/\\|?*\x00-\x1F]+/g, ' '));
+}
+
+function normalizeThriveWorkOrderNumber(value: string | null | undefined): string | null {
+  const normalized = normalizeThriveTicketSegment(value);
+  if (!normalized) return null;
+  const digits = normalized.replace(/^wo/i, '').replace(/[^0-9]/g, '');
+  return digits || null;
+}
+
+function trimTrailingEmptySegments(values: string[]): string[] {
+  const result = [...values];
+  while (result.length > 0 && result[result.length - 1] === '') {
+    result.pop();
+  }
+  return result;
+}
+
 function parseStructuredThriveTicketName(text: string): ParsedJobInfo | null {
   const baseName = path.basename(text).replace(/\.[^.]+$/u, '');
-  const parts = baseName
-    .split('__')
-    .map((part) => normalizeThriveTicketSegment(part))
-    .filter((part) => Boolean(part));
+  const tokenIndex = baseName.indexOf('_#JMD#_');
+  if (tokenIndex < 0) return null;
 
-  if (parts.length < 2) return null;
+  const jobDescription = normalizeThriveTicketSegment(baseName.slice(0, tokenIndex));
+  const metadata = baseName.slice(tokenIndex + '_#JMD#_'.length);
+  const parts = metadata.split(';');
+  while (parts.length < 6) {
+    parts.push('');
+  }
 
-  const workOrderMatch = parts[0]?.match(/^WO(\d{4,6})$/i);
-  if (!workOrderMatch) return null;
+  const copies = Number.parseInt(parts[0] || '', 10);
+  const magnification = Number.parseInt(parts[1] || '', 10);
+  const rotation = Number.parseInt(parts[2] || '', 10);
+  const workOrderNumber = normalizeThriveWorkOrderNumber(parts[3]);
+  const companyName = normalizeThriveTicketSegment(parts[4]) || null;
+  const customerName = normalizeThriveTicketSegment(parts[5]) || null;
 
-  const workOrderNumber = workOrderMatch[1];
   return {
     workOrderNumber,
-    customerName: parts[1] || null,
-    companyBrand: workOrderNumber.length === 4 ? 'PORT_CITY_SIGNS' : 'WILDE_SIGNS',
-    jobDescription: parts[2] || null,
+    customerName,
+    companyName,
+    companyBrand: workOrderNumber ? (workOrderNumber.length === 4 ? 'PORT_CITY_SIGNS' : 'WILDE_SIGNS') : null,
+    jobDescription: jobDescription || null,
+    copies: Number.isFinite(copies) && copies > 0 ? copies : null,
+    magnification: Number.isFinite(magnification) && magnification > 0 ? magnification : null,
+    rotation: Number.isFinite(rotation) ? rotation : null,
     isSafariPath: text.toLowerCase().includes('\\safari\\'),
   };
 }
 
+export function buildThriveSmartFileName(params: {
+  workOrderNumber?: string | null;
+  companyName?: string | null;
+  customerName?: string | null;
+  sourceFileName?: string | null;
+  copies?: number | null;
+  magnification?: number | null;
+  rotation?: number | null;
+}): string {
+  const sourceBaseName = params.sourceFileName
+    ? normalizeThriveTicketSegment(path.basename(params.sourceFileName, path.extname(params.sourceFileName)))
+    : '';
+  const ext = params.sourceFileName ? path.extname(params.sourceFileName) || '.pdf' : '.pdf';
+  const metadataSegments = trimTrailingEmptySegments([
+    params.copies != null && Number.isFinite(params.copies) ? String(Math.max(1, Math.trunc(params.copies))) : '',
+    params.magnification != null && Number.isFinite(params.magnification)
+      ? String(Math.trunc(params.magnification))
+      : '',
+    params.rotation != null && Number.isFinite(params.rotation)
+      ? String(Math.trunc(params.rotation))
+      : '',
+    normalizeThriveWorkOrderNumber(params.workOrderNumber) ?? '',
+    normalizeThriveMetadataSegment(params.companyName),
+    normalizeThriveMetadataSegment(params.customerName),
+  ]);
+  const metadata = metadataSegments.join(';');
+  const metadataSuffix = `_#JMD#_${metadata}`;
+  const baseLabel = normalizeThriveTicketSegment(sourceBaseName || 'ERP').replace(/__+/g, '__');
+  const maxBaseLength = Math.max(1, 240 - ext.length - metadataSuffix.length);
+  const clippedBase = baseLabel.slice(0, maxBaseLength).replace(/[.\s_-]+$/g, '');
+  const finalBase = clippedBase || 'ERP';
+
+  return `${finalBase}${metadataSuffix}${ext}`;
+}
+
 export function buildThriveJobTicketName(params: {
   workOrderNumber?: string | null;
+  companyName?: string | null;
   customerName?: string | null;
   sourceFileName?: string | null;
   jobDescription?: string | null;
+  copies?: number | null;
+  magnification?: number | null;
+  rotation?: number | null;
 }): string {
-  const parts: string[] = [];
-  const workOrderNumber = params.workOrderNumber?.trim().replace(/^wo/i, '');
-  const customerName = normalizeThriveTicketSegment(params.customerName);
-  const sourceBaseName = params.sourceFileName
-    ? normalizeThriveTicketSegment(
-        path.basename(params.sourceFileName, path.extname(params.sourceFileName)),
-      )
-    : '';
-  const effectiveDescription = normalizeThriveTicketSegment(params.jobDescription || sourceBaseName);
-
-  if (workOrderNumber) parts.push(`WO${workOrderNumber}`);
-  if (customerName) parts.push(customerName);
-  if (effectiveDescription) parts.push(effectiveDescription);
-
-  const ext = params.sourceFileName ? path.extname(params.sourceFileName) || '.pdf' : '.pdf';
-  const rawLabel = parts.join('__');
-  const sanitized = normalizeThriveTicketSegment(rawLabel).replace(/__+/g, '__');
-  const maxBaseLength = Math.max(40, 240 - ext.length);
-  const clipped = sanitized.slice(0, maxBaseLength).replace(/[.\s_-]+$/g, '');
-
-  return clipped ? `${clipped}${ext}` : `ERP-${Date.now()}${ext}`;
+  return buildThriveSmartFileName({
+    workOrderNumber: params.workOrderNumber,
+    companyName: params.companyName,
+    customerName: params.customerName,
+    sourceFileName: params.sourceFileName ?? params.jobDescription ?? null,
+    copies: params.copies,
+    magnification: params.magnification,
+    rotation: params.rotation,
+  });
 }
 
 /**
@@ -256,8 +318,12 @@ export function parseJobInfo(text: string): ParsedJobInfo {
   const result: ParsedJobInfo = {
     workOrderNumber: null,
     customerName: null,
+    companyName: null,
     companyBrand: null,
     jobDescription: null,
+    copies: null,
+    magnification: null,
+    rotation: null,
     isSafariPath: false,
   };
 

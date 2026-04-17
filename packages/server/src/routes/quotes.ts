@@ -3,6 +3,7 @@ import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../middleware/error-handler.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import {
   CreateQuoteSchema,
@@ -372,11 +373,11 @@ quotesRouter.post('/:id/convert', async (req: AuthRequest, res: Response) => {
     },
   });
 
-  broadcast({
+  broadcast(buildRouteBroadcastPayload({
     type: 'ORDER_CREATED' as any,
     payload: { orderNumber: workOrder.orderNumber },
     timestamp: new Date(),
-  });
+  }));
 
   res.json({ success: true, data: workOrder });
 });

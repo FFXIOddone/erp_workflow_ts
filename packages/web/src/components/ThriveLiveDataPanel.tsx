@@ -18,8 +18,10 @@ import {
   FolderOpen,
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { matchesSearchFields } from '@erp/shared';
 import { api } from '../lib/api';
+import { LiveDataSummaryGrid, type LiveDataSummaryItem } from './LiveDataSummaryGrid';
+import { LiveDataEmptyState, buildLiveDataEmptyCopy } from './LiveDataEmptyState';
+import { filterThriveLiveDataJobs } from './live-data-filters';
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -77,6 +79,8 @@ interface ThriveMachineData {
     totalPrintJobs: number;
     totalCutJobs: number;
     linkedToWorkOrders: number;
+    queuedCount: number;
+    completedCount: number;
     printers: string[];
   };
 }
@@ -138,22 +142,11 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
   // Filter + sort print jobs
   const filteredPrintJobs = useMemo(() => {
     if (!data?.printJobs) return [];
-    let jobs = [...data.printJobs];
-
-    if (search) {
-      jobs = jobs.filter((job) =>
-        matchesSearchFields(
-          [job.jobName, job.workOrderNumber, job.customerName, job.printer, job.fileName],
-          search,
-        ),
-      );
-    }
-    if (statusFilter !== 'all') {
-      jobs = jobs.filter(j => j.status === statusFilter);
-    }
-    if (printerFilter !== 'all') {
-      jobs = jobs.filter(j => j.printer === printerFilter);
-    }
+    const jobs = filterThriveLiveDataJobs([...data.printJobs], {
+      search,
+      statusFilter,
+      printerFilter,
+    });
 
     jobs.sort((a, b) => {
       let cmp = 0;
@@ -209,6 +202,26 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
   }
 
   const { summary, cutJobs, printJobs } = data;
+  const summaryItems: LiveDataSummaryItem[] = [
+    {
+      key: 'linked',
+      label: 'Linked',
+      value: summary.linkedToWorkOrders,
+      tone: 'purple',
+    },
+    {
+      key: 'queued',
+      label: 'Queued',
+      value: summary.queuedCount,
+      tone: 'amber',
+    },
+    {
+      key: 'completed',
+      label: 'Completed',
+      value: summary.completedCount,
+      tone: 'green',
+    },
+  ];
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
@@ -224,20 +237,7 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {/* Summary badges */}
-          <div className="flex items-center gap-2 text-xs">
-            <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-full font-medium">
-              {summary.totalPrintJobs} print jobs
-            </span>
-            {summary.totalCutJobs > 0 && (
-              <span className="px-2 py-1 bg-orange-50 text-orange-700 rounded-full font-medium">
-                {summary.totalCutJobs} Fiery cut files
-              </span>
-            )}
-            <span className="px-2 py-1 bg-green-50 text-green-700 rounded-full font-medium">
-              {summary.linkedToWorkOrders} linked
-            </span>
-          </div>
+          <LiveDataSummaryGrid items={summaryItems} variant="pills" className="flex items-center gap-2 text-xs" />
           <button
             onClick={() => refetch()}
             disabled={isFetching}
@@ -309,10 +309,10 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
 
           {/* Table */}
           {filteredPrintJobs.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">
-              <FileText className="h-8 w-8 mx-auto mb-2 text-gray-300" />
-              <p>{printJobs.length === 0 ? 'No print jobs in queue' : 'No jobs match filters'}</p>
-            </div>
+            <LiveDataEmptyState
+              icon={FileText}
+              {...buildLiveDataEmptyCopy('print jobs', Boolean(search || statusFilter !== 'all' || printerFilter !== 'all'))}
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -407,10 +407,10 @@ export default function ThriveLiveDataPanel({ machineIp }: Props) {
       {tab === 'cut' && (
         <div className="overflow-x-auto">
           {cutJobs.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">
-              <Scissors className="h-8 w-8 mx-auto mb-2 text-gray-300" />
-              <p>No Fiery cut files linked</p>
-            </div>
+            <LiveDataEmptyState
+              icon={Scissors}
+              {...buildLiveDataEmptyCopy('Fiery cut files')}
+            />
           ) : (
             <table className="w-full text-sm">
               <thead>

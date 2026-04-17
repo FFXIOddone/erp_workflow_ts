@@ -4,7 +4,9 @@ import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import {
   UpdateJobCostSchema,
   JobCostFilterSchema,
@@ -175,21 +177,23 @@ router.post('/order/:workOrderId/calculate', async (req: AuthRequest, res) => {
 
   const calculation = await updateJobCost(workOrderId);
 
-  await logActivity({
-    action: ActivityAction.CALCULATE_COST,
-    entityType: EntityType.JOB_COST,
-    entityId: workOrderId,
-    entityName: order.orderNumber,
-    description: `Calculated job cost for ${order.orderNumber}`,
-    details: {
-      totalCost: calculation.totalCost,
-      grossMargin: calculation.grossMargin,
-    },
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CALCULATE_COST,
+      entityType: EntityType.JOB_COST,
+      entityId: workOrderId,
+      entityName: order.orderNumber,
+      description: `Calculated job cost for ${order.orderNumber}`,
+      details: {
+        totalCost: calculation.totalCost,
+        grossMargin: calculation.grossMargin,
+      },
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'JOB_COST_UPDATED', payload: calculation });
+  broadcast(buildRouteBroadcastPayload({ type: 'JOB_COST_UPDATED', payload: calculation }));
 
   res.json({ success: true, data: calculation });
 });
@@ -218,18 +222,20 @@ router.put('/order/:workOrderId', async (req: AuthRequest, res) => {
     otherDirectCost: data.otherDirectCost,
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.JOB_COST,
-    entityId: workOrderId,
-    entityName: order.orderNumber,
-    description: `Updated job cost for ${order.orderNumber}`,
-    details: data,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.JOB_COST,
+      entityId: workOrderId,
+      entityName: order.orderNumber,
+      description: `Updated job cost for ${order.orderNumber}`,
+      details: data,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'JOB_COST_UPDATED', payload: calculation });
+  broadcast(buildRouteBroadcastPayload({ type: 'JOB_COST_UPDATED', payload: calculation }));
 
   res.json({ success: true, data: calculation });
 });
@@ -251,13 +257,17 @@ router.post('/recalculate-all', async (req: AuthRequest, res) => {
     }
   }
 
-  await logActivity({
-    action: ActivityAction.CALCULATE_COST,
-    entityType: EntityType.JOB_COST,
-    description: `Recalculated job costs for ${processed} orders`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CALCULATE_COST,
+      entityType: EntityType.JOB_COST,
+      entityId: 'recalculate-all',
+      entityName: 'Recalculate All Job Costs',
+      description: `Recalculated job costs for ${processed} orders`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
   res.json({ 
     success: true, 

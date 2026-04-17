@@ -14,6 +14,7 @@ import { prisma } from '../db/client.js';
 import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError, BadRequestError } from '../middleware/error-handler.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { UserRole } from '@erp/shared';
 import {
   AlertType,
@@ -357,7 +358,7 @@ alertsRouter.post('/', requireAdmin, async (req: AuthRequest, res: Response) => 
   });
 
   // Broadcast to connected users
-  broadcast({ type: 'ALERT_CREATED', payload: alert });
+  broadcast(buildRouteBroadcastPayload({ type: 'ALERT_CREATED', payload: alert }));
 
   res.status(201).json({ success: true, data: alert });
 });
@@ -399,7 +400,7 @@ alertsRouter.patch('/:id', requireAdmin, async (req: AuthRequest, res: Response)
     },
   });
 
-  broadcast({ type: 'ALERT_UPDATED', payload: alert });
+  broadcast(buildRouteBroadcastPayload({ type: 'ALERT_UPDATED', payload: alert }));
 
   res.json({ success: true, data: alert });
 });
@@ -420,7 +421,7 @@ alertsRouter.delete('/:id', requireAdmin, async (req: AuthRequest, res: Response
 
   await prisma.alert.delete({ where: { id: req.params.id } });
 
-  broadcast({ type: 'ALERT_DELETED', payload: { id: req.params.id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'ALERT_DELETED', payload: { id: req.params.id } }));
 
   res.json({ success: true, message: 'Alert deleted' });
 });
@@ -615,7 +616,7 @@ alertsRouter.post('/rules/:id/trigger', requireAdmin, async (req: AuthRequest, r
     data: { lastTriggeredAt: new Date() },
   });
 
-  broadcast({ type: 'ALERT_TRIGGERED', payload: history });
+  broadcast(buildRouteBroadcastPayload({ type: 'ALERT_TRIGGERED', payload: history }));
 
   res.json({ success: true, data: history });
 });
@@ -893,10 +894,10 @@ export async function processAlertRules(): Promise<{ processed: number; triggere
         result.triggered++;
 
         // Broadcast
-        broadcast({
+        broadcast(buildRouteBroadcastPayload({
           type: 'ALERT_TRIGGERED',
           payload: { title, message, type: rule.alertType, severity: rule.alertSeverity },
-        });
+        }));
       }
     } catch (error) {
       result.errors++;

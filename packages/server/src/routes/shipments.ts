@@ -2,17 +2,21 @@ import { Router } from 'express';
 import { Carrier, ShipmentStatus } from '@prisma/client';
 import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
-import { BadRequestError, NotFoundError } from '../middleware/error-handler.js';
-import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { BadRequestError } from '../middleware/error-handler.js';
+import { logActivity, ActivityAction } from '../lib/activity-logger.js';
+import { buildShipmentRouteActivityPayload } from '../lib/shipment-route-activity.js';
+import { requireShipmentState } from '../lib/shipment-route-guards.js';
 import { resolveFedExCarrier } from '../services/fedex-carrier.js';
 import { reconcileShippedOrdersWithShipments } from '../services/shipment-linking.js';
 import { applyShipmentTrackingNumber, normalizeTrackingNumber } from '../services/shipment-tracking.js';
 import { resolveFedExStatusSummary, type FedExStatusSummary } from '../services/fedex-status-summary.js';
+import { buildListOrderBy, normalizeListQuery } from '../lib/list-query.js';
 import {
   scheduleFedExTrackingRefreshIfStale,
   syncFedExTrackingForShipment,
 } from '../services/fedex-api.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 import {
   CreateShipmentSchema,
@@ -218,7 +222,15 @@ router.get('/', async (req: AuthRequest, res) => {
   });
 
   const filters = ShipmentFilterSchema.parse(req.query);
-  const { page, pageSize, status, carrier, workOrderId, search, fromDate, toDate, sortBy, sortOrder } = filters;
+  const { page: normalizedPage, pageSize: normalizedPageSize, search: normalizedSearch } =
+    normalizeListQuery({
+      page: filters.page,
+      pageSize: filters.pageSize,
+      search: filters.search,
+      defaultPageSize: filters.pageSize,
+      maxPageSize: 100,
+    });
+  const { status, carrier, workOrderId, fromDate, toDate, sortBy, sortOrder } = filters;
 
   const where: any = {};
 
@@ -234,8 +246,8 @@ router.get('/', async (req: AuthRequest, res) => {
     where.workOrderId = workOrderId;
   }
 
-  if (search) {
-    const searchWhere = buildTokenizedSearchWhere(search, [
+  if (normalizedSearch) {
+    const searchWhere = buildTokenizedSearchWhere(normalizedSearch, [
       'trackingNumber',
       'workOrder.orderNumber',
       'workOrder.customerName',
@@ -257,9 +269,9 @@ router.get('/', async (req: AuthRequest, res) => {
     prisma.shipment.findMany({
       where,
       include: shipmentTrackingInclude,
-      orderBy: { [sortBy]: sortOrder },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      orderBy: buildListOrderBy(sortBy, sortOrder),
+      skip: (normalizedPage - 1) * normalizedPageSize,
+      take: normalizedPageSize,
     }),
     prisma.shipment.count({ where }),
   ]);
@@ -271,9 +283,9 @@ router.get('/', async (req: AuthRequest, res) => {
     data: {
       items: correctedShipments,
       total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize),
+      page: normalizedPage,
+      pageSize: normalizedPageSize,
+      totalPages: Math.ceil(total / normalizedPageSize),
     },
   });
 });
@@ -318,11 +330,9 @@ router.get('/:id', async (req: AuthRequest, res) => {
     },
   });
 
-  if (!shipment) {
-    throw NotFoundError('Shipment not found');
-  }
+  const trackedSourceShipment = requireShipmentState(shipment);
 
-  const trackedShipment = applyShipmentTrackingNumber(shipment);
+  const trackedShipment = applyShipmentTrackingNumber(trackedSourceShipment);
   const [correctedShipment] = applyReadSideShipmentCorrections([trackedShipment]);
 
   void scheduleFedExTrackingRefreshIfStale(id).catch((error) => {
@@ -339,7 +349,7 @@ router.post('/:id/refresh-status', async (req: AuthRequest, res) => {
 
   const result = await syncFedExTrackingForShipment(id, { force });
   if (result.status === 'synced') {
-    broadcast({
+    broadcast(buildRouteBroadcastPayload({
       type: 'SHIPMENT_UPDATED',
       payload: {
         id: result.shipmentId,
@@ -348,7 +358,7 @@ router.post('/:id/refresh-status', async (req: AuthRequest, res) => {
         carrier: result.carrier,
         actualDelivery: result.actualDelivery,
       },
-    });
+    }));
   }
 
   res.json({ success: true, data: result });
@@ -415,21 +425,20 @@ router.post('/', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.SHIP_ORDER,
-    entityType: EntityType.SHIPMENT,
-    entityId: shipment.id,
-    entityName: shipment.trackingNumber || shipment.id.slice(0, 8),
-    description: `Created shipment for order ${workOrder.orderNumber}`,
-    details: {
-      carrier: shipmentData.carrier,
-      trackingNumber: shipmentData.trackingNumber,
-    },
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildShipmentRouteActivityPayload({
+      action: ActivityAction.SHIP_ORDER,
+      shipment,
+      description: `Created shipment for order ${workOrder.orderNumber}`,
+      details: {
+        carrier: shipmentData.carrier,
+        trackingNumber: shipmentData.trackingNumber,
+      },
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SHIPMENT_CREATED', payload: shipment });
+  broadcast(buildRouteBroadcastPayload({ type: 'SHIPMENT_CREATED', payload: shipment }));
 
   res.status(201).json({ success: true, data: shipment });
 });
@@ -439,15 +448,10 @@ router.put('/:id', async (req: AuthRequest, res) => {
   const { id } = req.params;
   const data = UpdateShipmentSchema.parse(req.body);
 
-  const existing = await prisma.shipment.findUnique({ where: { id } });
-
-  if (!existing) {
-    throw NotFoundError('Shipment not found');
-  }
-
-  if (existing.status === 'DELIVERED') {
-    throw BadRequestError('Cannot update delivered shipment');
-  }
+  const existing = requireShipmentState(await prisma.shipment.findUnique({ where: { id } }), {
+    disallowedStatuses: ['DELIVERED'],
+    badRequestMessage: 'Cannot update delivered shipment',
+  });
 
   const shipment = await prisma.shipment.update({
     where: { id },
@@ -464,18 +468,17 @@ router.put('/:id', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.SHIPMENT,
-    entityId: shipment.id,
-    entityName: shipment.trackingNumber || shipment.id.slice(0, 8),
-    description: `Updated shipment ${shipment.trackingNumber || shipment.id.slice(0, 8)}`,
-    details: { changes: data },
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildShipmentRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      shipment,
+      description: `Updated shipment ${shipment.trackingNumber || shipment.id.slice(0, 8)}`,
+      details: { changes: data },
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SHIPMENT_UPDATED', payload: shipment });
+  broadcast(buildRouteBroadcastPayload({ type: 'SHIPMENT_UPDATED', payload: shipment }));
 
   res.json({ success: true, data: shipment });
 });
@@ -484,15 +487,10 @@ router.put('/:id', async (req: AuthRequest, res) => {
 router.post('/:id/pickup', async (req: AuthRequest, res) => {
   const { id } = req.params;
 
-  const existing = await prisma.shipment.findUnique({ where: { id } });
-
-  if (!existing) {
-    throw NotFoundError('Shipment not found');
-  }
-
-  if (existing.status !== 'PENDING') {
-    throw BadRequestError('Shipment has already been picked up');
-  }
+  const existing = requireShipmentState(await prisma.shipment.findUnique({ where: { id } }), {
+    allowedStatuses: ['PENDING'],
+    badRequestMessage: 'Shipment has already been picked up',
+  });
 
   const shipment = await prisma.shipment.update({
     where: { id },
@@ -502,7 +500,7 @@ router.post('/:id/pickup', async (req: AuthRequest, res) => {
     },
   });
 
-  broadcast({ type: 'SHIPMENT_UPDATED', payload: shipment });
+  broadcast(buildRouteBroadcastPayload({ type: 'SHIPMENT_UPDATED', payload: shipment }));
 
   res.json({ success: true, data: shipment });
 });
@@ -511,15 +509,10 @@ router.post('/:id/pickup', async (req: AuthRequest, res) => {
 router.post('/:id/transit', async (req: AuthRequest, res) => {
   const { id } = req.params;
 
-  const existing = await prisma.shipment.findUnique({ where: { id } });
-
-  if (!existing) {
-    throw NotFoundError('Shipment not found');
-  }
-
-  if (!['PENDING', 'PICKED_UP'].includes(existing.status)) {
-    throw BadRequestError('Invalid status transition');
-  }
+  const existing = requireShipmentState(await prisma.shipment.findUnique({ where: { id } }), {
+    allowedStatuses: ['PENDING', 'PICKED_UP'],
+    badRequestMessage: 'Invalid status transition',
+  });
 
   const shipment = await prisma.shipment.update({
     where: { id },
@@ -529,7 +522,7 @@ router.post('/:id/transit', async (req: AuthRequest, res) => {
     },
   });
 
-  broadcast({ type: 'SHIPMENT_UPDATED', payload: shipment });
+  broadcast(buildRouteBroadcastPayload({ type: 'SHIPMENT_UPDATED', payload: shipment }));
 
   res.json({ success: true, data: shipment });
 });
@@ -539,18 +532,13 @@ router.post('/:id/deliver', async (req: AuthRequest, res) => {
   const { id } = req.params;
   const data = MarkDeliveredSchema.parse(req.body);
 
-  const existing = await prisma.shipment.findUnique({
+  const existing = requireShipmentState(await prisma.shipment.findUnique({
     where: { id },
     include: { workOrder: true },
+  }), {
+    disallowedStatuses: ['DELIVERED'],
+    badRequestMessage: 'Shipment already delivered',
   });
-
-  if (!existing) {
-    throw NotFoundError('Shipment not found');
-  }
-
-  if (existing.status === 'DELIVERED') {
-    throw BadRequestError('Shipment already delivered');
-  }
 
   const shipment = await prisma.shipment.update({
     where: { id },
@@ -566,17 +554,16 @@ router.post('/:id/deliver', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.MARK_DELIVERED,
-    entityType: EntityType.SHIPMENT,
-    entityId: shipment.id,
-    entityName: shipment.trackingNumber || shipment.id.slice(0, 8),
-    description: `Marked shipment as delivered`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildShipmentRouteActivityPayload({
+      action: ActivityAction.MARK_DELIVERED,
+      shipment,
+      description: `Marked shipment as delivered`,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SHIPMENT_UPDATED', payload: shipment });
+  broadcast(buildRouteBroadcastPayload({ type: 'SHIPMENT_UPDATED', payload: shipment }));
 
   res.json({ success: true, data: shipment });
 });
@@ -586,15 +573,10 @@ router.post('/:id/exception', async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { notes } = req.body;
 
-  const existing = await prisma.shipment.findUnique({ where: { id } });
-
-  if (!existing) {
-    throw NotFoundError('Shipment not found');
-  }
-
-  if (existing.status === 'DELIVERED') {
-    throw BadRequestError('Cannot mark delivered shipment as exception');
-  }
+  const existing = requireShipmentState(await prisma.shipment.findUnique({ where: { id } }), {
+    disallowedStatuses: ['DELIVERED'],
+    badRequestMessage: 'Cannot mark delivered shipment as exception',
+  });
 
   const shipment = await prisma.shipment.update({
     where: { id },
@@ -607,18 +589,17 @@ router.post('/:id/exception', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.SHIPMENT,
-    entityId: shipment.id,
-    entityName: shipment.trackingNumber || shipment.id.slice(0, 8),
-    description: `Marked shipment as exception`,
-    details: { notes },
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildShipmentRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      shipment,
+      description: `Marked shipment as exception`,
+      details: { notes },
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SHIPMENT_UPDATED', payload: shipment });
+  broadcast(buildRouteBroadcastPayload({ type: 'SHIPMENT_UPDATED', payload: shipment }));
 
   res.json({ success: true, data: shipment });
 });
@@ -627,29 +608,23 @@ router.post('/:id/exception', async (req: AuthRequest, res) => {
 router.delete('/:id', async (req: AuthRequest, res) => {
   const { id } = req.params;
 
-  const existing = await prisma.shipment.findUnique({ where: { id } });
-
-  if (!existing) {
-    throw NotFoundError('Shipment not found');
-  }
-
-  if (existing.status !== 'PENDING') {
-    throw BadRequestError('Can only delete pending shipments');
-  }
+  const existing = requireShipmentState(await prisma.shipment.findUnique({ where: { id } }), {
+    allowedStatuses: ['PENDING'],
+    badRequestMessage: 'Can only delete pending shipments',
+  });
 
   await prisma.shipment.delete({ where: { id } });
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.SHIPMENT,
-    entityId: id,
-    entityName: existing.trackingNumber || id.slice(0, 8),
-    description: `Deleted shipment`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildShipmentRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      shipment: existing,
+      description: `Deleted shipment`,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SHIPMENT_DELETED', payload: { id } });
+  broadcast(buildRouteBroadcastPayload({ type: 'SHIPMENT_DELETED', payload: { id } }));
 
   res.json({ success: true, message: 'Shipment deleted' });
 });

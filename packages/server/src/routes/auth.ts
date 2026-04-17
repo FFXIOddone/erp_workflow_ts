@@ -6,6 +6,7 @@ import { prisma } from '../db/client.js';
 import { generateToken, authenticate, type AuthRequest } from '../middleware/auth.js';
 import { UnauthorizedError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { normalizeUsername } from '../lib/username.js';
 import {
   loginRateLimiter,
@@ -23,6 +24,10 @@ export const authRouter = Router();
 authRouter.post('/login', loginRateLimiter, preLoginCheck, async (req: AuthRequest, res: Response) => {
   const { username: rawUsername, password } = LoginSchema.parse(req.body);
   const username = normalizeUsername(rawUsername);
+  const ip = req.headers['x-forwarded-for'];
+  const clientIp = typeof ip === 'string' ? ip.split(',')[0].trim() : req.socket?.remoteAddress ?? 'unknown';
+
+  console.info(`[AUTH] Login attempt for "${username}" from ${clientIp}`);
 
   const user = await prisma.user.findFirst({
     where: {
@@ -36,14 +41,19 @@ authRouter.post('/login', loginRateLimiter, preLoginCheck, async (req: AuthReque
   if (!user || !user.isActive) {
     // Record failed attempt for brute force protection
     await recordFailedLogin(req, username, user ? 'Account inactive' : 'User not found');
+    console.warn(`[AUTH] Login failed for "${username}" from ${clientIp}: ${user ? 'Account inactive' : 'User not found'}`);
     
-    logActivity({
-      action: ActivityAction.LOGIN_FAILED,
-      entityType: EntityType.USER,
-      entityName: username,
-      description: `Failed login attempt for username: ${username}`,
-      req,
-    });
+    logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.LOGIN_FAILED,
+        entityType: EntityType.USER,
+        entityId: username,
+        entityName: username,
+        description: `Failed login attempt for username: ${username}`,
+        userId: 'system',
+        req,
+      }),
+    );
     throw UnauthorizedError('Invalid credentials');
   }
 
@@ -51,15 +61,19 @@ authRouter.post('/login', loginRateLimiter, preLoginCheck, async (req: AuthReque
   if (!validPassword) {
     // Record failed attempt for brute force protection
     await recordFailedLogin(req, username, 'Invalid password');
+    console.warn(`[AUTH] Login failed for "${username}" from ${clientIp}: Invalid password`);
     
-    logActivity({
-      action: ActivityAction.LOGIN_FAILED,
-      entityType: EntityType.USER,
-      entityId: user.id,
-      entityName: username,
-      description: `Failed login attempt (wrong password) for: ${username}`,
-      req,
-    });
+    logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.LOGIN_FAILED,
+        entityType: EntityType.USER,
+        entityId: user.id,
+        entityName: username,
+        description: `Failed login attempt (wrong password) for: ${username}`,
+        userId: 'system',
+        req,
+      }),
+    );
     throw UnauthorizedError('Invalid credentials');
   }
 
@@ -69,15 +83,18 @@ authRouter.post('/login', loginRateLimiter, preLoginCheck, async (req: AuthReque
   const token = generateToken(user);
 
   // Log successful login
-  logActivity({
-    action: ActivityAction.LOGIN,
-    entityType: EntityType.USER,
-    entityId: user.id,
-    entityName: user.username,
-    description: `User ${user.displayName} logged in`,
-    userId: user.id,
-    req,
-  });
+  logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.LOGIN,
+      entityType: EntityType.USER,
+      entityId: user.id,
+      entityName: user.username,
+      description: `User ${user.displayName} logged in`,
+      userId: user.id,
+      req,
+    }),
+  );
+  console.info(`[AUTH] Login successful for "${username}" from ${clientIp}`);
 
   res.json({
     success: true,
@@ -155,15 +172,17 @@ authRouter.post('/accept-eula', authenticate, async (req: AuthRequest, res: Resp
     },
   });
 
-  logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.USER,
-    entityId: user.id,
-    entityName: user.username,
-    description: `Accepted ERP EULA version ${EULA_VERSION}`,
-    userId: user.id,
-    req,
-  });
+  logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.USER,
+      entityId: user.id,
+      entityName: user.username,
+      description: `Accepted ERP EULA version ${EULA_VERSION}`,
+      userId: user.id,
+      req,
+    }),
+  );
 
   res.json({
     success: true,
@@ -201,14 +220,17 @@ authRouter.post('/unlock-account', authenticate, requireRole(UserRole.ADMIN), as
   const unlocked = unlockAccount(username);
   
   if (unlocked) {
-    logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.USER,
-      entityName: username,
-      description: `Account "${username}" was manually unlocked by ${req.user?.displayName}`,
-      userId: req.userId,
-      req,
-    });
+    logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.USER,
+        entityId: username,
+        entityName: username,
+        description: `Account "${username}" was manually unlocked by ${req.user?.displayName}`,
+        userId: req.userId!,
+        req,
+      }),
+    );
   }
 
   res.json({
@@ -237,14 +259,17 @@ authRouter.post('/unblock-ip', authenticate, requireRole(UserRole.ADMIN), async 
   const unblocked = unblockIp(ip);
   
   if (unblocked) {
-    logActivity({
-      action: ActivityAction.UPDATE,
-      entityType: EntityType.SYSTEM,
-      entityName: ip,
-      description: `IP "${ip}" was manually unblocked by ${req.user?.displayName}`,
-      userId: req.userId,
-      req,
-    });
+    logActivity(
+      buildRouteActivityPayload({
+        action: ActivityAction.UPDATE,
+        entityType: EntityType.SYSTEM,
+        entityId: ip,
+        entityName: ip,
+        description: `IP "${ip}" was manually unblocked by ${req.user?.displayName}`,
+        userId: req.userId!,
+        req,
+      }),
+    );
   }
 
   res.json({

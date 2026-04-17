@@ -67,6 +67,7 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().email().optional(),
+  EMAIL_DEV_OVERRIDE_TO: z.string().email().optional(),
 
   // Optional: AWS SES
   AWS_REGION: z.string().optional(),
@@ -235,6 +236,7 @@ CORS_ORIGIN=http://localhost:5173
 # SMTP_USER=your-email@example.com
 # SMTP_PASS=your-password
 # SMTP_FROM=noreply@example.com
+# EMAIL_DEV_OVERRIDE_TO=approvals@wilde-signs.com
 
 # ============ Optional: Email (AWS SES) ============
 

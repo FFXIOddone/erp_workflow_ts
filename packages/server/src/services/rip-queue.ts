@@ -32,6 +32,7 @@ import {
   buildFieryStagedMetadata,
 } from './fiery-staged-metadata.js';
 import { normalizeFieryJobId } from './fiery-jmf.js';
+import { WorkOrderReferenceSelect } from '../lib/dto-selects.js';
 import {
   getAllFieryDownloadFiles,
   getAllFieryJobs,
@@ -175,6 +176,16 @@ function getFieryImportedFileName(fierySettings: Record<string, unknown>): strin
   const destinationPath = typeof fierySettings.destinationPath === 'string' ? fierySettings.destinationPath : undefined;
 
   return jobTicketName ?? copiedFileName ?? (destinationPath ? path.basename(destinationPath) : undefined);
+}
+
+function hasPendingFieryDownloadMatch(ripJobs: Array<{ printSettingsJson: unknown }>): boolean {
+  return ripJobs.some((ripJob) => {
+    const fierySettings = getFierySettingsFromPrintSettings(ripJob.printSettingsJson);
+    const downloadedFileName =
+      typeof fierySettings.downloadedFileName === 'string' ? fierySettings.downloadedFileName.trim() : '';
+
+    return downloadedFileName.length === 0;
+  });
 }
 
 async function repairFieryJobMetadataInternal(): Promise<number> {
@@ -519,14 +530,17 @@ export async function sendToRip(params: {
         orderNumber: true,
         customerName: true,
         description: true,
+        company: { select: { id: true, name: true } },
       },
     });
     const copyResult = await copyThriveFileToHotfolder({
       sourceFilePath,
       hotfolderPath: hotfolderTarget.path,
       workOrderNumber: thriveWorkOrder?.orderNumber ?? null,
+      companyName: thriveWorkOrder?.company?.name ?? null,
       customerName: thriveWorkOrder?.customerName ?? null,
       jobDescription: thriveWorkOrder?.description ?? null,
+      copies: printSettings?.copies ?? null,
     });
     if (!copyResult.success) {
       return { success: false, error: copyResult.error };
@@ -537,8 +551,10 @@ export async function sendToRip(params: {
       thrive: {
         jobTicketName: copyResult.ticketName ?? null,
         workOrderNumber: thriveWorkOrder?.orderNumber ?? null,
+        companyName: thriveWorkOrder?.company?.name ?? null,
         customerName: thriveWorkOrder?.customerName ?? null,
         jobDescription: thriveWorkOrder?.description ?? null,
+        copies: printSettings?.copies ?? null,
         sourceFileName: path.basename(sourceFilePath),
         copiedFileName: path.basename(copyResult.destinationPath ?? sourceFilePath),
         destinationPath: copyResult.destinationPath ?? null,
@@ -582,7 +598,7 @@ export async function sendToRip(params: {
       createdById: userId,
     },
     include: {
-      workOrder: { select: { id: true, orderNumber: true, customerName: true } },
+      workOrder: { select: WorkOrderReferenceSelect },
       equipment: { select: { id: true, name: true, station: true } },
       createdBy: { select: { id: true, username: true, displayName: true } },
     },
@@ -709,6 +725,7 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
   const allFieryDownloads: FieryDownloadFile[] = [];
   const activeThriveJobs = activeJobs.filter((job) => job.ripType !== 'Fiery');
   const activeFieryJobs = activeJobs.filter((job) => job.ripType === 'Fiery');
+  const shouldScanFieryDownloads = activeFieryJobs.length > 0 && hasPendingFieryDownloadMatch(activeFieryJobs);
 
   if (activeThriveJobs.length > 0) {
     for (const machine of THRIVE_CONFIG.machines) {
@@ -730,13 +747,15 @@ async function syncRipJobStatusesInternal(): Promise<RipStatusUpdate[]> {
       console.warn('[RipQueue] Fiery sync scan failed:', err instanceof Error ? err.message : err);
     }
 
-    try {
-      allFieryDownloads.push(...(await getAllFieryDownloadFiles()));
-    } catch (err) {
-      console.warn(
-        '[RipQueue] Fiery download scan failed:',
-        err instanceof Error ? err.message : err
-      );
+    if (shouldScanFieryDownloads) {
+      try {
+        allFieryDownloads.push(...(await getAllFieryDownloadFiles()));
+      } catch (err) {
+        console.warn(
+          '[RipQueue] Fiery download scan failed:',
+          err instanceof Error ? err.message : err
+        );
+      }
     }
   }
 

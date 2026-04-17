@@ -1,5 +1,7 @@
 export {
   deriveFileChainLinkState,
+  isCutFileName,
+  isPrintFileName,
   summarizeFileChainLinks,
   summarizeFileChainTrace,
 } from '@erp/shared';

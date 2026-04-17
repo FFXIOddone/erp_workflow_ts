@@ -26,6 +26,22 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+set "ERP_ROOT=%~dp0"
+
+:: Reap stale ERP dev processes from prior sessions before we start anything new.
+echo Cleaning up stale ERP processes...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\cleanup-dev-processes.ps1" -RepoRoot "%ERP_ROOT%"
+
+echo.
+:: Ensure PostgreSQL is actually available before Prisma sync / server startup.
+echo Ensuring local PostgreSQL is running...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\ensure-postgres.ps1" -RepoRoot "%ERP_ROOT%"
+if %errorlevel% neq 0 (
+    echo ERROR: PostgreSQL is not available on port 5432.
+    pause
+    exit /b 1
+)
+
 :: Ensure native addons match the active Node runtime
 echo Checking native modules...
 node -e "require('better-sqlite3'); console.log('better-sqlite3 OK for', process.version, 'ABI', process.versions.modules)" >nul 2>nul
@@ -67,6 +83,16 @@ if not exist "node_modules" (
 )
 
 echo.
+:: Sync Prisma schema to the active local database before the app starts
+echo Syncing Prisma schema to local PostgreSQL...
+call npx.cmd prisma db push --skip-generate --schema packages\server\prisma\schema.prisma
+if %errorlevel% neq 0 (
+    echo ERROR: Prisma schema sync failed.
+    pause
+    exit /b 1
+)
+
+echo.
 :: Activate Python venv for slip-sort backend (uvicorn)
 if exist ".venv\Scripts\activate.bat" (
     echo Activating Python venv...
@@ -93,5 +119,5 @@ echo =============================================
 echo.
 
 cd /d "%~dp0"
-:: Use cmd /c to avoid PowerShell treating stderr (e.g. email warnings) as fatal errors
-cmd /c "npm run dev:all 2>&1"
+:: Run the concurrent dev stack directly in this console so the launcher owns the tree.
+call npm run dev:all

@@ -8,6 +8,7 @@ import {
 import { prisma } from '../db/client.js';
 import { authenticate, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { NotFoundError } from '../middleware/error-handler.js';
+import { WorkOrderReferenceSelect } from '../lib/dto-selects.js';
 import { buildTokenizedSearchWhere } from '../lib/fuzzy-search.js';
 
 // Items are a catalog lookup — allow larger page sizes than the default PaginationSchema (500)
@@ -134,7 +135,7 @@ itemsRouter.get('/:id/history', async (req: AuthRequest, res: Response) => {
     where: { itemMasterId: req.params.id },
     include: {
       linkedOrder: {
-        select: { id: true, orderNumber: true, customerName: true },
+        select: WorkOrderReferenceSelect,
       },
     },
     orderBy: { createdAt: 'desc' },

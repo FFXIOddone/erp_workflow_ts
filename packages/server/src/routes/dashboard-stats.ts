@@ -16,6 +16,7 @@ import { AuthRequest, authenticate } from '../middleware/auth.js';
 import { prisma } from '../db/client.js';
 import { OrderStatus, PrintingMethod, StationStatus, QCStatus } from '@prisma/client';
 import { thriveService } from '../services/thrive.js';
+import { createLastUpdatedDate, formatLastUpdatedFallback } from '../lib/last-updated.js';
 
 export const dashboardStatsRouter = Router();
 
@@ -768,7 +769,7 @@ dashboardStatsRouter.get('/', async (_req: AuthRequest, res: Response) => {
     recentOrders,
     upcomingDeadlines,
     systemHealth,
-    lastUpdated: new Date(),
+    lastUpdated: createLastUpdatedDate(),
   };
 
   setCache(cacheKey, summary);
@@ -978,7 +979,7 @@ dashboardStatsRouter.post('/refresh', async (_req: AuthRequest, res: Response) =
     recentOrders,
     upcomingDeadlines,
     systemHealth,
-    lastUpdated: new Date(),
+    lastUpdated: createLastUpdatedDate(),
   };
 
   setCache('dashboard-summary', summary);
@@ -1203,7 +1204,11 @@ dashboardStatsRouter.get('/production-feeds', async (_req: AuthRequest, res: Res
           customerName: sp.order.customerName,
           description: sp.order.description || '',
           priority: sp.order.priority,
-          startedAt: sp.startedAt?.toISOString() || sp.order.updatedAt?.toISOString() || sp.order.createdAt?.toISOString() || new Date().toISOString(),
+          startedAt: formatLastUpdatedFallback(
+            sp.startedAt,
+            sp.order.updatedAt,
+            sp.order.createdAt,
+          ),
           estimatedMinutes: null,
           percentComplete: 0,
           assignedTo: sp.completedBy

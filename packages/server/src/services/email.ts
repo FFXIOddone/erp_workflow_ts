@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { getValidAccessToken, getConnectionStatus } from './microsoft-oauth.js';
+import { resolveEmailDeliveryTarget } from './email-routing.js';
 
 // Email configuration from environment variables
 const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.office365.com';
@@ -11,6 +12,8 @@ const EMAIL_PASS = process.env.EMAIL_PASS || '';
 const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@wildesigns.com';
 const APP_URL = process.env.APP_URL || 'http://localhost:5173';
 const COMPANY_NAME = process.env.COMPANY_NAME || 'Wilde Signs';
+const EMAIL_DEV_OVERRIDE_TO = process.env.EMAIL_DEV_OVERRIDE_TO || 'approvals@wilde-signs.com';
+const EMAIL_DEV_OVERRIDE_ENABLED = (process.env.NODE_ENV ?? 'development') !== 'production';
 
 // Email enabled flag (may also be enabled by OAuth — checked dynamically)
 const PASSWORD_AUTH_ENABLED = !!(EMAIL_USER && EMAIL_PASS);
@@ -24,6 +27,10 @@ console.log('📧  EMAIL_USER     :', EMAIL_USER || '(empty)');
 console.log('📧  EMAIL_PASS     :', EMAIL_PASS ? `(set, ${EMAIL_PASS.length} chars)` : '(empty)');
 console.log('📧  EMAIL_FROM     :', EMAIL_FROM);
 console.log('📧  PASSWORD_AUTH  :', PASSWORD_AUTH_ENABLED);
+console.log(
+  '📧  DEV_OVERRIDE   :',
+  EMAIL_DEV_OVERRIDE_ENABLED ? `enabled -> ${EMAIL_DEV_OVERRIDE_TO}` : 'disabled',
+);
 console.log('📧  APP_URL        :', APP_URL);
 console.log('📧  COMPANY_NAME   :', COMPANY_NAME);
 console.log('📧  (OAuth2 status checked at runtime)');
@@ -237,6 +244,13 @@ function wrapInTemplate(content: string, title: string): string {
   `.trim();
 }
 
+function buildDevEmailOverrideHeaders(originalTo: string, effectiveTo: string): Record<string, string> {
+  return {
+    'X-Original-To': originalTo,
+    'X-Dev-Email-Override': effectiveTo,
+  };
+}
+
 // Send a generic email
 export async function sendEmail(options: {
   to: string | string[];
@@ -248,6 +262,13 @@ export async function sendEmail(options: {
   console.log('📧   To      :', options.to);
   console.log('📧   Subject :', options.subject);
   console.log('📧   HTML len:', options.html?.length ?? 0);
+
+  const deliveryTarget = resolveEmailDeliveryTarget(options.to);
+  if (deliveryTarget.overridden) {
+    console.warn(
+      `📧 [sendEmail] DEV OVERRIDE active: "${deliveryTarget.originalTo}" -> "${deliveryTarget.effectiveTo}"`,
+    );
+  }
 
   const transport = await getTransporter();
   if (!transport) {
@@ -261,10 +282,13 @@ export async function sendEmail(options: {
 
   const envelope = {
     from: `"${COMPANY_NAME}" <${fromEmail}>`,
-    to: Array.isArray(options.to) ? options.to.join(', ') : options.to,
+    to: deliveryTarget.effectiveTo,
     subject: options.subject,
     html: options.html,
     text: options.text,
+    ...(deliveryTarget.overridden
+      ? { headers: buildDevEmailOverrideHeaders(deliveryTarget.originalTo, deliveryTarget.effectiveTo) }
+      : {}),
   };
   console.log('📧 [sendEmail] Envelope from:', envelope.from);
   console.log('📧 [sendEmail] Envelope to  :', envelope.to);

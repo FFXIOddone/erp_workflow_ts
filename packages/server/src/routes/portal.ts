@@ -26,6 +26,7 @@ import {
   sendProofResponseNotificationEmail,
   sendNewMessageNotificationEmail,
 } from '../services/email.js';
+import { createLastUpdatedDate } from '../lib/last-updated.js';
 
 const router = Router();
 
@@ -1886,7 +1887,7 @@ router.get('/orders/:id/live-status', portalAuth, async (req: any, res: Response
       } : null,
       estimatedCompletion: order.dueDate,
       shipment: order.shipments[0] || null,
-      lastUpdated: new Date(),
+      lastUpdated: createLastUpdatedDate(),
     },
   });
 });

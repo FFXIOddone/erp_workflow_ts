@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { prisma } from '../db/client.js';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import { broadcast } from '../ws/server.js';
+import { buildRouteBroadcastPayload } from '../lib/route-broadcast.js';
 import { NotFoundError, BadRequestError } from '../middleware/error-handler.js';
 import { logActivity, ActivityAction, EntityType } from '../lib/activity-logger.js';
+import { buildRouteActivityPayload } from '../lib/route-activity.js';
 import { buildProductionCalendarView, type ProductionCalendarStation, type WorkOrderCalendarRow } from '../services/production-calendar.js';
 import {
   CreateProductionSlotSchema,
@@ -316,16 +318,18 @@ router.post('/', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.PRODUCTION_SLOT, // Using ORDER since we don't have SLOT
-    entityId: slot.id,
-    description: `Scheduled ${workOrder.orderNumber} for ${data.station} on ${data.scheduledDate.toISOString().split('T')[0]}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.PRODUCTION_SLOT, // Using ORDER since we don't have SLOT
+      entityId: slot.id,
+      description: `Scheduled ${workOrder.orderNumber} for ${data.station} on ${data.scheduledDate.toISOString().split('T')[0]}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SCHEDULE_CREATED', payload: slot });
+  broadcast(buildRouteBroadcastPayload({ type: 'SCHEDULE_CREATED', payload: slot }));
 
   res.status(201).json({ success: true, data: slot });
 });
@@ -358,16 +362,18 @@ router.post('/bulk', async (req: AuthRequest, res) => {
     )
   );
 
-  await logActivity({
-    action: ActivityAction.CREATE,
-    entityType: EntityType.PRODUCTION_SLOT,
-    entityId: 'bulk',
-    description: `Bulk scheduled ${results.length} production slots`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.CREATE,
+      entityType: EntityType.PRODUCTION_SLOT,
+      entityId: 'bulk',
+      description: `Bulk scheduled ${results.length} production slots`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SCHEDULE_BULK_CREATED', payload: results });
+  broadcast(buildRouteBroadcastPayload({ type: 'SCHEDULE_BULK_CREATED', payload: results }));
 
   res.status(201).json({ success: true, data: results });
 });
@@ -405,16 +411,18 @@ router.patch('/:id', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.PRODUCTION_SLOT,
-    entityId: slot.id,
-    description: `Updated production slot for ${existing.workOrder.orderNumber}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.PRODUCTION_SLOT,
+      entityId: slot.id,
+      description: `Updated production slot for ${existing.workOrder.orderNumber}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SCHEDULE_UPDATED', payload: slot });
+  broadcast(buildRouteBroadcastPayload({ type: 'SCHEDULE_UPDATED', payload: slot }));
 
   res.json({ success: true, data: slot });
 });
@@ -463,16 +471,18 @@ router.post('/:id/reschedule', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.PRODUCTION_SLOT,
-    entityId: slot.id,
-    description: `Rescheduled ${existing.workOrder.orderNumber} from ${oldDate} to ${newDate}${data.reason ? `: ${data.reason}` : ''}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.PRODUCTION_SLOT,
+      entityId: slot.id,
+      description: `Rescheduled ${existing.workOrder.orderNumber} from ${oldDate} to ${newDate}${data.reason ? `: ${data.reason}` : ''}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SCHEDULE_RESCHEDULED', payload: slot });
+  broadcast(buildRouteBroadcastPayload({ type: 'SCHEDULE_RESCHEDULED', payload: slot }));
 
   res.json({ success: true, data: slot });
 });
@@ -508,16 +518,18 @@ router.post('/:id/start', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.PRODUCTION_SLOT,
-    entityId: slot.id,
-    description: `Started production for ${existing.workOrder.orderNumber} at ${existing.station}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.PRODUCTION_SLOT,
+      entityId: slot.id,
+      description: `Started production for ${existing.workOrder.orderNumber} at ${existing.station}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SCHEDULE_STARTED', payload: slot });
+  broadcast(buildRouteBroadcastPayload({ type: 'SCHEDULE_STARTED', payload: slot }));
 
   res.json({ success: true, data: slot });
 });
@@ -556,16 +568,18 @@ router.post('/:id/complete', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.UPDATE,
-    entityType: EntityType.PRODUCTION_SLOT,
-    entityId: slot.id,
-    description: `Completed production for ${existing.workOrder.orderNumber} at ${existing.station}${actualHours ? ` (${actualHours}hrs)` : ''}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.UPDATE,
+      entityType: EntityType.PRODUCTION_SLOT,
+      entityId: slot.id,
+      description: `Completed production for ${existing.workOrder.orderNumber} at ${existing.station}${actualHours ? ` (${actualHours}hrs)` : ''}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SCHEDULE_COMPLETED', payload: slot });
+  broadcast(buildRouteBroadcastPayload({ type: 'SCHEDULE_COMPLETED', payload: slot }));
 
   res.json({ success: true, data: slot });
 });
@@ -589,16 +603,18 @@ router.delete('/:id', async (req: AuthRequest, res) => {
     },
   });
 
-  await logActivity({
-    action: ActivityAction.DELETE,
-    entityType: EntityType.PRODUCTION_SLOT,
-    entityId: slot.id,
-    description: `Cancelled production slot for ${existing.workOrder.orderNumber} at ${existing.station}`,
-    userId: req.userId,
-    req,
-  });
+  await logActivity(
+    buildRouteActivityPayload({
+      action: ActivityAction.DELETE,
+      entityType: EntityType.PRODUCTION_SLOT,
+      entityId: slot.id,
+      description: `Cancelled production slot for ${existing.workOrder.orderNumber} at ${existing.station}`,
+      userId: req.user!.id,
+      req,
+    }),
+  );
 
-  broadcast({ type: 'SCHEDULE_CANCELLED', payload: slot });
+  broadcast(buildRouteBroadcastPayload({ type: 'SCHEDULE_CANCELLED', payload: slot }));
 
   res.json({ success: true, data: slot });
 });

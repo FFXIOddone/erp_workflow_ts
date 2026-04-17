@@ -21,8 +21,11 @@ import {
   FolderOpen,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
-import { matchesSearchFields } from '@erp/shared';
 import { api } from '../lib/api';
+import { LiveDataSummaryGrid, type LiveDataSummaryItem } from './LiveDataSummaryGrid';
+import { LiveDataEmptyState, buildLiveDataEmptyCopy } from './LiveDataEmptyState';
+import { filterZundLiveDataJobs } from './live-data-filters';
+import { resolveEquipmentLastSeenTimestamp } from '../lib/equipment-last-seen';
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -148,34 +151,12 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
   const filteredJobs = useMemo(() => {
     if (!liveData?.jobs) return [];
 
-    let jobs = [...liveData.jobs];
-
-    // Status filter
-    if (statusFilter !== 'all') {
-      jobs = jobs.filter(j => j.status === statusFilter);
-    }
-
-    // Linked filter
-    if (linkedFilter === 'linked') {
-      jobs = jobs.filter(j => j.workOrderNumber);
-    } else if (linkedFilter === 'unlinked') {
-      jobs = jobs.filter(j => !j.workOrderNumber);
-    }
-
-    // Source filter
-    if (sourceFilter !== 'all') {
-      jobs = jobs.filter(j => j.source === sourceFilter);
-    }
-
-    // Search
-    if (search.trim()) {
-      jobs = jobs.filter((job) =>
-        matchesSearchFields(
-          [job.jobName, job.workOrderNumber, job.customerName, job.material, job.device, job.fileName],
-          search,
-        ),
-      );
-    }
+    const jobs = filterZundLiveDataJobs([...liveData.jobs], {
+      search,
+      statusFilter,
+      linkedFilter,
+      sourceFilter,
+    });
 
     // Sort
     jobs.sort((a, b) => {
@@ -246,6 +227,66 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
   }
 
   const { summary, todayStats, toolWear, cutter, hasStatsDb, dbVersion } = liveData;
+  const summaryItems: LiveDataSummaryItem[] = [
+    {
+      key: 'active',
+      label: 'Active',
+      value: summary.activeCount,
+      tone: 'blue',
+      onClick: () => setStatusFilter(f => f === 'active' ? 'all' : 'active'),
+      selected: statusFilter === 'active',
+      valueClassName: 'text-2xl font-bold text-blue-700',
+      labelClassName: 'text-xs text-blue-600',
+    },
+    {
+      key: 'queued',
+      label: 'Queued',
+      value: summary.queuedCount,
+      tone: 'amber',
+      onClick: () => setStatusFilter(f => f === 'queued' ? 'all' : 'queued'),
+      selected: statusFilter === 'queued',
+      valueClassName: 'text-2xl font-bold text-amber-700',
+      labelClassName: 'text-xs text-amber-600',
+    },
+    {
+      key: 'completed',
+      label: 'Completed',
+      value: summary.completedCount,
+      tone: 'green',
+      onClick: () => setStatusFilter(f => f === 'completed' ? 'all' : 'completed'),
+      selected: statusFilter === 'completed',
+      valueClassName: 'text-2xl font-bold text-green-700',
+      labelClassName: 'text-xs text-green-600',
+    },
+    {
+      key: 'linked',
+      label: 'Linked',
+      value: summary.linkedCount,
+      tone: 'purple',
+      onClick: () => setLinkedFilter(f => f === 'linked' ? 'all' : 'linked'),
+      selected: linkedFilter === 'linked',
+      valueClassName: 'text-2xl font-bold text-purple-700',
+      labelClassName: 'text-xs text-purple-600',
+    },
+    {
+      key: 'unlinked',
+      label: 'Unlinked',
+      value: summary.unlinkedCount,
+      tone: 'gray',
+      onClick: () => setLinkedFilter(f => f === 'unlinked' ? 'all' : 'unlinked'),
+      selected: linkedFilter === 'unlinked',
+      valueClassName: 'text-2xl font-bold text-gray-700',
+      labelClassName: 'text-xs text-gray-600',
+    },
+    {
+      key: 'total',
+      label: 'Total',
+      value: summary.totalJobs,
+      tone: 'slate',
+      valueClassName: 'text-2xl font-bold text-slate-700',
+      labelClassName: 'text-xs text-slate-600',
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -276,62 +317,11 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
           </button>
         </div>
 
-        {/* Summary Badges */}
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-4">
-          <button
-            onClick={() => setStatusFilter(f => f === 'active' ? 'all' : 'active')}
-            className={`text-center p-3 rounded-lg transition-all cursor-pointer ${
-              statusFilter === 'active' ? 'ring-2 ring-blue-400' : ''
-            } bg-blue-50`}
-          >
-            <p className="text-2xl font-bold text-blue-700">{summary.activeCount}</p>
-            <p className="text-xs text-blue-600">Active</p>
-          </button>
-          <button
-            onClick={() => setStatusFilter(f => f === 'queued' ? 'all' : 'queued')}
-            className={`text-center p-3 rounded-lg transition-all cursor-pointer ${
-              statusFilter === 'queued' ? 'ring-2 ring-amber-400' : ''
-            } bg-amber-50`}
-          >
-            <p className="text-2xl font-bold text-amber-700">{summary.queuedCount}</p>
-            <p className="text-xs text-amber-600">Queued</p>
-          </button>
-          <button
-            onClick={() => setStatusFilter(f => f === 'completed' ? 'all' : 'completed')}
-            className={`text-center p-3 rounded-lg transition-all cursor-pointer ${
-              statusFilter === 'completed' ? 'ring-2 ring-green-400' : ''
-            } bg-green-50`}
-          >
-            <p className="text-2xl font-bold text-green-700">{summary.completedCount}</p>
-            <p className="text-xs text-green-600">Completed</p>
-          </button>
-
-          {/* Linked / Unlinked */}
-          <button
-            onClick={() => setLinkedFilter(f => f === 'linked' ? 'all' : 'linked')}
-            className={`text-center p-3 rounded-lg transition-all cursor-pointer ${
-              linkedFilter === 'linked' ? 'ring-2 ring-purple-400' : ''
-            } bg-purple-50`}
-          >
-            <p className="text-2xl font-bold text-purple-700">{summary.linkedCount}</p>
-            <p className="text-xs text-purple-600">Linked</p>
-          </button>
-          <button
-            onClick={() => setLinkedFilter(f => f === 'unlinked' ? 'all' : 'unlinked')}
-            className={`text-center p-3 rounded-lg transition-all cursor-pointer ${
-              linkedFilter === 'unlinked' ? 'ring-2 ring-gray-400' : ''
-            } bg-gray-50`}
-          >
-            <p className="text-2xl font-bold text-gray-700">{summary.unlinkedCount}</p>
-            <p className="text-xs text-gray-600">Unlinked</p>
-          </button>
-
-          {/* Total */}
-          <div className="text-center p-3 bg-slate-50 rounded-lg">
-            <p className="text-2xl font-bold text-slate-700">{summary.totalJobs}</p>
-            <p className="text-xs text-slate-600">Total</p>
-          </div>
-        </div>
+        <LiveDataSummaryGrid
+          items={summaryItems}
+          variant="tiles"
+          className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-4"
+        />
 
         {/* Today's Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -396,7 +386,10 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-gray-400 text-center py-4">No tool wear data available</p>
+          <LiveDataEmptyState
+            icon={Gauge}
+            {...buildLiveDataEmptyCopy('tool wear records')}
+          />
         )}
       </div>
 
@@ -523,10 +516,11 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
             <tbody className="divide-y divide-gray-100">
               {filteredJobs.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-gray-400">
-                    {search || statusFilter !== 'all' || linkedFilter !== 'all'
-                      ? 'No jobs match your filters'
-                      : 'No jobs found'}
+                  <td colSpan={8} className="py-8">
+                    <LiveDataEmptyState
+                      icon={Scissors}
+                      {...buildLiveDataEmptyCopy('jobs', Boolean(search || statusFilter !== 'all' || linkedFilter !== 'all' || sourceFilter !== 'all'))}
+                    />
                   </td>
                 </tr>
               ) : (
@@ -750,7 +744,7 @@ export default function ZundLiveDataPanel({ zundId }: { zundId: string }) {
         {/* Footer */}
         <div className="px-4 py-2 border-t border-gray-100 text-xs text-gray-400 flex justify-between">
           <span>
-            Last updated: {format(new Date(liveData.timestamp), 'h:mm:ss a')}
+            Last updated: {format(resolveEquipmentLastSeenTimestamp(liveData.timestamp) ?? new Date(liveData.timestamp), 'h:mm:ss a')}
           </span>
           <span>
             Data sources: {hasStatsDb ? 'Stats DB + ' : ''}Thrive Cut Center + Zund Queue

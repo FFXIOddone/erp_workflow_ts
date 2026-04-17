@@ -38,6 +38,9 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Unify Fiery submission job ID parsing so `0` and missing values are handled once.
 - [x] Audit Fiery JDF creation for any remaining hardcoded PSA-style defaults.
 - [x] Add more known Fiery media mapping rows from the live RIP box.
+
+### Shop Floor Printing
+- [x] Allow selecting multiple linked print files in the printer station and submit them to RIP in one batch action.
 - [x] Make Fiery diagnostics read the same workflow name that submission uses.
 - [x] Extract Fiery download-file matching into one helper.
 - [x] Normalize Fiery job naming and work-order extraction in one place.
@@ -56,66 +59,66 @@ Use the next hours to reduce duplicate route/service logic, untangle cross-syste
 - [x] Move linked-data summary counts into the same source that drives file-chain rows.
 - [x] Unify placeholder creation so batch repair and summary rendering cannot diverge.
 - [x] Consolidate file-chain completion heuristics into one helper.
-- [ ] Make order-linked-data and file-chain agree on completed-station counts.
-- [ ] Extract a shared latest-shipment/latest-attachment selector for order details.
-- [ ] Remove duplicate file-chain repair logic from route and service layers.
-- [ ] Add a single normalized representation for print, cut, proof, and shipment links.
-- [ ] Ensure linked-data warnings always cite the exact missing record type.
-- [ ] Prevent summary counters from counting placeholder rows twice.
-- [ ] Make the file-chain page and order-detail page read the same normalized chain model.
-- [ ] Add a repair helper for missing cut IDs that both pages can consume.
-- [ ] Reconcile the file-chain state machine with the linked-data order summary state.
-- [ ] Untangle the order-detail card assembly so shipment, file, and proof data all come from one composed model.
-- [ ] Make the linked-data refresh broadcast invalidate file-chain and order-detail queries together.
-- [ ] Deduplicate code that finds the latest linked shipment or attachment.
-- [ ] Keep the file-chain summary from surfacing stale `READY_TO_PRINT` states after completion.
-- [ ] Standardize linked-data empty states across shipments, attachments, proofs, and reprints.
-- [ ] Add a per-link provenance field so operators can tell where each linked record came from.
-- [ ] Audit all order-detail linked-data counts against the raw database rows.
+- [x] Make order-linked-data and file-chain agree on completed-station counts.
+- [x] Extract a shared latest-shipment/latest-attachment selector for order details.
+- [x] Remove duplicate file-chain repair logic from route and service layers.
+- [x] Add a single normalized representation for print, cut, proof, and shipment links.
+- [x] Ensure linked-data warnings always cite the exact missing record type.
+- [x] Prevent summary counters from counting placeholder rows twice.
+- [x] Make the file-chain page and order-detail page read the same normalized chain model.
+- [x] Add a repair helper for missing cut IDs that both pages can consume.
+- [x] Reconcile the file-chain state machine with the linked-data order summary state.
+- [x] Untangle the order-detail card assembly so shipment, file, and proof data all come from one composed model.
+- [x] Make the linked-data refresh broadcast invalidate file-chain and order-detail queries together.
+- [x] Deduplicate code that finds the latest linked shipment or attachment.
+- [x] Keep the file-chain summary from surfacing stale `READY_TO_PRINT` states after completion.
+- [x] Standardize linked-data empty states across shipments, attachments, proofs, and reprints.
+- [x] Add a per-link provenance field so operators can tell where each linked record came from.
+- [x] Audit all order-detail linked-data counts against the raw database rows.
 
 ### Orders / Routes
-- [ ] Extract a shared station-transition mutation helper from `routes/orders.ts`.
-- [ ] Consolidate completion, validation-request, and status-broadcast side effects into one order mutation path.
-- [ ] Reduce repeated notification logic in order station routes.
-- [ ] Merge duplicate proof-approval broadcast payload shapes.
-- [ ] Clean up repeated route-level authorization checks that mirror middleware behavior.
-- [ ] Extract one helper for order completion and shipping designation updates.
-- [ ] Remove duplicate filter parsing from the order, shipment, and FedEx list routes.
-- [ ] Consolidate route-level pagination and sorting defaults into a shared utility.
-- [ ] Make `routes/equipment.ts` use shared queue/data builders rather than ad hoc composition.
-- [ ] Audit all route handlers for repeated `select` and `include` shapes that can be shared.
-- [ ] Unify station label resolution across orders, equipment, and shop-floor routes.
-- [ ] Centralize `last updated at` fallback formatting across routes.
-- [ ] Remove redundant work-order extraction helpers from multiple controllers.
-- [ ] Make the batch repair routes call the same backend service as the single-item routes.
-- [ ] Add a shared route helper for `NotFound` versus `BadRequest` shipment responses.
-- [ ] Consolidate route-specific activity logging payloads.
-- [ ] Replace repeated `broadcast()` wrappers with one helper per domain event.
-- [ ] Audit route-level timeout wrappers and keep only the smallest necessary ones.
-- [ ] Unify duplicate route handlers that differ only by minor payload shape.
-- [ ] Add controller-level tests for any routes that still use custom fallback copy.
+- [x] Extract a shared station-transition mutation helper from `routes/orders.ts`.
+- [x] Consolidate completion, validation-request, and status-broadcast side effects into one order mutation path.
+- [x] Reduce repeated notification logic in order station routes.
+- [x] Merge duplicate proof-approval broadcast payload shapes.
+- [x] Clean up repeated route-level authorization checks that mirror middleware behavior.
+- [x] Extract one helper for order completion and shipping designation updates.
+- [x] Remove duplicate filter parsing from the order, shipment, and FedEx list routes.
+- [x] Consolidate route-level pagination and sorting defaults into a shared utility.
+- [x] Make `routes/equipment.ts` use shared queue/data builders rather than ad hoc composition.
+- [x] Audit all route handlers for repeated `select` and `include` shapes that can be shared.
+- [x] Unify station label resolution across orders, equipment, and shop-floor routes.
+- [x] Centralize `last updated at` fallback formatting across routes.
+- [x] Remove redundant work-order extraction helpers from multiple controllers.
+- [x] Make the batch repair routes call the same backend service as the single-item routes.
+- [x] Add a shared route helper for `NotFound` versus `BadRequest` shipment responses.
+- [x] Consolidate route-specific activity logging payloads.
+- [x] Replace repeated `broadcast()` wrappers with one helper per domain event.
+- [x] Audit route-level timeout wrappers and keep only the smallest necessary ones.
+- [x] Unify duplicate route handlers that differ only by minor payload shape.
+- [x] Add controller-level tests for any routes that still use custom fallback copy.
 
 ### Equipment / Live Data
-- [ ] Remove duplicate Fiery and Thrive fetch branches from the flatbed live-data route.
-- [ ] Deduplicate Zund queue scanning so the same job set is not rebuilt three times.
-- [ ] Consolidate equipment reachability checks into one service-level probe.
-- [ ] Make Fiery, Thrive, and Zund live-data cards use one shared summary composer.
-- [ ] Reduce repeated timeout wrappers in `routes/equipment.ts`.
-- [ ] Move live-data list filtering into one helper per equipment family.
-- [ ] Standardize how equipment cards report `linked`, `queued`, and `completed` counts.
-- [ ] Share work-order matching logic between equipment live data and file-chain repair.
-- [ ] Keep the same job from appearing in both print and cut lists unless it truly is dual-linked.
-- [ ] Add a single source for the “last seen” timestamp shown in equipment summaries.
-- [ ] Make equipment detail modals use a common header and action bar.
-- [ ] Standardize equipment empty-state copy across all live-data tabs.
-- [ ] Simplify the download-file scan so it only runs when a connected source changed.
-- [ ] Remove duplicate JDF parsing from the equipment route and Fiery service.
-- [ ] Keep Zund cut-link repair from racing with Fiery job enrichment.
-- [ ] Make equipment job naming use one normalized order/work-order parser.
-- [ ] Audit live-data badge counts for duplicated or stale rows.
-- [ ] Ensure linked Fiery cut rows never fall back to Thrive cutter-folder data.
-- [ ] Keep equipment page search and filters aligned with the shared search helper.
-- [ ] Add one repair broadcast path for any equipment row that changes identity.
+  - [x] Remove duplicate Fiery and Thrive fetch branches from the flatbed live-data route.
+- [x] Deduplicate Zund queue scanning so the same job set is not rebuilt three times.
+- [x] Consolidate equipment reachability checks into one service-level probe.
+- [x] Make Fiery, Thrive, and Zund live-data cards use one shared summary composer.
+- [x] Reduce repeated timeout wrappers in `routes/equipment.ts`.
+- [x] Move live-data list filtering into one helper per equipment family.
+- [x] Standardize how equipment cards report `linked`, `queued`, and `completed` counts.
+- [x] Share work-order matching logic between equipment live data and file-chain repair.
+- [x] Keep the same job from appearing in both print and cut lists unless it truly is dual-linked.
+- [x] Add a single source for the “last seen” timestamp shown in equipment summaries.
+- [x] Make equipment detail modals use a common header and action bar.
+- [x] Standardize equipment empty-state copy across all live-data tabs.
+- [x] Simplify the download-file scan so it only runs when a connected source changed.
+- [x] Remove duplicate JDF parsing from the equipment route and Fiery service.
+- [x] Keep Zund cut-link repair from racing with Fiery job enrichment.
+- [x] Make equipment job naming use one normalized order/work-order parser.
+- [x] Audit live-data badge counts for duplicated or stale rows.
+- [x] Ensure linked Fiery cut rows never fall back to Thrive cutter-folder data.
+- [x] Keep equipment page search and filters aligned with the shared search helper.
+- [x] Add one repair broadcast path for any equipment row that changes identity.
 
 ### Shop Floor / UI
 - [ ] Rebuild the shared loading skeleton so the same card chrome is reused on web and shop-floor.
