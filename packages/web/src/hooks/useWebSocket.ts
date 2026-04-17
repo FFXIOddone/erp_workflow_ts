@@ -2,9 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { WsMessageType, type WsMessage } from '@erp/shared';
-import { getWebSocketUrl } from '../lib/runtime-url';
-
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+import { disconnectWebSocket, getWebSocketManager, type ConnectionStatus } from '../lib/websocket-manager';
 
 interface OrderPayload {
   orderNumber?: string;
@@ -13,198 +11,9 @@ interface OrderPayload {
   orderId?: string;
 }
 
-// Singleton WebSocket manager to prevent duplicate connections
-class WebSocketManager {
-  private static instance: WebSocketManager | null = null;
-  private ws: WebSocket | null = null;
-  private status: ConnectionStatus = 'disconnected';
-  private listeners = new Set<() => void>();
-  private reconnectTimeout: NodeJS.Timeout | null = null;
-  private pingInterval: NodeJS.Timeout | null = null;
-  private messageHandler: ((data: WsMessage<OrderPayload>) => void) | null = null;
-  private shouldReconnect = true;
-  
-  // Exponential backoff for reconnection
-  private reconnectAttempts = 0;
-  private readonly baseReconnectDelay = 1000; // 1 second
-  private readonly maxReconnectDelay = 30000; // 30 seconds
-  
-  // Message queue for offline messages
-  private messageQueue: unknown[] = [];
-  private readonly maxQueueSize = 50;
-
-  static getInstance(): WebSocketManager {
-    if (!WebSocketManager.instance) {
-      WebSocketManager.instance = new WebSocketManager();
-    }
-    return WebSocketManager.instance;
-  }
-
-  setMessageHandler(handler: (data: WsMessage<OrderPayload>) => void) {
-    this.messageHandler = handler;
-  }
-
-  getStatus(): ConnectionStatus {
-    return this.status;
-  }
-
-  subscribe(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  private notifyListeners() {
-    this.listeners.forEach((listener) => listener());
-  }
-
-  private setStatus(newStatus: ConnectionStatus) {
-    if (this.status !== newStatus) {
-      this.status = newStatus;
-      this.notifyListeners();
-    }
-  }
-
-  connect() {
-    // Don't reconnect if already connected or connecting
-    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
-      return;
-    }
-
-    this.shouldReconnect = true;
-    this.setStatus('connecting');
-    const wsUrl = getWebSocketUrl();
-    
-    try {
-      this.ws = new WebSocket(wsUrl);
-
-      this.ws.onopen = () => {
-        console.log('WebSocket connected');
-        this.setStatus('connected');
-        this.reconnectAttempts = 0; // Reset on successful connection
-        this.flushMessageQueue(); // Send any queued messages
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data) as WsMessage<OrderPayload>;
-          this.messageHandler?.(message);
-        } catch (error) {
-          console.error('WebSocket message parse error:', error);
-        }
-      };
-
-      this.ws.onclose = () => {
-        console.log('WebSocket disconnected, reconnecting...');
-        this.ws = null;
-        this.setStatus('disconnected');
-        if (this.shouldReconnect) {
-          this.scheduleReconnect();
-        }
-      };
-
-      this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        this.setStatus('disconnected');
-      };
-
-      // Start ping interval
-      this.startPing();
-    } catch (error) {
-      console.error('WebSocket connection error:', error);
-      this.setStatus('disconnected');
-      this.scheduleReconnect();
-    }
-  }
-
-  private scheduleReconnect() {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-    }
-
-    // Exponential backoff with jitter
-    const delay = Math.min(
-      this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts) + Math.random() * 1000,
-      this.maxReconnectDelay
-    );
-    
-    this.reconnectAttempts++;
-    console.log(`WebSocket: Reconnecting in ${Math.round(delay / 1000)}s (attempt ${this.reconnectAttempts})`);
-    
-    this.reconnectTimeout = setTimeout(() => this.connect(), delay);
-  }
-  
-  // Queue a message to be sent when connected
-  private queueMessage(message: unknown) {
-    if (this.messageQueue.length >= this.maxQueueSize) {
-      this.messageQueue.shift(); // Remove oldest message
-    }
-    this.messageQueue.push(message);
-  }
-  
-  // Send all queued messages
-  private flushMessageQueue() {
-    while (this.messageQueue.length > 0 && this.ws?.readyState === WebSocket.OPEN) {
-      const message = this.messageQueue.shift();
-      if (message) {
-        this.ws.send(JSON.stringify(message));
-      }
-    }
-  }
-  
-  // Send a message, queueing if not connected
-  send(message: unknown) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-    } else {
-      this.queueMessage(message);
-    }
-  }
-
-  private startPing() {
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-    }
-    this.pingInterval = setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'PING' }));
-      }
-    }, 30000);
-  }
-
-  // Authenticate the WebSocket connection
-  authenticate(token: string) {
-    this.send({ type: 'AUTHENTICATE', payload: { token } });
-  }
-  
-  // Reset reconnection state (for manual retry)
-  resetReconnect() {
-    this.reconnectAttempts = 0;
-    if (this.status === 'disconnected') {
-      this.connect();
-    }
-  }
-
-  disconnect() {
-    this.shouldReconnect = false;
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-    this.setStatus('disconnected');
-  }
-}
-
 export function useWebSocket() {
   const queryClient = useQueryClient();
-  const managerRef = useRef(WebSocketManager.getInstance());
+  const managerRef = useRef(getWebSocketManager());
   const [lastMessage, setLastMessage] = useState<WsMessage<OrderPayload> | null>(null);
   
   // Use useSyncExternalStore for proper subscription to status changes
@@ -490,6 +299,7 @@ export function useWebSocket() {
 
     // Don't disconnect on unmount - we want persistent connection
     return () => {
+      manager.setMessageHandler(null);
       if (debounceTimer) {
         clearTimeout(debounceTimer);
       }
@@ -498,3 +308,6 @@ export function useWebSocket() {
 
   return { status, lastMessage };
 }
+
+export { disconnectWebSocket };
+export type { ConnectionStatus };

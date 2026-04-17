@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '@erp/shared';
 import { api } from '../lib/api';
+import { disconnectWebSocket } from '../lib/websocket-manager';
 
 interface AuthState {
   token: string | null;
@@ -37,6 +38,7 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () => {
         delete api.defaults.headers.common['Authorization'];
+        disconnectWebSocket();
         set({
           token: null,
           user: null,
